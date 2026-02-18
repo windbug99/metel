@@ -159,6 +159,74 @@ async def _fetch_notion_pages_for_user(user_id: str, page_size: int = 5) -> list
     ]
 
 
+def _load_notion_access_token_for_user(user_id: str) -> str:
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+
+    token_result = (
+        supabase.table("oauth_tokens")
+        .select("access_token_encrypted")
+        .eq("user_id", user_id)
+        .eq("provider", "notion")
+        .limit(1)
+        .execute()
+    )
+
+    rows = token_result.data or []
+    if not rows:
+        raise HTTPException(status_code=400, detail="notion_not_connected")
+
+    encrypted = rows[0].get("access_token_encrypted")
+    if not encrypted:
+        raise HTTPException(status_code=500, detail="notion_token_missing")
+
+    return TokenVault(settings.notion_token_encryption_key).decrypt(encrypted)
+
+
+async def _create_notion_page_for_user(user_id: str, title: str) -> dict:
+    token = _load_notion_access_token_for_user(user_id)
+    settings = get_settings()
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.post(
+            "https://api.notion.com/v1/pages",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Notion-Version": "2022-06-28",
+                "Content-Type": "application/json",
+            },
+            json={
+                "parent": {"workspace": True},
+                "properties": {
+                    "title": {
+                        "title": [
+                            {
+                                "type": "text",
+                                "text": {"content": title},
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+
+    if response.status_code >= 400:
+        logger.warning("telegram notion create API failed: %s %s", response.status_code, response.text)
+        raise HTTPException(status_code=400, detail="notion_create_failed")
+
+    try:
+        payload = response.json()
+    except JSONDecodeError as exc:
+        logger.exception("telegram notion create parse failed: %s", exc)
+        raise HTTPException(status_code=502, detail="notion_parse_failed") from exc
+
+    return {
+        "id": payload.get("id"),
+        "url": payload.get("url"),
+        "title": title,
+    }
+
+
 def _disconnect_telegram_user(user_id: str):
     settings = get_settings()
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
@@ -405,6 +473,38 @@ async def telegram_webhook(
         )
         return {"ok": True}
 
+    if command in {"/notion_create", "/create"}:
+        title = rest.strip()
+        if not title:
+            await _telegram_api(
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": "생성할 제목을 입력해주세요.\n예: /notion_create Metel 회의록",
+                },
+            )
+            return {"ok": True}
+        if len(title) > 100:
+            await _telegram_api(
+                "sendMessage",
+                {"chat_id": chat_id, "text": "제목은 100자 이내로 입력해주세요."},
+            )
+            return {"ok": True}
+        try:
+            page = await _create_notion_page_for_user(user_id=user_id, title=title)
+            msg = f"Notion 페이지를 생성했습니다.\n- 제목: {page['title']}\n- 링크: {page['url']}"
+        except HTTPException as exc:
+            if exc.detail == "notion_not_connected":
+                msg = "Notion이 아직 연결되지 않았습니다. 대시보드에서 먼저 Notion 연동을 완료해주세요."
+            else:
+                msg = "Notion 페이지 생성에 실패했습니다. 권한(콘텐츠 입력)과 연동 상태를 확인해주세요."
+
+        await _telegram_api(
+            "sendMessage",
+            {"chat_id": chat_id, "text": msg, "disable_web_page_preview": True},
+        )
+        return {"ok": True}
+
     if command in {"/help", "/menu"}:
         await _telegram_api(
             "sendMessage",
@@ -415,6 +515,7 @@ async def telegram_webhook(
                     "- /status\n"
                     "- /notion_pages\n"
                     "- /notion_pages 5\n"
+                    "- /notion_create 제목\n"
                     "- /disconnect\n"
                     "- /help"
                 ),
