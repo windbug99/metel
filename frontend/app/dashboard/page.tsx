@@ -26,6 +26,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<UserProfile>(null);
   const [notionStatus, setNotionStatus] = useState<NotionStatus>(null);
+  const [notionStatusError, setNotionStatusError] = useState<string | null>(null);
 
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -33,51 +34,63 @@ export default function DashboardPage() {
     let mounted = true;
 
     const load = async () => {
-      const {
-        data: { user }
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user }
+        } = await supabase.auth.getUser();
 
-      if (!mounted) {
-        return;
-      }
+        if (!mounted) {
+          return;
+        }
 
-      if (!user) {
-        router.replace("/");
-        return;
-      }
+        if (!user) {
+          router.replace("/");
+          return;
+        }
 
-      const { data } = await supabase
-        .from("users")
-        .select("id, email, full_name, created_at")
-        .eq("id", user.id)
-        .single();
+        const { data } = await supabase
+          .from("users")
+          .select("id, email, full_name, created_at")
+          .eq("id", user.id)
+          .single();
 
-      if (!data) {
-        await upsertUserProfile();
-      }
+        if (!data) {
+          await upsertUserProfile();
+        }
 
-      const { data: refreshed } = await supabase
-        .from("users")
-        .select("id, email, full_name, created_at")
-        .eq("id", user.id)
-        .single();
+        const { data: refreshed } = await supabase
+          .from("users")
+          .select("id, email, full_name, created_at")
+          .eq("id", user.id)
+          .single();
 
-      if (apiBaseUrl) {
-        const notionResponse = await fetch(
-          `${apiBaseUrl}/api/oauth/notion/status?user_id=${encodeURIComponent(user.id)}`
-        );
-        if (notionResponse.ok) {
-          const notionData: NotionStatus = await notionResponse.json();
-          setNotionStatus(notionData);
+        if (apiBaseUrl) {
+          try {
+            const notionResponse = await fetch(
+              `${apiBaseUrl}/api/oauth/notion/status?user_id=${encodeURIComponent(user.id)}`
+            );
+            if (notionResponse.ok) {
+              const notionData: NotionStatus = await notionResponse.json();
+              setNotionStatus(notionData);
+              setNotionStatusError(null);
+            } else {
+              setNotionStatusError("Notion 상태 조회에 실패했습니다.");
+            }
+          } catch {
+            setNotionStatusError("Notion 상태 조회 중 네트워크 오류가 발생했습니다.");
+          }
+        }
+
+        if (!mounted) {
+          return;
+        }
+
+        setProfile(refreshed ?? data ?? null);
+      } finally {
+        if (mounted) {
+          setLoading(false);
         }
       }
-
-      if (!mounted) {
-        return;
-      }
-
-      setProfile(refreshed ?? data ?? null);
-      setLoading(false);
     };
 
     void load();
@@ -85,7 +98,7 @@ export default function DashboardPage() {
     return () => {
       mounted = false;
     };
-  }, [router]);
+  }, [router, apiBaseUrl]);
 
   if (loading) {
     return (
@@ -105,6 +118,9 @@ export default function DashboardPage() {
       </div>
       <section className="mt-6 rounded-xl border border-gray-200 p-5">
         <h2 className="text-xl font-semibold">Notion 연동</h2>
+        {notionStatusError ? (
+          <p className="mt-3 text-sm text-amber-700">{notionStatusError}</p>
+        ) : null}
         <p className="mt-3 text-sm text-gray-700">
           상태: {notionStatus?.connected ? "연결됨" : "미연결"}
         </p>
