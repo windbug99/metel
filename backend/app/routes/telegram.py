@@ -159,6 +159,50 @@ async def _fetch_notion_pages_for_user(user_id: str, page_size: int = 5) -> list
     ]
 
 
+def _disconnect_telegram_user(user_id: str):
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    (
+        supabase.table("users")
+        .update(
+            {
+                "telegram_chat_id": None,
+                "telegram_username": None,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        .eq("id", user_id)
+        .execute()
+    )
+
+
+def _load_linked_user_by_chat_id(chat_id: int):
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    result = (
+        supabase.table("users")
+        .select("id, telegram_username")
+        .eq("telegram_chat_id", chat_id)
+        .maybe_single()
+        .execute()
+    )
+    return result.data
+
+
+def _is_notion_connected(user_id: str) -> bool:
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    result = (
+        supabase.table("oauth_tokens")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("provider", "notion")
+        .limit(1)
+        .execute()
+    )
+    return bool(result.data)
+
+
 @router.get("/status")
 async def telegram_status(request: Request):
     try:
@@ -215,21 +259,7 @@ async def telegram_connect_link(request: Request):
 @router.delete("/disconnect")
 async def telegram_disconnect(request: Request):
     user_id = await get_authenticated_user_id(request)
-    settings = get_settings()
-    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
-
-    (
-        supabase.table("users")
-        .update(
-            {
-                "telegram_chat_id": None,
-                "telegram_username": None,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
-        .eq("id", user_id)
-        .execute()
-    )
+    _disconnect_telegram_user(user_id)
 
     return {"ok": True, "connected": False}
 
@@ -306,15 +336,9 @@ async def telegram_webhook(
         )
         return {"ok": True}
 
-    result = (
-        supabase.table("users")
-        .select("id")
-        .eq("telegram_chat_id", chat_id)
-        .maybe_single()
-        .execute()
-    )
+    result = _load_linked_user_by_chat_id(chat_id)
 
-    if not result.data:
+    if not result:
         await _telegram_api(
             "sendMessage",
             {
@@ -324,9 +348,36 @@ async def telegram_webhook(
         )
         return {"ok": True}
 
-    user_id = result.data.get("id")
+    user_id = result.get("id")
     command, _, rest = text.partition(" ")
     command = command.split("@", 1)[0].strip().lower()
+
+    if command in {"/status", "/my_status"}:
+        notion_connected = _is_notion_connected(user_id)
+        await _telegram_api(
+            "sendMessage",
+            {
+                "chat_id": chat_id,
+                "text": (
+                    "현재 연동 상태입니다.\n"
+                    "- Telegram: 연결됨\n"
+                    f"- Notion: {'연결됨' if notion_connected else '미연결'}\n"
+                    "Notion 페이지 조회: /notion_pages"
+                ),
+            },
+        )
+        return {"ok": True}
+
+    if command in {"/disconnect", "/unlink"}:
+        _disconnect_telegram_user(user_id)
+        await _telegram_api(
+            "sendMessage",
+            {
+                "chat_id": chat_id,
+                "text": "텔레그램 연동이 해제되었습니다. 다시 연결하려면 대시보드에서 Telegram 연결하기를 눌러주세요.",
+            },
+        )
+        return {"ok": True}
 
     if command in {"/notion_pages", "/pages"}:
         size = 5
@@ -359,7 +410,14 @@ async def telegram_webhook(
             "sendMessage",
             {
                 "chat_id": chat_id,
-                "text": "사용 가능한 명령어\n- /notion_pages\n- /notion_pages 5\n- /help",
+                "text": (
+                    "사용 가능한 명령어\n"
+                    "- /status\n"
+                    "- /notion_pages\n"
+                    "- /notion_pages 5\n"
+                    "- /disconnect\n"
+                    "- /help"
+                ),
             },
         )
         return {"ok": True}
