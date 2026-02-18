@@ -80,3 +80,57 @@ Supabase SQL Editor에서 `docs/sql/001_create_users_table.sql` 실행:
 추가로 `docs/sql/004_create_command_logs_table.sql` 실행:
 
 - 텔레그램 명령 감사 로그 테이블 생성
+
+## Production Env Checklist
+
+### Vercel (frontend)
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_API_BASE_URL` (예: `https://metel-production.up.railway.app`)
+
+### Railway (backend)
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `NOTION_CLIENT_ID`
+- `NOTION_CLIENT_SECRET`
+- `NOTION_REDIRECT_URI` (예: `https://metel-production.up.railway.app/api/oauth/notion/callback`)
+- `NOTION_STATE_SECRET`
+- `NOTION_TOKEN_ENCRYPTION_KEY`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_LINK_SECRET`
+- `TELEGRAM_WEBHOOK_SECRET` (선택)
+- `TELEGRAM_BOT_USERNAME` (선택)
+- `FRONTEND_URL` (예: `https://metel-frontend.vercel.app`)
+- `ALLOWED_ORIGINS` (예: `https://metel-frontend.vercel.app,http://localhost:3000`)
+
+## Deploy Verification
+
+1. Backend health
+   - `GET https://<railway-domain>/api/health` => `{"status":"ok"}`
+2. Frontend dashboard open
+   - 로그인 후 Notion/Telegram 섹션이 네트워크 오류 없이 로드
+3. Notion flow
+   - 대시보드 `Notion 연결하기` -> 연결 성공 -> 상태 `연결됨`
+4. Telegram flow
+   - 대시보드 `Telegram 연결하기` -> Telegram `/start ...` -> 상태 `연결됨`
+5. Telegram commands
+   - `/status`
+   - `/notion_pages`
+   - `/notion_create 테스트 페이지`
+6. Command logs
+   - 대시보드 `명령 로그` 최근 20건에 성공/실패 기록 표시
+
+## Troubleshooting
+
+- CORS 오류 (`No 'Access-Control-Allow-Origin' header`)
+  - Railway `ALLOWED_ORIGINS`에 현재 Vercel 도메인 포함
+  - 저장 후 Railway 재배포
+- Telegram webhook 무반응
+  - `getWebhookInfo` 확인
+  - `url`이 backend webhook 경로인지 확인
+  - `secret_token`과 `TELEGRAM_WEBHOOK_SECRET` 일치 확인
+- Telegram `/start` 연결 실패
+  - 대시보드에서 받은 최신 링크 사용 (만료 30분)
+  - 앱에서 반응 없으면 `/start <payload>` 직접 전송
