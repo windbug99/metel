@@ -2,6 +2,7 @@ import logging
 import base64
 import hashlib
 import hmac
+import re
 import time
 import uuid
 from json import JSONDecodeError
@@ -271,6 +272,39 @@ def _is_notion_connected(user_id: str) -> bool:
     return bool(result.data)
 
 
+def _map_natural_text_to_command(text: str) -> tuple[str, str]:
+    raw = text.strip()
+    lower = raw.lower()
+
+    if any(keyword in lower for keyword in ["도움말", "help", "메뉴", "menu", "명령어"]):
+        return "/help", ""
+
+    if any(keyword in lower for keyword in ["상태", "status", "연결상태"]):
+        return "/status", ""
+
+    if any(keyword in lower for keyword in ["페이지", "목록", "리스트", "최근"]) and any(
+        keyword in lower for keyword in ["notion", "노션"]
+    ):
+        count_match = re.search(r"\b(\d{1,2})\b", raw)
+        count = count_match.group(1) if count_match else ""
+        return "/notion_pages", count
+
+    if any(keyword in lower for keyword in ["만들", "생성", "create"]) and any(
+        keyword in lower for keyword in ["페이지", "notion", "노션"]
+    ):
+        title = raw
+        patterns = [
+            r"(?i)^\s*(notion|노션)\s*(페이지)?\s*(만들어줘|만들어|생성해줘|생성|create)\s*",
+            r"(?i)^\s*(페이지)\s*(만들어줘|만들어|생성해줘|생성)\s*",
+            r"(?i)^\s*(create)\s*",
+        ]
+        for pattern in patterns:
+            title = re.sub(pattern, "", title).strip(" :")
+        return "/notion_create", title
+
+    return "", ""
+
+
 def _record_command_log(
     *,
     user_id: str | None,
@@ -475,6 +509,11 @@ async def telegram_webhook(
     user_id = result.get("id")
     command, _, rest = text.partition(" ")
     command = command.split("@", 1)[0].strip().lower()
+    if not command.startswith("/"):
+        mapped_command, mapped_rest = _map_natural_text_to_command(text)
+        if mapped_command:
+            command = mapped_command
+            rest = mapped_rest
 
     if command in {"/status", "/my_status"}:
         notion_connected = _is_notion_connected(user_id)
