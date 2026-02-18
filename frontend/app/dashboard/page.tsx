@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { upsertUserProfile } from "@/lib/profile";
@@ -34,6 +34,13 @@ type TelegramStatus = {
   telegram_username?: string | null;
 } | null;
 
+type TelegramConnectInfo = {
+  deepLink: string;
+  startCommand: string;
+  botUsername: string;
+  expiresInSeconds: number;
+} | null;
+
 export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -48,6 +55,11 @@ export default function DashboardPage() {
   const [telegramStatusError, setTelegramStatusError] = useState<string | null>(null);
   const [telegramDisconnecting, setTelegramDisconnecting] = useState(false);
   const [telegramConnecting, setTelegramConnecting] = useState(false);
+  const [telegramConnectInfo, setTelegramConnectInfo] = useState<TelegramConnectInfo>(null);
+  const [telegramPolling, setTelegramPolling] = useState(false);
+
+  const telegramPollIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null);
+  const telegramPollTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
 
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -100,6 +112,18 @@ export default function DashboardPage() {
         const data: TelegramStatus = await response.json();
         setTelegramStatus(data);
         setTelegramStatusError(null);
+        if (data?.connected) {
+          setTelegramConnectInfo(null);
+          setTelegramPolling(false);
+          if (telegramPollIntervalRef.current) {
+            window.clearInterval(telegramPollIntervalRef.current);
+            telegramPollIntervalRef.current = null;
+          }
+          if (telegramPollTimeoutRef.current) {
+            window.clearTimeout(telegramPollTimeoutRef.current);
+            telegramPollTimeoutRef.current = null;
+          }
+        }
       } else {
         setTelegramStatusError("텔레그램 상태 조회에 실패했습니다.");
       }
@@ -107,6 +131,27 @@ export default function DashboardPage() {
       setTelegramStatusError("텔레그램 상태 조회 중 네트워크 오류가 발생했습니다.");
     }
   }, [apiBaseUrl, getAuthHeaders]);
+
+  const startTelegramStatusPolling = useCallback(() => {
+    if (telegramPollIntervalRef.current) {
+      window.clearInterval(telegramPollIntervalRef.current);
+    }
+    if (telegramPollTimeoutRef.current) {
+      window.clearTimeout(telegramPollTimeoutRef.current);
+    }
+
+    setTelegramPolling(true);
+    telegramPollIntervalRef.current = window.setInterval(() => {
+      void fetchTelegramStatus();
+    }, 3000);
+    telegramPollTimeoutRef.current = window.setTimeout(() => {
+      if (telegramPollIntervalRef.current) {
+        window.clearInterval(telegramPollIntervalRef.current);
+        telegramPollIntervalRef.current = null;
+      }
+      setTelegramPolling(false);
+    }, 120000);
+  }, [fetchTelegramStatus]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -117,6 +162,17 @@ export default function DashboardPage() {
       url.searchParams.delete("notion");
       window.history.replaceState({}, "", url.toString());
     }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (telegramPollIntervalRef.current) {
+        window.clearInterval(telegramPollIntervalRef.current);
+      }
+      if (telegramPollTimeoutRef.current) {
+        window.clearTimeout(telegramPollTimeoutRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -241,11 +297,18 @@ export default function DashboardPage() {
         setTelegramStatusError(message);
         return;
       }
+      const startCommand = typeof payload.start_command === "string" ? payload.start_command : "";
+      const botUsername = typeof payload.bot_username === "string" ? payload.bot_username : "";
+      const expiresInSeconds = typeof payload.expires_in_seconds === "number" ? payload.expires_in_seconds : 1800;
+      setTelegramConnectInfo({
+        deepLink: payload.deep_link,
+        startCommand,
+        botUsername,
+        expiresInSeconds,
+      });
       window.open(payload.deep_link, "_blank", "noopener,noreferrer");
       setTelegramStatusError(null);
-      window.setTimeout(() => {
-        void fetchTelegramStatus();
-      }, 2000);
+      startTelegramStatusPolling();
     } catch {
       setTelegramStatusError("텔레그램 연결 시작 중 네트워크 오류가 발생했습니다.");
     } finally {
@@ -270,12 +333,22 @@ export default function DashboardPage() {
         return;
       }
       setTelegramStatus({ connected: false, telegram_chat_id: null, telegram_username: null });
+      setTelegramConnectInfo(null);
       setTelegramStatusError(null);
       await fetchTelegramStatus();
     } catch {
       setTelegramStatusError("텔레그램 연결해제 중 네트워크 오류가 발생했습니다.");
     } finally {
       setTelegramDisconnecting(false);
+    }
+  };
+
+  const copyText = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setTelegramStatusError("복사 완료: 텔레그램 채팅창에 붙여넣어 실행하세요.");
+    } catch {
+      setTelegramStatusError("클립보드 복사에 실패했습니다. 직접 복사해주세요.");
     }
   };
 
@@ -440,6 +513,44 @@ export default function DashboardPage() {
             NEXT_PUBLIC_API_BASE_URL 설정 후 Telegram 연동 버튼을 사용할 수 있습니다.
           </p>
         )}
+        {telegramConnectInfo && !telegramStatus?.connected ? (
+          <div className="mt-4 rounded-lg border border-gray-200 p-4">
+            <p className="text-sm text-gray-700">
+              앱에서 Start가 반응하지 않으면 아래 명령을 복사해 {telegramConnectInfo.botUsername ? `@${telegramConnectInfo.botUsername}` : "봇"} 채팅에 직접 전송하세요.
+            </p>
+            <p className="mt-2 break-all rounded bg-gray-50 p-2 text-xs text-gray-700">
+              {telegramConnectInfo.startCommand || "(start 명령 없음)"}
+            </p>
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (telegramConnectInfo.startCommand) {
+                    void copyText(telegramConnectInfo.startCommand);
+                  }
+                }}
+                className="inline-block rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900"
+              >
+                시작 명령 복사
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  window.open(telegramConnectInfo.deepLink, "_blank", "noopener,noreferrer");
+                }}
+                className="inline-block rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900"
+              >
+                Telegram 다시 열기
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-gray-600">
+              {telegramPolling ? "연결 상태 자동 확인 중..." : "연결 상태 확인이 멈췄습니다. 필요하면 다시 연결하기를 눌러주세요."}
+            </p>
+            <p className="mt-1 text-xs text-gray-500">
+              링크 만료: 약 {Math.max(1, Math.floor(telegramConnectInfo.expiresInSeconds / 60))}분
+            </p>
+          </div>
+        ) : null}
       </section>
     </main>
   );

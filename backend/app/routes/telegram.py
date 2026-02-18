@@ -121,7 +121,14 @@ async def telegram_connect_link(request: Request):
 
     payload = _build_telegram_start_token(user_id=user_id, secret=settings.telegram_link_secret, ttl_seconds=1800)
     deep_link = f"https://t.me/{username}?start={payload}"
-    return {"ok": True, "deep_link": deep_link, "expires_in_seconds": 1800}
+    return {
+        "ok": True,
+        "bot_username": username,
+        "start_token": payload,
+        "start_command": f"/start {payload}",
+        "deep_link": deep_link,
+        "expires_in_seconds": 1800,
+    }
 
 
 @router.delete("/disconnect")
@@ -165,6 +172,8 @@ async def telegram_webhook(
     from_user = message.get("from", {})
     text = (message.get("text") or "").strip()
     chat_id = chat.get("id")
+
+    logger.info("telegram webhook received chat_id=%s has_text=%s", chat_id, bool(text))
 
     if not chat_id:
         return {"ok": True}
