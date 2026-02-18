@@ -42,6 +42,16 @@ type TelegramConnectInfo = {
   expiresInSeconds: number;
 } | null;
 
+type CommandLog = {
+  id: number;
+  channel: string;
+  command: string;
+  status: string;
+  error_code: string | null;
+  detail: string | null;
+  created_at: string;
+};
+
 export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -58,6 +68,9 @@ export default function DashboardPage() {
   const [telegramConnecting, setTelegramConnecting] = useState(false);
   const [telegramConnectInfo, setTelegramConnectInfo] = useState<TelegramConnectInfo>(null);
   const [telegramPolling, setTelegramPolling] = useState(false);
+  const [commandLogs, setCommandLogs] = useState<CommandLog[]>([]);
+  const [commandLogsLoading, setCommandLogsLoading] = useState(false);
+  const [commandLogsError, setCommandLogsError] = useState<string | null>(null);
 
   const telegramPollIntervalRef = useRef<number | null>(null);
   const telegramPollTimeoutRef = useRef<number | null>(null);
@@ -154,6 +167,29 @@ export default function DashboardPage() {
     }, 120000);
   }, [fetchTelegramStatus]);
 
+  const fetchCommandLogs = useCallback(async () => {
+    setCommandLogsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("command_logs")
+        .select("id, channel, command, status, error_code, detail, created_at")
+        .order("created_at", { ascending: false })
+        .limit(20);
+
+      if (error) {
+        setCommandLogsError("명령 로그 조회에 실패했습니다.");
+        return;
+      }
+
+      setCommandLogs(Array.isArray(data) ? (data as CommandLog[]) : []);
+      setCommandLogsError(null);
+    } catch {
+      setCommandLogsError("명령 로그 조회 중 네트워크 오류가 발생했습니다.");
+    } finally {
+      setCommandLogsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -212,6 +248,7 @@ export default function DashboardPage() {
 
         await fetchNotionStatus();
         await fetchTelegramStatus();
+        await fetchCommandLogs();
 
         if (!mounted) {
           return;
@@ -230,7 +267,7 @@ export default function DashboardPage() {
     return () => {
       mounted = false;
     };
-  }, [router, fetchNotionStatus, fetchTelegramStatus]);
+  }, [router, fetchNotionStatus, fetchTelegramStatus, fetchCommandLogs]);
 
   const handleDisconnectNotion = async () => {
     if (!apiBaseUrl || !profile?.id || disconnecting) {
@@ -568,6 +605,44 @@ export default function DashboardPage() {
             </p>
           </div>
         ) : null}
+      </section>
+      <section className="mt-6 rounded-xl border border-gray-200 p-5">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-xl font-semibold">명령 로그 (최근 20건)</h2>
+          <button
+            type="button"
+            onClick={() => {
+              void fetchCommandLogs();
+            }}
+            disabled={commandLogsLoading}
+            className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+          >
+            {commandLogsLoading ? "조회 중..." : "새로고침"}
+          </button>
+        </div>
+        {commandLogsError ? <p className="mt-3 text-sm text-amber-700">{commandLogsError}</p> : null}
+        {commandLogs.length > 0 ? (
+          <ul className="mt-4 space-y-2">
+            {commandLogs.map((log) => (
+              <li key={log.id} className="rounded-md border border-gray-200 p-3">
+                <p className="text-sm font-medium text-gray-900">
+                  {log.command} · {log.status}
+                </p>
+                <p className="mt-1 text-xs text-gray-600">
+                  {new Date(log.created_at).toLocaleString()} · {log.channel}
+                </p>
+                {log.error_code ? (
+                  <p className="mt-1 text-xs text-amber-700">error_code: {log.error_code}</p>
+                ) : null}
+                {log.detail ? (
+                  <p className="mt-1 text-xs text-gray-600">detail: {log.detail}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-sm text-gray-600">아직 기록된 명령 로그가 없습니다.</p>
+        )}
       </section>
     </main>
   );
