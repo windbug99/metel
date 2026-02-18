@@ -1,3 +1,5 @@
+import AuthPanel from "@/components/auth-panel";
+
 export default function Home() {
   return (
     <main className="mx-auto max-w-3xl px-6 py-16">
@@ -5,6 +7,7 @@ export default function Home() {
       <p className="mt-4 text-lg text-gray-700">
         내 모든 서비스를 아는 AI 비서 프로토타입
       </p>
+      <AuthPanel />
     </main>
   );
 }
