@@ -1,6 +1,7 @@
 import logging
 from urllib.parse import urlencode
 from datetime import datetime, timezone
+from json import JSONDecodeError
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -136,19 +137,20 @@ async def notion_pages_list(user_id: str = Query(..., min_length=10), page_size:
         settings = get_settings()
         supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
 
-        token_row = (
+        token_result = (
             supabase.table("oauth_tokens")
             .select("access_token_encrypted")
             .eq("user_id", user_id)
             .eq("provider", "notion")
-            .maybe_single()
+            .limit(1)
             .execute()
         )
 
-        if not token_row.data:
+        rows = token_result.data or []
+        if not rows:
             raise HTTPException(status_code=400, detail="Notion이 연결되어 있지 않습니다. 먼저 연동을 완료해주세요.")
 
-        encrypted = token_row.data.get("access_token_encrypted")
+        encrypted = rows[0].get("access_token_encrypted")
         if not encrypted:
             raise HTTPException(status_code=500, detail="저장된 Notion 토큰을 찾을 수 없습니다.")
 
@@ -180,7 +182,12 @@ async def notion_pages_list(user_id: str = Query(..., min_length=10), page_size:
                 detail="Notion 페이지 목록 조회에 실패했습니다. 연결을 해제 후 다시 연동해주세요.",
             )
 
-        payload = response.json()
+        try:
+            payload = response.json()
+        except JSONDecodeError as exc:
+            logger.exception("notion pages response parse failed: %s", exc)
+            raise HTTPException(status_code=502, detail="Notion 응답 파싱에 실패했습니다.") from exc
+
         pages = payload.get("results", [])
         normalized = [
             {
