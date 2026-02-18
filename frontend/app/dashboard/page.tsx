@@ -56,6 +56,17 @@ export default function DashboardPage() {
   );
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("notion")) {
+      url.searchParams.delete("notion");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []);
+
+  useEffect(() => {
     let mounted = true;
 
     const load = async () => {
@@ -125,7 +136,7 @@ export default function DashboardPage() {
         setNotionStatusError("Notion 연결해제에 실패했습니다.");
         return;
       }
-      await fetchNotionStatus(profile.id);
+      setNotionStatus({ connected: false, integration: null });
       setNotionStatusError(null);
     } catch {
       setNotionStatusError("Notion 연결해제 중 네트워크 오류가 발생했습니다.");

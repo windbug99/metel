@@ -81,19 +81,23 @@ async def notion_oauth_callback(code: str, state: str):
 
 @router.get("/status")
 async def notion_oauth_status(user_id: str = Query(..., min_length=10)):
-    settings = get_settings()
-    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    try:
+        settings = get_settings()
+        supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
 
-    result = (
-        supabase.table("oauth_tokens")
-        .select("workspace_name, workspace_id, updated_at")
-        .eq("user_id", user_id)
-        .eq("provider", "notion")
-        .maybe_single()
-        .execute()
-    )
+        result = (
+            supabase.table("oauth_tokens")
+            .select("workspace_name, workspace_id, updated_at")
+            .eq("user_id", user_id)
+            .eq("provider", "notion")
+            .maybe_single()
+            .execute()
+        )
 
-    return {"connected": bool(result.data), "integration": result.data}
+        return {"connected": bool(result.data), "integration": result.data}
+    except Exception:
+        # Avoid bubbling runtime errors as opaque CORS failures on the frontend.
+        return {"connected": False, "integration": None}
 
 
 @router.delete("/disconnect")
