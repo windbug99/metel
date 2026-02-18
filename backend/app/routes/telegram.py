@@ -275,6 +275,10 @@ def _is_notion_connected(user_id: str) -> bool:
 def _map_natural_text_to_command(text: str) -> tuple[str, str]:
     raw = text.strip()
     lower = raw.lower()
+    list_keywords = ["목록", "리스트", "최근", "조회", "보여", "불러", "확인"]
+    create_keywords = ["만들", "생성", "create", "추가", "작성"]
+    notion_keywords = ["notion", "노션"]
+    page_keywords = ["페이지", "문서"]
 
     if any(keyword in lower for keyword in ["도움말", "help", "메뉴", "menu", "명령어"]):
         return "/help", ""
@@ -282,23 +286,29 @@ def _map_natural_text_to_command(text: str) -> tuple[str, str]:
     if any(keyword in lower for keyword in ["상태", "status", "연결상태"]):
         return "/status", ""
 
-    if any(keyword in lower for keyword in ["만들", "생성", "create"]) and any(
-        keyword in lower for keyword in ["페이지", "notion", "노션"]
+    # 생성 의도는 목록보다 먼저 매칭해야 오탐이 줄어듭니다.
+    if any(keyword in lower for keyword in create_keywords) and (
+        any(keyword in lower for keyword in page_keywords) or any(keyword in lower for keyword in notion_keywords)
     ):
         title = raw
         patterns = [
-            r"(?i)^\s*(notion|노션)\s*(페이지)?\s*(만들어줘|만들어|생성해줘|생성|create)\s*",
-            r"(?i)^\s*(페이지)\s*(만들어줘|만들어|생성해줘|생성)\s*",
+            r"(?i)^\s*(notion|노션)\s*(페이지|문서)?\s*(만들어줘|만들어|생성해줘|생성|추가해줘|작성해줘|create)\s*",
+            r"(?i)^\s*(페이지|문서)\s*(만들어줘|만들어|생성해줘|생성|추가해줘|작성해줘)\s*",
             r"(?i)^\s*(create)\s*",
         ]
         for pattern in patterns:
             title = re.sub(pattern, "", title).strip(" :")
+        # 조사/접속어 등 불필요한 앞부분 제거
+        title = re.sub(r"^(으로|로|에|를|을)\s*", "", title).strip()
+        title = re.sub(r"\s+(만들어줘|생성해줘|작성해줘)$", "", title, flags=re.IGNORECASE).strip()
         return "/notion_create", title
 
-    if any(keyword in lower for keyword in ["페이지", "목록", "리스트", "최근"]) and any(
-        keyword in lower for keyword in ["notion", "노션"]
+    if (
+        (any(keyword in lower for keyword in list_keywords) or "몇 개" in raw or "몇개" in raw)
+        and (any(keyword in lower for keyword in notion_keywords) or any(keyword in lower for keyword in page_keywords))
+        and not any(keyword in lower for keyword in create_keywords)
     ):
-        count_match = re.search(r"\b(\d{1,2})\b", raw)
+        count_match = re.search(r"(\d{1,2})\s*(개|개만|개만요|개 보여|개 보여줘)?", raw)
         count = count_match.group(1) if count_match else ""
         return "/notion_pages", count
 
