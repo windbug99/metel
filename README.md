@@ -76,3 +76,7 @@ Supabase SQL Editor에서 `docs/sql/001_create_users_table.sql` 실행:
 추가로 `docs/sql/003_add_telegram_columns.sql` 실행:
 
 - `users` 테이블에 텔레그램 연결 컬럼 추가
+
+추가로 `docs/sql/004_create_command_logs_table.sql` 실행:
+
+- 텔레그램 명령 감사 로그 테이블 생성

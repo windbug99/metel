@@ -271,6 +271,32 @@ def _is_notion_connected(user_id: str) -> bool:
     return bool(result.data)
 
 
+def _record_command_log(
+    *,
+    user_id: str | None,
+    chat_id: int | None,
+    command: str,
+    status: str,
+    error_code: str | None = None,
+    detail: str | None = None,
+):
+    try:
+        settings = get_settings()
+        supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+        payload = {
+            "user_id": user_id,
+            "channel": "telegram",
+            "chat_id": chat_id,
+            "command": command,
+            "status": status,
+            "error_code": error_code,
+            "detail": detail,
+        }
+        supabase.table("command_logs").insert(payload).execute()
+    except Exception as exc:
+        logger.exception("failed to record command log: %s", exc)
+
+
 @router.get("/status")
 async def telegram_status(request: Request):
     try:
@@ -358,10 +384,19 @@ async def telegram_webhook(
         return {"ok": True}
 
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    command_token, _, _ = text.partition(" ")
+    normalized_command = command_token.split("@", 1)[0].strip().lower() if command_token else "(empty)"
 
     if text.startswith("/start"):
         payload = text.split(" ", 1)[1].strip() if " " in text else ""
         if not payload:
+            _record_command_log(
+                user_id=None,
+                chat_id=chat_id,
+                command="/start",
+                status="error",
+                error_code="missing_payload",
+            )
             await _telegram_api(
                 "sendMessage",
                 {
@@ -373,6 +408,13 @@ async def telegram_webhook(
 
         user_id = _verify_telegram_start_token(payload, settings.telegram_link_secret)
         if not user_id:
+            _record_command_log(
+                user_id=None,
+                chat_id=chat_id,
+                command="/start",
+                status="error",
+                error_code="invalid_or_expired_payload",
+            )
             await _telegram_api(
                 "sendMessage",
                 {
@@ -394,6 +436,13 @@ async def telegram_webhook(
             .eq("id", user_id)
             .execute()
         )
+        _record_command_log(
+            user_id=user_id,
+            chat_id=chat_id,
+            command="/start",
+            status="success",
+            detail="telegram linked",
+        )
 
         await _telegram_api(
             "sendMessage",
@@ -407,6 +456,13 @@ async def telegram_webhook(
     result = _load_linked_user_by_chat_id(chat_id)
 
     if not result:
+        _record_command_log(
+            user_id=None,
+            chat_id=chat_id,
+            command=normalized_command,
+            status="error",
+            error_code="telegram_not_linked",
+        )
         await _telegram_api(
             "sendMessage",
             {
@@ -422,6 +478,13 @@ async def telegram_webhook(
 
     if command in {"/status", "/my_status"}:
         notion_connected = _is_notion_connected(user_id)
+        _record_command_log(
+            user_id=user_id,
+            chat_id=chat_id,
+            command=command,
+            status="success",
+            detail=f"notion_connected={notion_connected}",
+        )
         await _telegram_api(
             "sendMessage",
             {
@@ -438,6 +501,13 @@ async def telegram_webhook(
 
     if command in {"/disconnect", "/unlink"}:
         _disconnect_telegram_user(user_id)
+        _record_command_log(
+            user_id=user_id,
+            chat_id=chat_id,
+            command=command,
+            status="success",
+            detail="telegram disconnected",
+        )
         await _telegram_api(
             "sendMessage",
             {
@@ -455,17 +525,45 @@ async def telegram_webhook(
             pages = await _fetch_notion_pages_for_user(user_id=user_id, page_size=size)
             if not pages:
                 msg = "최근 Notion 페이지를 찾지 못했습니다."
+                _record_command_log(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    command=command,
+                    status="success",
+                    detail="pages_count=0",
+                )
             else:
                 lines = ["최근 Notion 페이지입니다:"]
                 for idx, page in enumerate(pages, start=1):
                     lines.append(f"{idx}. {page['title']}")
                     lines.append(f"   {page['url']}")
                 msg = "\n".join(lines)
+                _record_command_log(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    command=command,
+                    status="success",
+                    detail=f"pages_count={len(pages)}",
+                )
         except HTTPException as exc:
             if exc.detail == "notion_not_connected":
                 msg = "Notion이 아직 연결되지 않았습니다. 대시보드에서 먼저 Notion 연동을 완료해주세요."
+                _record_command_log(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    command=command,
+                    status="error",
+                    error_code="notion_not_connected",
+                )
             else:
                 msg = "Notion 페이지 조회에 실패했습니다. 잠시 후 다시 시도해주세요."
+                _record_command_log(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    command=command,
+                    status="error",
+                    error_code=str(exc.detail),
+                )
 
         await _telegram_api(
             "sendMessage",
@@ -476,6 +574,13 @@ async def telegram_webhook(
     if command in {"/notion_create", "/create"}:
         title = rest.strip()
         if not title:
+            _record_command_log(
+                user_id=user_id,
+                chat_id=chat_id,
+                command=command,
+                status="error",
+                error_code="missing_title",
+            )
             await _telegram_api(
                 "sendMessage",
                 {
@@ -485,6 +590,13 @@ async def telegram_webhook(
             )
             return {"ok": True}
         if len(title) > 100:
+            _record_command_log(
+                user_id=user_id,
+                chat_id=chat_id,
+                command=command,
+                status="error",
+                error_code="title_too_long",
+            )
             await _telegram_api(
                 "sendMessage",
                 {"chat_id": chat_id, "text": "제목은 100자 이내로 입력해주세요."},
@@ -493,11 +605,32 @@ async def telegram_webhook(
         try:
             page = await _create_notion_page_for_user(user_id=user_id, title=title)
             msg = f"Notion 페이지를 생성했습니다.\n- 제목: {page['title']}\n- 링크: {page['url']}"
+            _record_command_log(
+                user_id=user_id,
+                chat_id=chat_id,
+                command=command,
+                status="success",
+                detail=f"created_page_id={page.get('id')}",
+            )
         except HTTPException as exc:
             if exc.detail == "notion_not_connected":
                 msg = "Notion이 아직 연결되지 않았습니다. 대시보드에서 먼저 Notion 연동을 완료해주세요."
+                _record_command_log(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    command=command,
+                    status="error",
+                    error_code="notion_not_connected",
+                )
             else:
                 msg = "Notion 페이지 생성에 실패했습니다. 권한(콘텐츠 입력)과 연동 상태를 확인해주세요."
+                _record_command_log(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    command=command,
+                    status="error",
+                    error_code=str(exc.detail),
+                )
 
         await _telegram_api(
             "sendMessage",
@@ -506,6 +639,12 @@ async def telegram_webhook(
         return {"ok": True}
 
     if command in {"/help", "/menu"}:
+        _record_command_log(
+            user_id=user_id,
+            chat_id=chat_id,
+            command=command,
+            status="success",
+        )
         await _telegram_api(
             "sendMessage",
             {
@@ -523,6 +662,13 @@ async def telegram_webhook(
         )
         return {"ok": True}
 
+    _record_command_log(
+        user_id=user_id,
+        chat_id=chat_id,
+        command=command or "(empty)",
+        status="error",
+        error_code="unknown_command",
+    )
     await _telegram_api(
         "sendMessage",
         {
