@@ -4,10 +4,11 @@ from datetime import datetime, timezone
 from json import JSONDecodeError
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from supabase import create_client
 
+from app.core.auth import get_authenticated_user_id
 from app.core.config import get_settings
 from app.core.state import build_state, verify_state
 from app.security.token_vault import TokenVault
@@ -27,9 +28,10 @@ def _extract_page_title(page: dict) -> str:
     return "(제목 없음)"
 
 
-@router.get("/start")
-async def notion_oauth_start(user_id: str = Query(..., min_length=10)):
+@router.post("/start")
+async def notion_oauth_start(request: Request):
     settings = get_settings()
+    user_id = await get_authenticated_user_id(request)
     state = build_state(user_id=user_id, secret=settings.notion_state_secret)
 
     query = urlencode(
@@ -42,7 +44,7 @@ async def notion_oauth_start(user_id: str = Query(..., min_length=10)):
         }
     )
     auth_url = f"https://api.notion.com/v1/oauth/authorize?{query}"
-    return RedirectResponse(url=auth_url, status_code=302)
+    return {"ok": True, "auth_url": auth_url}
 
 
 @router.get("/callback")
@@ -94,8 +96,9 @@ async def notion_oauth_callback(code: str, state: str):
 
 
 @router.get("/status")
-async def notion_oauth_status(user_id: str = Query(..., min_length=10)):
+async def notion_oauth_status(request: Request):
     try:
+        user_id = await get_authenticated_user_id(request)
         settings = get_settings()
         supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
 
@@ -116,7 +119,8 @@ async def notion_oauth_status(user_id: str = Query(..., min_length=10)):
 
 
 @router.delete("/disconnect")
-async def notion_oauth_disconnect(user_id: str = Query(..., min_length=10)):
+async def notion_oauth_disconnect(request: Request):
+    user_id = await get_authenticated_user_id(request)
     settings = get_settings()
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
 
@@ -132,8 +136,9 @@ async def notion_oauth_disconnect(user_id: str = Query(..., min_length=10)):
 
 
 @router.get("/pages")
-async def notion_pages_list(user_id: str = Query(..., min_length=10), page_size: int = Query(5, ge=1, le=20)):
+async def notion_pages_list(request: Request, page_size: int = Query(5, ge=1, le=20)):
     try:
+        user_id = await get_authenticated_user_id(request)
         settings = get_settings()
         supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
 

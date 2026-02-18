@@ -41,6 +41,17 @@ export default function DashboardPage() {
 
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
 
+  const getAuthHeaders = useCallback(async () => {
+    const {
+      data: { session }
+    } = await supabase.auth.getSession();
+    const accessToken = session?.access_token;
+    if (!accessToken) {
+      throw new Error("로그인 세션을 찾을 수 없습니다.");
+    }
+    return { Authorization: `Bearer ${accessToken}` };
+  }, []);
+
   const fetchNotionStatus = useCallback(
     async (userId: string) => {
       if (!apiBaseUrl) {
@@ -48,8 +59,10 @@ export default function DashboardPage() {
       }
 
       try {
+        const headers = await getAuthHeaders();
         const notionResponse = await fetch(
-          `${apiBaseUrl}/api/oauth/notion/status?user_id=${encodeURIComponent(userId)}`
+          `${apiBaseUrl}/api/oauth/notion/status`,
+          { headers }
         );
         if (notionResponse.ok) {
           const notionData: NotionStatus = await notionResponse.json();
@@ -62,7 +75,7 @@ export default function DashboardPage() {
         setNotionStatusError("Notion 상태 조회 중 네트워크 오류가 발생했습니다.");
       }
     },
-    [apiBaseUrl]
+    [apiBaseUrl, getAuthHeaders]
   );
 
   useEffect(() => {
@@ -138,9 +151,10 @@ export default function DashboardPage() {
 
     setDisconnecting(true);
     try {
+      const headers = await getAuthHeaders();
       const response = await fetch(
-        `${apiBaseUrl}/api/oauth/notion/disconnect?user_id=${encodeURIComponent(profile.id)}`,
-        { method: "DELETE" }
+        `${apiBaseUrl}/api/oauth/notion/disconnect`,
+        { method: "DELETE", headers }
       );
       if (!response.ok) {
         setNotionStatusError("Notion 연결해제에 실패했습니다.");
@@ -155,6 +169,28 @@ export default function DashboardPage() {
     }
   };
 
+  const handleConnectNotion = async () => {
+    if (!apiBaseUrl || !profile?.id) {
+      return;
+    }
+
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/oauth/notion/start`, {
+        method: "POST",
+        headers,
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.auth_url) {
+        setNotionStatusError("Notion 연결 시작에 실패했습니다.");
+        return;
+      }
+      window.location.href = payload.auth_url;
+    } catch {
+      setNotionStatusError("Notion 연결 시작 중 네트워크 오류가 발생했습니다.");
+    }
+  };
+
   const handleLoadNotionPages = async () => {
     if (!apiBaseUrl || !profile?.id || loadingPages || !notionStatus?.connected) {
       return;
@@ -163,13 +199,15 @@ export default function DashboardPage() {
     setLoadingPages(true);
     setPagesError(null);
     try {
+      const headers = await getAuthHeaders();
       const response = await fetch(
-        `${apiBaseUrl}/api/oauth/notion/pages?user_id=${encodeURIComponent(profile.id)}&page_size=5`
+        `${apiBaseUrl}/api/oauth/notion/pages?page_size=5`,
+        { headers }
       );
       const payload = await response.json();
-      if (!response.ok || !payload?.ok) {
-        const message =
-          payload?.error?.message ?? payload?.detail ?? "Notion 페이지 조회에 실패했습니다.";
+                if (!response.ok || !payload?.ok) {
+                  const message =
+                    payload?.error?.message ?? payload?.detail ?? "Notion 페이지 조회에 실패했습니다.";
         setPagesError(message);
         return;
       }
@@ -212,12 +250,15 @@ export default function DashboardPage() {
         ) : null}
         {apiBaseUrl && profile?.id ? (
           <div className="mt-4 flex gap-2">
-            <a
-              href={`${apiBaseUrl}/api/oauth/notion/start?user_id=${encodeURIComponent(profile.id)}`}
+            <button
+              type="button"
+              onClick={() => {
+                void handleConnectNotion();
+              }}
               className="inline-block rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white"
             >
               Notion 연결하기
-            </a>
+            </button>
             {notionStatus?.connected ? (
               <button
                 type="button"

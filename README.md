@@ -42,7 +42,8 @@ Monorepo for metel prototype.
 
 ## Notion Test Endpoint
 
-- `GET /api/oauth/notion/pages?user_id=<USER_UUID>&page_size=5`
+- `GET /api/oauth/notion/pages?page_size=5`
+- `Authorization: Bearer <Supabase access token>` 헤더가 필요합니다.
 - Notion 연동 후 사용자 페이지 목록을 반환합니다.
 
 ## Supabase SQL
