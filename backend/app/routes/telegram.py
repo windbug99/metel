@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import time
 import uuid
+from json import JSONDecodeError
 from datetime import datetime, timezone
 
 import httpx
@@ -12,6 +13,7 @@ from supabase import create_client
 
 from app.core.auth import get_authenticated_user_id
 from app.core.config import get_settings
+from app.security.token_vault import TokenVault
 
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 logger = logging.getLogger(__name__)
@@ -84,6 +86,77 @@ async def _telegram_api(method: str, payload: dict):
         logger.warning("telegram api response not ok: %s", data)
         raise HTTPException(status_code=400, detail="Telegram API 응답이 비정상입니다.")
     return data.get("result")
+
+
+def _extract_page_title(page: dict) -> str:
+    properties = page.get("properties", {})
+    for value in properties.values():
+        if value.get("type") == "title":
+            chunks = value.get("title", [])
+            text = "".join(chunk.get("plain_text", "") for chunk in chunks).strip()
+            if text:
+                return text
+    return "(제목 없음)"
+
+
+async def _fetch_notion_pages_for_user(user_id: str, page_size: int = 5) -> list[dict]:
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+
+    token_result = (
+        supabase.table("oauth_tokens")
+        .select("access_token_encrypted")
+        .eq("user_id", user_id)
+        .eq("provider", "notion")
+        .limit(1)
+        .execute()
+    )
+
+    rows = token_result.data or []
+    if not rows:
+        raise HTTPException(status_code=400, detail="notion_not_connected")
+
+    encrypted = rows[0].get("access_token_encrypted")
+    if not encrypted:
+        raise HTTPException(status_code=500, detail="notion_token_missing")
+
+    token = TokenVault(settings.notion_token_encryption_key).decrypt(encrypted)
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.post(
+            "https://api.notion.com/v1/search",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Notion-Version": "2022-06-28",
+                "Content-Type": "application/json",
+            },
+            json={
+                "filter": {"property": "object", "value": "page"},
+                "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+                "page_size": page_size,
+            },
+        )
+
+    if response.status_code >= 400:
+        logger.warning("telegram notion pages API failed: %s %s", response.status_code, response.text)
+        raise HTTPException(status_code=400, detail="notion_api_failed")
+
+    try:
+        payload = response.json()
+    except JSONDecodeError as exc:
+        logger.exception("telegram notion pages parse failed: %s", exc)
+        raise HTTPException(status_code=502, detail="notion_parse_failed") from exc
+
+    pages = payload.get("results", [])
+    return [
+        {
+            "id": page.get("id"),
+            "title": _extract_page_title(page),
+            "url": page.get("url"),
+            "last_edited_time": page.get("last_edited_time"),
+        }
+        for page in pages
+    ]
 
 
 @router.get("/status")
@@ -251,11 +324,51 @@ async def telegram_webhook(
         )
         return {"ok": True}
 
+    user_id = result.data.get("id")
+    command, _, rest = text.partition(" ")
+    command = command.split("@", 1)[0].strip().lower()
+
+    if command in {"/notion_pages", "/pages"}:
+        size = 5
+        if rest.strip().isdigit():
+            size = max(1, min(10, int(rest.strip())))
+        try:
+            pages = await _fetch_notion_pages_for_user(user_id=user_id, page_size=size)
+            if not pages:
+                msg = "최근 Notion 페이지를 찾지 못했습니다."
+            else:
+                lines = ["최근 Notion 페이지입니다:"]
+                for idx, page in enumerate(pages, start=1):
+                    lines.append(f"{idx}. {page['title']}")
+                    lines.append(f"   {page['url']}")
+                msg = "\n".join(lines)
+        except HTTPException as exc:
+            if exc.detail == "notion_not_connected":
+                msg = "Notion이 아직 연결되지 않았습니다. 대시보드에서 먼저 Notion 연동을 완료해주세요."
+            else:
+                msg = "Notion 페이지 조회에 실패했습니다. 잠시 후 다시 시도해주세요."
+
+        await _telegram_api(
+            "sendMessage",
+            {"chat_id": chat_id, "text": msg, "disable_web_page_preview": True},
+        )
+        return {"ok": True}
+
+    if command in {"/help", "/menu"}:
+        await _telegram_api(
+            "sendMessage",
+            {
+                "chat_id": chat_id,
+                "text": "사용 가능한 명령어\n- /notion_pages\n- /notion_pages 5\n- /help",
+            },
+        )
+        return {"ok": True}
+
     await _telegram_api(
         "sendMessage",
         {
             "chat_id": chat_id,
-            "text": "연동 확인 완료. 다음 단계에서 AI 응답 기능을 연결합니다.",
+            "text": "명령을 이해하지 못했습니다. /help 를 입력해 사용 가능한 명령을 확인해주세요.",
         },
     )
     return {"ok": True}
