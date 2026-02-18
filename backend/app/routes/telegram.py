@@ -39,17 +39,23 @@ def _build_telegram_start_token(user_id: str, secret: str, ttl_seconds: int = 18
     uid = uuid.UUID(user_id)
     uid_part = _b64url_no_pad(uid.bytes)
     exp_part = int(time.time()) + ttl_seconds
-    exp_part_str = format(exp_part, "x")
-    payload = f"{uid_part}.{exp_part_str}"
+    exp_part_str = format(exp_part, "08x")
+    payload = f"{uid_part}{exp_part_str}"
     sig = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).digest()[:12]
     sig_part = _b64url_no_pad(sig)
-    return f"{payload}.{sig_part}"
+    return f"{payload}{sig_part}"
 
 
 def _verify_telegram_start_token(token: str, secret: str) -> str | None:
     try:
-        uid_part, exp_part_str, sig_part = token.split(".", 2)
-        payload = f"{uid_part}.{exp_part_str}"
+        # Telegram deep-link payload: 1-64 chars, only A-Z a-z 0-9 _ -
+        # token format (46 chars): [uid:22][exp_hex:8][sig:16]
+        if len(token) != 46:
+            return None
+        uid_part = token[:22]
+        exp_part_str = token[22:30]
+        sig_part = token[30:]
+        payload = f"{uid_part}{exp_part_str}"
         expected_sig = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).digest()[:12]
         expected_sig_part = _b64url_no_pad(expected_sig)
         if not hmac.compare_digest(sig_part, expected_sig_part):
@@ -121,12 +127,14 @@ async def telegram_connect_link(request: Request):
 
     payload = _build_telegram_start_token(user_id=user_id, secret=settings.telegram_link_secret, ttl_seconds=1800)
     deep_link = f"https://t.me/{username}?start={payload}"
+    tg_deep_link = f"tg://resolve?domain={username}&start={payload}"
     return {
         "ok": True,
         "bot_username": username,
         "start_token": payload,
         "start_command": f"/start {payload}",
         "deep_link": deep_link,
+        "tg_deep_link": tg_deep_link,
         "expires_in_seconds": 1800,
     }
 

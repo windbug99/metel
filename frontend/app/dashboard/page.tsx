@@ -36,6 +36,7 @@ type TelegramStatus = {
 
 type TelegramConnectInfo = {
   deepLink: string;
+  tgDeepLink: string;
   startCommand: string;
   botUsername: string;
   expiresInSeconds: number;
@@ -300,13 +301,22 @@ export default function DashboardPage() {
       const startCommand = typeof payload.start_command === "string" ? payload.start_command : "";
       const botUsername = typeof payload.bot_username === "string" ? payload.bot_username : "";
       const expiresInSeconds = typeof payload.expires_in_seconds === "number" ? payload.expires_in_seconds : 1800;
+      const tgDeepLink = typeof payload.tg_deep_link === "string" ? payload.tg_deep_link : "";
       setTelegramConnectInfo({
         deepLink: payload.deep_link,
+        tgDeepLink,
         startCommand,
         botUsername,
         expiresInSeconds,
       });
-      window.open(payload.deep_link, "_blank", "noopener,noreferrer");
+      if (tgDeepLink) {
+        window.location.href = tgDeepLink;
+        window.setTimeout(() => {
+          window.open(payload.deep_link, "_blank", "noopener,noreferrer");
+        }, 500);
+      } else {
+        window.open(payload.deep_link, "_blank", "noopener,noreferrer");
+      }
       setTelegramStatusError(null);
       startTelegramStatusPolling();
     } catch {
@@ -536,6 +546,13 @@ export default function DashboardPage() {
               <button
                 type="button"
                 onClick={() => {
+                  if (telegramConnectInfo.tgDeepLink) {
+                    window.location.href = telegramConnectInfo.tgDeepLink;
+                    window.setTimeout(() => {
+                      window.open(telegramConnectInfo.deepLink, "_blank", "noopener,noreferrer");
+                    }, 500);
+                    return;
+                  }
                   window.open(telegramConnectInfo.deepLink, "_blank", "noopener,noreferrer");
                 }}
                 className="inline-block rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900"
