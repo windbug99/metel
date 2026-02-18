@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { upsertUserProfile } from "@/lib/profile";
 
 export default function AuthCallbackPage() {
   const router = useRouter();
@@ -21,6 +22,13 @@ export default function AuthCallbackPage() {
 
       if (error) {
         setErrorMessage(error.message);
+        return;
+      }
+
+      const { error: profileError } = await upsertUserProfile();
+
+      if (profileError) {
+        setErrorMessage(profileError.message);
         return;
       }
 

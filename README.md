@@ -18,3 +18,10 @@ Monorepo for metel prototype.
 
 - `http://localhost:3000/auth/callback`
 - `https://<your-vercel-domain>/auth/callback`
+
+## Supabase SQL
+
+Supabase SQL Editor에서 `docs/sql/001_create_users_table.sql` 실행:
+
+- `users` 프로필 테이블 생성
+- RLS 및 본인 데이터 접근 정책 생성

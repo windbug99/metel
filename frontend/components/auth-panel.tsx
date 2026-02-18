@@ -74,6 +74,12 @@ export default function AuthPanel() {
       {user ? (
         <div className="space-y-3">
           <p className="text-sm text-gray-700">로그인됨: {user.email}</p>
+          <a
+            href="/dashboard"
+            className="inline-block rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900"
+          >
+            대시보드 이동
+          </a>
           <button
             type="button"
             onClick={signOut}
