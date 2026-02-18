@@ -1,4 +1,9 @@
 import logging
+import base64
+import hashlib
+import hmac
+import time
+import uuid
 from datetime import datetime, timezone
 
 import httpx
@@ -7,7 +12,6 @@ from supabase import create_client
 
 from app.core.auth import get_authenticated_user_id
 from app.core.config import get_settings
-from app.core.state import build_state, verify_state
 
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 logger = logging.getLogger(__name__)
@@ -20,6 +24,45 @@ def _require_telegram_settings():
     if not settings.telegram_link_secret:
         raise HTTPException(status_code=503, detail="서버에 TELEGRAM_LINK_SECRET이 설정되지 않았습니다.")
     return settings
+
+
+def _b64url_no_pad(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+
+
+def _b64url_decode_no_pad(data: str) -> bytes:
+    padding = "=" * ((4 - len(data) % 4) % 4)
+    return base64.urlsafe_b64decode((data + padding).encode("utf-8"))
+
+
+def _build_telegram_start_token(user_id: str, secret: str, ttl_seconds: int = 1800) -> str:
+    uid = uuid.UUID(user_id)
+    uid_part = _b64url_no_pad(uid.bytes)
+    exp_part = int(time.time()) + ttl_seconds
+    exp_part_str = format(exp_part, "x")
+    payload = f"{uid_part}.{exp_part_str}"
+    sig = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).digest()[:12]
+    sig_part = _b64url_no_pad(sig)
+    return f"{payload}.{sig_part}"
+
+
+def _verify_telegram_start_token(token: str, secret: str) -> str | None:
+    try:
+        uid_part, exp_part_str, sig_part = token.split(".", 2)
+        payload = f"{uid_part}.{exp_part_str}"
+        expected_sig = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).digest()[:12]
+        expected_sig_part = _b64url_no_pad(expected_sig)
+        if not hmac.compare_digest(sig_part, expected_sig_part):
+            return None
+
+        expires_at = int(exp_part_str, 16)
+        if expires_at < int(time.time()):
+            return None
+
+        uid_bytes = _b64url_decode_no_pad(uid_part)
+        return str(uuid.UUID(bytes=uid_bytes))
+    except Exception:
+        return None
 
 
 async def _telegram_api(method: str, payload: dict):
@@ -76,7 +119,7 @@ async def telegram_connect_link(request: Request):
     if not username:
         raise HTTPException(status_code=500, detail="텔레그램 봇 username을 확인할 수 없습니다.")
 
-    payload = build_state(user_id=user_id, secret=settings.telegram_link_secret, ttl_seconds=1800)
+    payload = _build_telegram_start_token(user_id=user_id, secret=settings.telegram_link_secret, ttl_seconds=1800)
     deep_link = f"https://t.me/{username}?start={payload}"
     return {"ok": True, "deep_link": deep_link, "expires_in_seconds": 1800}
 
@@ -140,7 +183,7 @@ async def telegram_webhook(
             )
             return {"ok": True}
 
-        user_id = verify_state(payload, settings.telegram_link_secret)
+        user_id = _verify_telegram_start_token(payload, settings.telegram_link_secret)
         if not user_id:
             await _telegram_api(
                 "sendMessage",
