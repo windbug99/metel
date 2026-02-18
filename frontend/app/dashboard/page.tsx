@@ -28,6 +28,12 @@ type NotionPage = {
   last_edited_time: string;
 };
 
+type TelegramStatus = {
+  connected: boolean;
+  telegram_chat_id?: number | null;
+  telegram_username?: string | null;
+} | null;
+
 export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -38,6 +44,10 @@ export default function DashboardPage() {
   const [loadingPages, setLoadingPages] = useState(false);
   const [pagesError, setPagesError] = useState<string | null>(null);
   const [notionPages, setNotionPages] = useState<NotionPage[]>([]);
+  const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>(null);
+  const [telegramStatusError, setTelegramStatusError] = useState<string | null>(null);
+  const [telegramDisconnecting, setTelegramDisconnecting] = useState(false);
+  const [telegramConnecting, setTelegramConnecting] = useState(false);
 
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
 
@@ -53,7 +63,7 @@ export default function DashboardPage() {
   }, []);
 
   const fetchNotionStatus = useCallback(
-    async (userId: string) => {
+    async () => {
       if (!apiBaseUrl) {
         return;
       }
@@ -77,6 +87,26 @@ export default function DashboardPage() {
     },
     [apiBaseUrl, getAuthHeaders]
   );
+
+  const fetchTelegramStatus = useCallback(async () => {
+    if (!apiBaseUrl) {
+      return;
+    }
+
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/telegram/status`, { headers });
+      if (response.ok) {
+        const data: TelegramStatus = await response.json();
+        setTelegramStatus(data);
+        setTelegramStatusError(null);
+      } else {
+        setTelegramStatusError("텔레그램 상태 조회에 실패했습니다.");
+      }
+    } catch {
+      setTelegramStatusError("텔레그램 상태 조회 중 네트워크 오류가 발생했습니다.");
+    }
+  }, [apiBaseUrl, getAuthHeaders]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -123,7 +153,8 @@ export default function DashboardPage() {
           .eq("id", user.id)
           .single();
 
-        await fetchNotionStatus(user.id);
+        await fetchNotionStatus();
+        await fetchTelegramStatus();
 
         if (!mounted) {
           return;
@@ -142,7 +173,7 @@ export default function DashboardPage() {
     return () => {
       mounted = false;
     };
-  }, [router, fetchNotionStatus]);
+  }, [router, fetchNotionStatus, fetchTelegramStatus]);
 
   const handleDisconnectNotion = async () => {
     if (!apiBaseUrl || !profile?.id || disconnecting) {
@@ -191,6 +222,63 @@ export default function DashboardPage() {
     }
   };
 
+  const handleConnectTelegram = async () => {
+    if (!apiBaseUrl || !profile?.id || telegramConnecting) {
+      return;
+    }
+
+    setTelegramConnecting(true);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/telegram/connect-link`, {
+        method: "POST",
+        headers,
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.deep_link) {
+        const message =
+          payload?.error?.message ?? payload?.detail ?? "텔레그램 연결 링크 생성에 실패했습니다.";
+        setTelegramStatusError(message);
+        return;
+      }
+      window.open(payload.deep_link, "_blank", "noopener,noreferrer");
+      setTelegramStatusError(null);
+      window.setTimeout(() => {
+        void fetchTelegramStatus();
+      }, 2000);
+    } catch {
+      setTelegramStatusError("텔레그램 연결 시작 중 네트워크 오류가 발생했습니다.");
+    } finally {
+      setTelegramConnecting(false);
+    }
+  };
+
+  const handleDisconnectTelegram = async () => {
+    if (!apiBaseUrl || !profile?.id || telegramDisconnecting) {
+      return;
+    }
+
+    setTelegramDisconnecting(true);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/telegram/disconnect`, {
+        method: "DELETE",
+        headers,
+      });
+      if (!response.ok) {
+        setTelegramStatusError("텔레그램 연결해제에 실패했습니다.");
+        return;
+      }
+      setTelegramStatus({ connected: false, telegram_chat_id: null, telegram_username: null });
+      setTelegramStatusError(null);
+      await fetchTelegramStatus();
+    } catch {
+      setTelegramStatusError("텔레그램 연결해제 중 네트워크 오류가 발생했습니다.");
+    } finally {
+      setTelegramDisconnecting(false);
+    }
+  };
+
   const handleLoadNotionPages = async () => {
     if (!apiBaseUrl || !profile?.id || loadingPages || !notionStatus?.connected) {
       return;
@@ -205,9 +293,9 @@ export default function DashboardPage() {
         { headers }
       );
       const payload = await response.json();
-                if (!response.ok || !payload?.ok) {
-                  const message =
-                    payload?.error?.message ?? payload?.detail ?? "Notion 페이지 조회에 실패했습니다.";
+      if (!response.ok || !payload?.ok) {
+        const message =
+          payload?.error?.message ?? payload?.detail ?? "Notion 페이지 조회에 실패했습니다.";
         setPagesError(message);
         return;
       }
@@ -310,6 +398,48 @@ export default function DashboardPage() {
             )}
           </div>
         ) : null}
+      </section>
+      <section className="mt-6 rounded-xl border border-gray-200 p-5">
+        <h2 className="text-xl font-semibold">Telegram 연동</h2>
+        {telegramStatusError ? (
+          <p className="mt-3 text-sm text-amber-700">{telegramStatusError}</p>
+        ) : null}
+        <p className="mt-3 text-sm text-gray-700">
+          상태: {telegramStatus?.connected ? "연결됨" : "미연결"}
+        </p>
+        {telegramStatus?.connected ? (
+          <p className="mt-1 text-sm text-gray-700">
+            계정: {telegramStatus.telegram_username ? `@${telegramStatus.telegram_username}` : "-"}
+          </p>
+        ) : null}
+        {apiBaseUrl && profile?.id ? (
+          <div className="mt-4 flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                void handleConnectTelegram();
+              }}
+              disabled={telegramConnecting}
+              className="inline-block rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {telegramConnecting ? "링크 생성 중..." : "Telegram 연결하기"}
+            </button>
+            {telegramStatus?.connected ? (
+              <button
+                type="button"
+                onClick={handleDisconnectTelegram}
+                disabled={telegramDisconnecting}
+                className="inline-block rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+              >
+                {telegramDisconnecting ? "연결해제 중..." : "연결해제"}
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-amber-700">
+            NEXT_PUBLIC_API_BASE_URL 설정 후 Telegram 연동 버튼을 사용할 수 있습니다.
+          </p>
+        )}
       </section>
     </main>
   );

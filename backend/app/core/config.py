@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     notion_state_secret: str
     notion_token_encryption_key: str | None = None
 
+    telegram_bot_token: str | None = None
+    telegram_link_secret: str | None = None
+    telegram_webhook_secret: str | None = None
+    telegram_bot_username: str | None = None
+
     frontend_url: str = "http://localhost:3000"
     allowed_origins: str = "http://localhost:3000"
 

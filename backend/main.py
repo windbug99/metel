@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
 from app.routes.notion import router as notion_router
+from app.routes.telegram import router as telegram_router
 
 settings = get_settings()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -66,3 +67,4 @@ async def health_check():
 
 
 app.include_router(notion_router)
+app.include_router(telegram_router)
