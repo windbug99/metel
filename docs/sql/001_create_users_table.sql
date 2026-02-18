@@ -9,19 +9,22 @@ create table if not exists public.users (
 
 alter table public.users enable row level security;
 
-create policy if not exists "users_select_own"
+drop policy if exists "users_select_own" on public.users;
+create policy "users_select_own"
   on public.users
   for select
   to authenticated
   using (auth.uid() = id);
 
-create policy if not exists "users_insert_own"
+drop policy if exists "users_insert_own" on public.users;
+create policy "users_insert_own"
   on public.users
   for insert
   to authenticated
   with check (auth.uid() = id);
 
-create policy if not exists "users_update_own"
+drop policy if exists "users_update_own" on public.users;
+create policy "users_update_own"
   on public.users
   for update
   to authenticated
