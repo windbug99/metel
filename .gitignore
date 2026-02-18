@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Node.js
+node_modules/
+.next/
+out/
+
+# Python
+__pycache__/
+.venv/
+venv/
+*.pyc
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Vercel
+.vercel/
