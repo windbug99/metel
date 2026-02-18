@@ -12,21 +12,41 @@ export default function AuthPanel() {
   const router = useRouter();
   const [user, setUser] = useState<UserState>(null);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
 
     const syncUser = async () => {
-      const {
-        data: { user: authUser }
-      } = await supabase.auth.getUser();
+      try {
+        const result = await Promise.race([
+          supabase.auth.getUser(),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error("Auth request timeout")), 8000);
+          })
+        ]);
 
-      if (!mounted) {
-        return;
+        if (!mounted) {
+          return;
+        }
+
+        const {
+          data: { user: authUser }
+        } = result;
+
+        setErrorMessage(null);
+        setUser(authUser?.email ? { email: authUser.email } : null);
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+        setUser(null);
+        setErrorMessage(error instanceof Error ? error.message : "인증 상태를 불러오지 못했습니다.");
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
       }
-
-      setUser(authUser?.email ? { email: authUser.email } : null);
-      setLoading(false);
     };
 
     const {
@@ -71,6 +91,7 @@ export default function AuthPanel() {
 
   return (
     <section className="mt-8 rounded-xl border border-gray-200 p-5">
+      {errorMessage ? <p className="mb-3 text-sm text-red-600">인증 조회 오류: {errorMessage}</p> : null}
       {user ? (
         <div className="space-y-3">
           <p className="text-sm text-gray-700">로그인됨: {user.email}</p>
