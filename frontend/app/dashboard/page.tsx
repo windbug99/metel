@@ -59,8 +59,8 @@ export default function DashboardPage() {
   const [telegramConnectInfo, setTelegramConnectInfo] = useState<TelegramConnectInfo>(null);
   const [telegramPolling, setTelegramPolling] = useState(false);
 
-  const telegramPollIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null);
-  const telegramPollTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const telegramPollIntervalRef = useRef<number | null>(null);
+  const telegramPollTimeoutRef = useRef<number | null>(null);
 
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
 
