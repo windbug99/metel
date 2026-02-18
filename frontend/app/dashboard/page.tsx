@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { upsertUserProfile } from "@/lib/profile";
@@ -71,6 +71,8 @@ export default function DashboardPage() {
   const [commandLogs, setCommandLogs] = useState<CommandLog[]>([]);
   const [commandLogsLoading, setCommandLogsLoading] = useState(false);
   const [commandLogsError, setCommandLogsError] = useState<string | null>(null);
+  const [commandLogStatusFilter, setCommandLogStatusFilter] = useState<"all" | "success" | "error">("all");
+  const [commandLogCommandFilter, setCommandLogCommandFilter] = useState<string>("all");
 
   const telegramPollIntervalRef = useRef<number | null>(null);
   const telegramPollTimeoutRef = useRef<number | null>(null);
@@ -189,6 +191,23 @@ export default function DashboardPage() {
       setCommandLogsLoading(false);
     }
   }, []);
+
+  const commandFilterOptions = useMemo(() => {
+    const unique = Array.from(new Set(commandLogs.map((log) => log.command).filter(Boolean)));
+    return unique.sort((a, b) => a.localeCompare(b));
+  }, [commandLogs]);
+
+  const filteredCommandLogs = useMemo(() => {
+    return commandLogs.filter((log) => {
+      if (commandLogStatusFilter !== "all" && log.status !== commandLogStatusFilter) {
+        return false;
+      }
+      if (commandLogCommandFilter !== "all" && log.command !== commandLogCommandFilter) {
+        return false;
+      }
+      return true;
+    });
+  }, [commandLogs, commandLogStatusFilter, commandLogCommandFilter]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -609,21 +628,51 @@ export default function DashboardPage() {
       <section className="mt-6 rounded-xl border border-gray-200 p-5">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-xl font-semibold">명령 로그 (최근 20건)</h2>
-          <button
-            type="button"
-            onClick={() => {
-              void fetchCommandLogs();
-            }}
-            disabled={commandLogsLoading}
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
-          >
-            {commandLogsLoading ? "조회 중..." : "새로고침"}
-          </button>
+          <div className="flex items-center gap-2">
+            <select
+              value={commandLogStatusFilter}
+              onChange={(event) => {
+                setCommandLogStatusFilter(event.target.value as "all" | "success" | "error");
+              }}
+              className="rounded-md border border-gray-300 px-2 py-2 text-sm text-gray-900"
+            >
+              <option value="all">상태: 전체</option>
+              <option value="success">상태: 성공</option>
+              <option value="error">상태: 실패</option>
+            </select>
+            <select
+              value={commandLogCommandFilter}
+              onChange={(event) => {
+                setCommandLogCommandFilter(event.target.value);
+              }}
+              className="rounded-md border border-gray-300 px-2 py-2 text-sm text-gray-900"
+            >
+              <option value="all">명령: 전체</option>
+              {commandFilterOptions.map((commandName) => (
+                <option key={commandName} value={commandName}>
+                  {commandName}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => {
+                void fetchCommandLogs();
+              }}
+              disabled={commandLogsLoading}
+              className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+            >
+              {commandLogsLoading ? "조회 중..." : "새로고침"}
+            </button>
+          </div>
         </div>
         {commandLogsError ? <p className="mt-3 text-sm text-amber-700">{commandLogsError}</p> : null}
-        {commandLogs.length > 0 ? (
+        <p className="mt-3 text-xs text-gray-600">
+          표시: {filteredCommandLogs.length} / {commandLogs.length}
+        </p>
+        {filteredCommandLogs.length > 0 ? (
           <ul className="mt-4 space-y-2">
-            {commandLogs.map((log) => (
+            {filteredCommandLogs.map((log) => (
               <li key={log.id} className="rounded-md border border-gray-200 p-3">
                 <p className="text-sm font-medium text-gray-900">
                   {log.command} · {log.status}
@@ -641,7 +690,7 @@ export default function DashboardPage() {
             ))}
           </ul>
         ) : (
-          <p className="mt-3 text-sm text-gray-600">아직 기록된 명령 로그가 없습니다.</p>
+          <p className="mt-3 text-sm text-gray-600">조건에 맞는 명령 로그가 없습니다.</p>
         )}
       </section>
     </main>
