@@ -94,3 +94,19 @@ async def notion_oauth_status(user_id: str = Query(..., min_length=10)):
     )
 
     return {"connected": bool(result.data), "integration": result.data}
+
+
+@router.delete("/disconnect")
+async def notion_oauth_disconnect(user_id: str = Query(..., min_length=10)):
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+
+    (
+        supabase.table("oauth_tokens")
+        .delete()
+        .eq("user_id", user_id)
+        .eq("provider", "notion")
+        .execute()
+    )
+
+    return {"ok": True, "connected": False}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { upsertUserProfile } from "@/lib/profile";
@@ -27,8 +27,33 @@ export default function DashboardPage() {
   const [profile, setProfile] = useState<UserProfile>(null);
   const [notionStatus, setNotionStatus] = useState<NotionStatus>(null);
   const [notionStatusError, setNotionStatusError] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
 
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+
+  const fetchNotionStatus = useCallback(
+    async (userId: string) => {
+      if (!apiBaseUrl) {
+        return;
+      }
+
+      try {
+        const notionResponse = await fetch(
+          `${apiBaseUrl}/api/oauth/notion/status?user_id=${encodeURIComponent(userId)}`
+        );
+        if (notionResponse.ok) {
+          const notionData: NotionStatus = await notionResponse.json();
+          setNotionStatus(notionData);
+          setNotionStatusError(null);
+        } else {
+          setNotionStatusError("Notion 상태 조회에 실패했습니다.");
+        }
+      } catch {
+        setNotionStatusError("Notion 상태 조회 중 네트워크 오류가 발생했습니다.");
+      }
+    },
+    [apiBaseUrl]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -64,22 +89,7 @@ export default function DashboardPage() {
           .eq("id", user.id)
           .single();
 
-        if (apiBaseUrl) {
-          try {
-            const notionResponse = await fetch(
-              `${apiBaseUrl}/api/oauth/notion/status?user_id=${encodeURIComponent(user.id)}`
-            );
-            if (notionResponse.ok) {
-              const notionData: NotionStatus = await notionResponse.json();
-              setNotionStatus(notionData);
-              setNotionStatusError(null);
-            } else {
-              setNotionStatusError("Notion 상태 조회에 실패했습니다.");
-            }
-          } catch {
-            setNotionStatusError("Notion 상태 조회 중 네트워크 오류가 발생했습니다.");
-          }
-        }
+        await fetchNotionStatus(user.id);
 
         if (!mounted) {
           return;
@@ -98,7 +108,31 @@ export default function DashboardPage() {
     return () => {
       mounted = false;
     };
-  }, [router, apiBaseUrl]);
+  }, [router, fetchNotionStatus]);
+
+  const handleDisconnectNotion = async () => {
+    if (!apiBaseUrl || !profile?.id || disconnecting) {
+      return;
+    }
+
+    setDisconnecting(true);
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/oauth/notion/disconnect?user_id=${encodeURIComponent(profile.id)}`,
+        { method: "DELETE" }
+      );
+      if (!response.ok) {
+        setNotionStatusError("Notion 연결해제에 실패했습니다.");
+        return;
+      }
+      await fetchNotionStatus(profile.id);
+      setNotionStatusError(null);
+    } catch {
+      setNotionStatusError("Notion 연결해제 중 네트워크 오류가 발생했습니다.");
+    } finally {
+      setDisconnecting(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -130,12 +164,24 @@ export default function DashboardPage() {
           </p>
         ) : null}
         {apiBaseUrl && profile?.id ? (
-          <a
-            href={`${apiBaseUrl}/api/oauth/notion/start?user_id=${encodeURIComponent(profile.id)}`}
-            className="mt-4 inline-block rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white"
-          >
-            Notion 연결하기
-          </a>
+          <div className="mt-4 flex gap-2">
+            <a
+              href={`${apiBaseUrl}/api/oauth/notion/start?user_id=${encodeURIComponent(profile.id)}`}
+              className="inline-block rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white"
+            >
+              Notion 연결하기
+            </a>
+            {notionStatus?.connected ? (
+              <button
+                type="button"
+                onClick={handleDisconnectNotion}
+                disabled={disconnecting}
+                className="inline-block rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+              >
+                {disconnecting ? "연결해제 중..." : "연결해제"}
+              </button>
+            ) : null}
+          </div>
         ) : (
           <p className="mt-3 text-sm text-amber-700">
             NEXT_PUBLIC_API_BASE_URL 설정 후 Notion 연동 버튼을 사용할 수 있습니다.
