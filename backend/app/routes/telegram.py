@@ -282,13 +282,6 @@ def _map_natural_text_to_command(text: str) -> tuple[str, str]:
     if any(keyword in lower for keyword in ["상태", "status", "연결상태"]):
         return "/status", ""
 
-    if any(keyword in lower for keyword in ["페이지", "목록", "리스트", "최근"]) and any(
-        keyword in lower for keyword in ["notion", "노션"]
-    ):
-        count_match = re.search(r"\b(\d{1,2})\b", raw)
-        count = count_match.group(1) if count_match else ""
-        return "/notion_pages", count
-
     if any(keyword in lower for keyword in ["만들", "생성", "create"]) and any(
         keyword in lower for keyword in ["페이지", "notion", "노션"]
     ):
@@ -301,6 +294,13 @@ def _map_natural_text_to_command(text: str) -> tuple[str, str]:
         for pattern in patterns:
             title = re.sub(pattern, "", title).strip(" :")
         return "/notion_create", title
+
+    if any(keyword in lower for keyword in ["페이지", "목록", "리스트", "최근"]) and any(
+        keyword in lower for keyword in ["notion", "노션"]
+    ):
+        count_match = re.search(r"\b(\d{1,2})\b", raw)
+        count = count_match.group(1) if count_match else ""
+        return "/notion_pages", count
 
     return "", ""
 
