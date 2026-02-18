@@ -1,5 +1,5 @@
 import base64
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 
 class TokenVault:
@@ -21,4 +21,8 @@ class TokenVault:
     def decrypt(self, token: str) -> str:
         if not self._cipher:
             return token
-        return self._cipher.decrypt(token.encode("utf-8")).decode("utf-8")
+        try:
+            return self._cipher.decrypt(token.encode("utf-8")).decode("utf-8")
+        except InvalidToken:
+            # Backward-compatibility: allow legacy plain tokens during migration.
+            return token
