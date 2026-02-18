@@ -1,10 +1,16 @@
-from fastapi import FastAPI
+import logging
+import uuid
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
 from app.routes.notion import router as notion_router
 
 settings = get_settings()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logger = logging.getLogger("metel-backend")
 
 app = FastAPI(title="metel backend", version="0.1.0")
 
@@ -17,6 +23,41 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    request_id = getattr(request.state, "request_id", "unknown")
+    logger.warning("http_error request_id=%s path=%s detail=%s", request_id, request.url.path, exc.detail)
+    message = exc.detail if isinstance(exc.detail, str) else "요청 처리 중 오류가 발생했습니다."
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"message": message, "request_id": request_id}},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = getattr(request.state, "request_id", "unknown")
+    logger.exception("unhandled_error request_id=%s path=%s", request_id, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "message": "서버 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+                "request_id": request_id,
+            }
+        },
+    )
 
 
 @app.get("/api/health")

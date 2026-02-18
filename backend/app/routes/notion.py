@@ -1,3 +1,4 @@
+import logging
 from urllib.parse import urlencode
 from datetime import datetime, timezone
 
@@ -11,6 +12,18 @@ from app.core.state import build_state, verify_state
 from app.security.token_vault import TokenVault
 
 router = APIRouter(prefix="/api/oauth/notion", tags=["notion-oauth"])
+logger = logging.getLogger(__name__)
+
+
+def _extract_page_title(page: dict) -> str:
+    properties = page.get("properties", {})
+    for value in properties.values():
+        if value.get("type") == "title":
+            chunks = value.get("title", [])
+            text = "".join(chunk.get("plain_text", "") for chunk in chunks).strip()
+            if text:
+                return text
+    return "(제목 없음)"
 
 
 @router.get("/start")
@@ -95,7 +108,8 @@ async def notion_oauth_status(user_id: str = Query(..., min_length=10)):
         )
 
         return {"connected": bool(result.data), "integration": result.data}
-    except Exception:
+    except Exception as exc:
+        logger.exception("notion status query failed: %s", exc)
         # Avoid bubbling runtime errors as opaque CORS failures on the frontend.
         return {"connected": False, "integration": None}
 
@@ -114,3 +128,67 @@ async def notion_oauth_disconnect(user_id: str = Query(..., min_length=10)):
     )
 
     return {"ok": True, "connected": False}
+
+
+@router.get("/pages")
+async def notion_pages_list(user_id: str = Query(..., min_length=10), page_size: int = Query(5, ge=1, le=20)):
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+
+    token_row = (
+        supabase.table("oauth_tokens")
+        .select("access_token_encrypted")
+        .eq("user_id", user_id)
+        .eq("provider", "notion")
+        .maybe_single()
+        .execute()
+    )
+
+    if not token_row.data:
+        raise HTTPException(status_code=400, detail="Notion이 연결되어 있지 않습니다. 먼저 연동을 완료해주세요.")
+
+    encrypted = token_row.data.get("access_token_encrypted")
+    if not encrypted:
+        raise HTTPException(status_code=500, detail="저장된 Notion 토큰을 찾을 수 없습니다.")
+
+    try:
+        token = TokenVault(settings.notion_token_encryption_key).decrypt(encrypted)
+    except Exception as exc:
+        logger.exception("failed to decrypt notion token: %s", exc)
+        raise HTTPException(status_code=500, detail="Notion 인증 정보를 복호화하지 못했습니다.") from exc
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.post(
+            "https://api.notion.com/v1/search",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Notion-Version": "2022-06-28",
+                "Content-Type": "application/json",
+            },
+            json={
+                "filter": {"property": "object", "value": "page"},
+                "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+                "page_size": page_size,
+            },
+        )
+
+    if response.status_code >= 400:
+        logger.warning("notion pages API failed: %s %s", response.status_code, response.text)
+        raise HTTPException(
+            status_code=400,
+            detail="Notion 페이지 목록 조회에 실패했습니다. 연결을 해제 후 다시 연동해주세요.",
+        )
+
+    payload = response.json()
+    pages = payload.get("results", [])
+    normalized = [
+        {
+            "id": page.get("id"),
+            "title": _extract_page_title(page),
+            "url": page.get("url"),
+            "last_edited_time": page.get("last_edited_time"),
+        }
+        for page in pages
+    ]
+
+    return {"ok": True, "count": len(normalized), "pages": normalized}

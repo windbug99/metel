@@ -40,6 +40,11 @@ Monorepo for metel prototype.
 - `http://localhost:8000/api/oauth/notion/callback`
 - `https://<your-backend-domain>/api/oauth/notion/callback`
 
+## Notion Test Endpoint
+
+- `GET /api/oauth/notion/pages?user_id=<USER_UUID>&page_size=5`
+- Notion 연동 후 사용자 페이지 목록을 반환합니다.
+
 ## Supabase SQL
 
 Supabase SQL Editor에서 `docs/sql/001_create_users_table.sql` 실행:
