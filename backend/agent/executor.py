@@ -569,6 +569,14 @@ def _extract_linear_search_query(user_text: str) -> str | None:
         candidate = (a or b or "").strip()
         if candidate:
             return candidate
+    korean_front_match = re.search(
+        r"(?i)(?:linear|리니어)(?:에서)?\s+(.+?)\s*(?:의)?\s*이슈(?:를)?\s*(?:검색|search)",
+        user_text.strip(),
+    )
+    if korean_front_match:
+        candidate = korean_front_match.group(1).strip(" \"'`")
+        if candidate:
+            return candidate
     match = re.search(r"(?i)(?:linear|리니어).*(?:검색|search)\s+(.+)$", user_text.strip())
     if not match:
         return None

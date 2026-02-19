@@ -272,10 +272,7 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
                 first: $first,
                 orderBy: updatedAt,
                 filter: {
-                  or: [
-                    { title: { containsIgnoreCase: $query } },
-                    { identifier: { containsIgnoreCase: $query } }
-                  ]
+                  title: { containsIgnoreCase: $query }
                 }
               ) {
                 nodes {
