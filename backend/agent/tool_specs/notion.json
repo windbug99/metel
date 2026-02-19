@@ -1,0 +1,110 @@
+{
+  "service": "notion",
+  "version": "2022-06-28",
+  "base_url": "https://api.notion.com",
+  "auth": {
+    "type": "oauth2",
+    "required_scopes": [
+      "read_content",
+      "insert_content",
+      "update_content"
+    ]
+  },
+  "limits": {
+    "timeout_ms": 15000,
+    "max_calls_per_run": 10
+  },
+  "tools": [
+    {
+      "tool_name": "notion_search",
+      "description": "Search pages and objects in connected Notion workspace",
+      "method": "POST",
+      "path": "/v1/search",
+      "adapter_function": "notion_search",
+      "required_scopes": ["read_content"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string" },
+          "page_size": { "type": "integer", "minimum": 1, "maximum": 100 }
+        },
+        "required": ["query"]
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "notion_retrieve_block_children",
+      "description": "Retrieve children blocks for a given block or page",
+      "method": "GET",
+      "path": "/v1/blocks/{block_id}/children",
+      "adapter_function": "notion_retrieve_block_children",
+      "required_scopes": ["read_content"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "block_id": { "type": "string" },
+          "page_size": { "type": "integer", "minimum": 1, "maximum": 100 }
+        },
+        "required": ["block_id"]
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "404": "NOT_FOUND",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "notion_create_page",
+      "description": "Create a new page in Notion",
+      "method": "POST",
+      "path": "/v1/pages",
+      "adapter_function": "notion_create_page",
+      "required_scopes": ["insert_content"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "parent_page_id": { "type": "string" },
+          "markdown": { "type": "string" }
+        },
+        "required": ["title"]
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "notion_append_block_children",
+      "description": "Append blocks to existing Notion page",
+      "method": "PATCH",
+      "path": "/v1/blocks/{block_id}/children",
+      "adapter_function": "notion_append_block_children",
+      "required_scopes": ["insert_content", "update_content"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "block_id": { "type": "string" },
+          "markdown": { "type": "string" }
+        },
+        "required": ["block_id", "markdown"]
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "404": "NOT_FOUND",
+        "429": "RATE_LIMITED"
+      }
+    }
+  ]
+}

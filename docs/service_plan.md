@@ -137,6 +137,21 @@ metel의 핵심 타겟
   → metel이 즉시 추가 분석 제공
 ```
 
+### 텔레그램 작업 처리 7단계 표준 파이프라인
+
+```
+1) 사용자 요청 수신 (Telegram)
+2) 요청문 분석 및 작업 요구사항 도출
+3) 타겟 서비스/필요 API 선정
+4) 실행 워크플로우 생성
+5) 워크플로우 실행 (Tool/API 호출)
+6) 결과 정리
+7) 사용자에게 결과 전달 (Telegram)
+```
+
+해당 파이프라인은 에이전트 구현/테스트의 기준선으로 사용하며,
+현재 프로토타입은 1~3단계를 우선 구현한 뒤 4~7단계 실행 루프를 확장한다.
+
 ### Skills vs 자유 대화
 
 | 구분 | 설명 |
@@ -1245,3 +1260,217 @@ Lindy.ai의 Pro 플랜이 $49.99/월인 점을 고려할 때, **metel**은 초�
 [2] Dust.tt. (n.d.). *Dust - Build Custom AI Agents for Your Organization*. Retrieved from [https://dust.tt/](https://dust.tt/)
 [3] Relevance AI. (n.d.). *Relevance AI - Build your AI Workforce - AI for Business*. Retrieved from [https://relevanceai.com/](https://relevanceai.com/)
 [4] AgentGPT. (n.d.). *AgentGPT*. Retrieved from [https://agentgpt.reworkd.ai/](https://agentgpt.reworkd.ai/)
+
+---
+
+## 17. LLM 기반 자율 에이전트 구현 계획 (업데이트)
+
+현재의 규칙 기반 명령 매핑은 MVP 검증에는 유효하지만, 목표 UX(복합 작업 자동 수행)에는 한계가 있다.  
+따라서 metel의 핵심 실행 모델을 아래처럼 명확히 정의한다.
+
+### 17-1. 목표 동작 정의
+
+사용자 요청 예시:
+
+> "노션에서 최근 3개 페이지의 내용을 요약해서 회의록 페이지로 새로 생성해줘"
+
+에이전트는 아래를 **자동 계획/실행**해야 한다.
+
+1. 의도 파악 및 실행 계획 수립
+2. Notion에서 최근 페이지 조회
+3. 각 페이지 본문 조회 및 정규화
+4. LLM 요약 생성
+5. 새 페이지 생성 및 본문 작성
+6. 생성된 URL과 수행 결과를 사용자에게 응답
+
+즉, "미리 하드코딩한 워크플로우 선택"이 아니라 **요청 단위의 동적 계획 + Tool Calling 루프**가 기준이다.
+
+### 17-2. 에이전트 실행 아키텍처
+
+- `Planner`: 사용자 요청을 `goal`, `constraints`, `success_criteria`로 구조화
+- `Executor`: LLM의 tool_call을 수신해 실제 API 실행
+- `State`: 단계별 결과, 에러, 재시도 횟수 저장
+- `Verifier`: 완료 조건 검증(예: 페이지 생성 성공 + URL 확보)
+- `Responder`: 사용자 친화적 한국어 결과 반환
+
+루프 규칙:
+
+- `max_turns`, `max_tool_calls`, `timeout`을 강제
+- 실패 시 `replan` 1회 허용, 이후 안전하게 종료
+- 모든 tool call은 `access_logs`/`command_logs`에 기록
+
+### 17-3. Notion Tool 카탈로그 사전 등록 전략
+
+질문 주신 내용처럼, **가능한 명령을 미리 확보(도구 카탈로그화)하는 것이 맞다.**  
+에이전트 품질은 "모델 성능"만이 아니라 "도구 표면(tool surface)의 명확성"에 크게 좌우된다.
+
+#### Core Read
+
+- `search_objects` → `POST /v1/search`
+- `retrieve_page` → `GET /v1/pages/{page_id}`
+- `retrieve_block_children` → `GET /v1/blocks/{block_id}/children`
+- `query_data_source` → `POST /v1/data_sources/{data_source_id}/query`
+
+#### Core Write
+
+- `create_page` → `POST /v1/pages`
+- `update_page_properties` → `PATCH /v1/pages/{page_id}`
+- `append_block_children` → `PATCH /v1/blocks/{block_id}/children`
+- `delete_block_or_page` → `DELETE /v1/blocks/{block_id}` (page도 block으로 archive 처리)
+
+#### Optional (Phase 2+)
+
+- `retrieve_page_property_item` → `GET /v1/pages/{page_id}/properties/{property_id}`
+- `list_users` / `retrieve_user`
+- `comments` 관련 endpoint
+
+### 17-4. Tool 설계 원칙
+
+- Tool 이름은 행위 중심 동사로 통일 (`notion_search`, `notion_create_page` 등)
+- 입력 스키마(JSON Schema)와 필수/선택 필드를 엄격히 정의
+- 출력 스키마를 표준화 (`ok`, `data`, `error`, `request_id`)
+- 대용량 본문은 요약용으로 chunking 후 전달
+- Notion API Version 고정 (`Notion-Version`) 및 마이그레이션 전략 명시
+
+### 17-5. 제품 수용 기준 (Agent Ready)
+
+아래 시나리오가 **하드코딩 분기 없이** 통과해야 한다.
+
+1. 최근 N개 페이지 요약 후 회의록 생성
+2. 특정 키워드 페이지 검색 후 요약
+3. 기존 페이지에 액션 아이템 섹션 추가
+4. 실패 상황(권한 없음, rate limit)에서 사용자 친화적 오류 반환
+
+### 17-6. 참고한 Notion 공식 문서
+
+- Introduction: https://developers.notion.com/reference/intro
+- Search: https://developers.notion.com/reference/post-search
+- Create a page: https://developers.notion.com/reference/post-page
+- Retrieve a page: https://developers.notion.com/reference/retrieve-a-page
+- Update page properties: https://developers.notion.com/reference/patch-page
+- Retrieve block children: https://developers.notion.com/reference/get-block-children
+- Append block children: https://developers.notion.com/reference/patch-block-children
+- Query a data source: https://developers.notion.com/reference/query-a-data-source
+- Delete a block: https://developers.notion.com/reference/delete-a-block
+
+### 17-7. 서비스 API 가이드 운영 모델 (확장 표준)
+
+향후 서비스(Spotify, Google, GitHub 등)를 추가할 때는 아래 표준을 고정 적용한다.
+
+1. `docs/api_guides/<service>.md`  
+   사람(개발/운영)용 문서. 인증 방식, 권한(scope), 주요 endpoint, 실패 케이스를 정리한다.
+2. `backend/agent/tool_specs/<service>.json`  
+   에이전트 실행용 문서. 도구 이름, 입력 스키마, 필수 권한, 레이트리밋 힌트, 멱등성(idempotency) 정책을 정의한다.
+3. `backend/integrations/<service>.py`  
+   실제 호출 어댑터. 재시도/오류 정규화/응답 축약을 담당한다.
+
+핵심 원칙:
+
+- LLM은 원본 API 문서를 직접 해석해서 호출하지 않는다.
+- LLM은 `tool_specs`로 제한된 도구만 호출한다.
+- 서비스 확장은 `guide + spec + adapter` 3종 세트를 추가하는 방식으로 표준화한다.
+- 반복 성공 워크플로우는 추후 `skills` 템플릿으로 승격한다.
+
+### 17-8. 가이드 참조형 에이전트 설계 (Spotify 예시 포함)
+
+이 섹션은 "서비스 API 가이드를 별도 파일로 두고, 에이전트가 요청 시 해당 가이드를 참조해 API를 선택"하는 목표를 실제 실행 모델로 구체화한다.
+
+#### 17-8-1. 핵심 원칙
+
+1. 서비스 API 문서는 사람(개발/운영)용 지식 소스다.
+2. 에이전트의 실제 호출 결정은 `tool_specs`(기계 스펙)로 제한한다.
+3. 에이전트는 요청마다 필요한 서비스 가이드 요약을 참조해 계획을 세운다.
+4. 성공률이 높은 실행 경로는 자동으로 Skill 템플릿 후보로 승격한다.
+
+#### 17-8-2. 참조/실행 파이프라인
+
+```text
+사용자 요청
+  ↓
+Service Resolver (요청에서 대상 서비스 추론: notion/spotify/...)
+  ↓
+Guide Retriever (docs/api_guides/<service>.md 핵심 섹션 로드)
+  ↓
+Planner (목표, 제약, 성공조건, 단계 생성)
+  ↓
+Tool Selector (backend/agent/tool_specs/<service>.json에서 가능한 도구 선택)
+  ↓
+Executor (backend/integrations/<service>.py 실행)
+  ↓
+Verifier (성공조건 검증: 생성물 URL/ID, 결과 개수 등)
+  ↓
+Responder (한국어 사용자 응답)
+```
+
+#### 17-8-3. 서비스 가이드 문서 포맷 표준
+
+`docs/api_guides/<service>.md`는 아래 최소 필드를 가진다.
+
+- 인증 방식 및 토큰 갱신 정책
+- 최소/권장 scope
+- 핵심 엔드포인트 (Read/Write 분리)
+- rate limit, pagination, idempotency 주의점
+- 대표 실패 코드와 복구 전략
+- 샘플 워크플로우 3개 이상
+
+이 문서는 사람이 읽고 유지보수하며, 에이전트에는 축약 컨텍스트로 전달한다.
+
+#### 17-8-4. 기계 스펙 포맷 표준
+
+`backend/agent/tool_specs/<service>.json` 예시 필드:
+
+- `tool_name`
+- `description`
+- `input_schema` (JSON Schema)
+- `required_scopes`
+- `adapter_function`
+- `limits` (`timeout_ms`, `max_calls_per_run`)
+- `idempotency_key_policy`
+- `error_map` (`AUTH_REQUIRED`, `RATE_LIMITED`, `RETRYABLE`, `FATAL`)
+
+즉, 에이전트가 실제로 "무엇을 호출할 수 있는지"는 JSON 스펙이 결정한다.
+
+#### 17-8-5. Spotify 추가 시 동작 예시
+
+요청:
+
+> "출근용 잔잔한 플레이리스트 만들어줘"
+
+처리:
+
+1. `Service Resolver`가 `spotify` 감지
+2. `docs/api_guides/spotify.md`에서 인증/scope/추천 흐름 참조
+3. `tool_specs/spotify.json`에서 호출 가능한 도구 목록 로드  
+   (예: `spotify_get_top_tracks`, `spotify_create_playlist`, `spotify_add_tracks`)
+4. Planner가 실행 단계 생성
+5. Agent Loop가 도구를 순차 호출
+6. 최종 결과(플레이리스트 URL) 반환
+
+#### 17-8-6. Workflow → Skill 자동 승격
+
+반복 성공한 워크플로우를 Skill로 만드는 규칙:
+
+- 최근 14일 내 동일한 의도+도구 시퀀스가 N회 이상 성공
+- 평균 실행 시간/실패율이 임계치 이내
+- 사용자 수정 요청 비율이 낮음
+
+승격 흐름:
+
+1. 후보 추출 (`command_logs`/`access_logs`)
+2. 템플릿 파라미터화 (예: mood, count, title)
+3. `skill_templates`에 저장
+4. 대시보드에 "추천 Skill"로 노출
+
+#### 17-8-7. 품질/안전 가드레일
+
+- 서비스별 동시 호출 제한
+- 쓰기 작업 전 검증 단계 강제(필요 시 확인 질문)
+- 페이지/플레이리스트 생성 등 부작용 작업은 idempotency 적용
+- 실패 시 사용자 응답은 친화적으로, 내부 로그는 디버그 가능하게 분리
+
+#### 17-8-8. Agent Ready 추가 수용 기준
+
+1. 신규 서비스 추가 시 `guide + spec + adapter`만으로 동작
+2. 에이전트가 서비스별 허용 도구만 선택
+3. Spotify/Notion 각 2개 이상 복합 시나리오 성공
+4. 반복 워크플로우 1건 이상 Skill 후보 자동 생성

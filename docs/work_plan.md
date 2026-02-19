@@ -12,6 +12,43 @@
 4.  **Telegram 연결 기능**
 5.  **텔레그램에서 작업 요청 및 AI 답변**
 
+### 2.1 텔레그램 요청 처리 표준 7단계 (작업 기준선)
+
+향후 구현/검증은 아래 7단계를 기준으로 진행한다.
+
+1. **텔레그램에서 사용자가 작업 요청문 작성**
+2. **에이전트가 요청문에서 작업 요구사항 도출**
+3. **작업 요구사항 기반으로 타겟 서비스/필요 API 선정**
+4. **워크플로우 생성**
+5. **워크플로우 기반 작업 진행**
+6. **결과 정리**
+7. **텔레그램으로 사용자에게 결과 전달**
+
+현재 구현 상태(2026-02-19 기준):
+- **1~3단계는 구현됨**: `backend/app/routes/telegram.py`에서 자연어 메시지를 `run_agent_analysis`로 전달하여 요구사항/서비스/API를 도출.
+- **4~7단계 1차 구현 완료(Notion 중심)**:
+  - 워크플로우 생성: `backend/agent/planner.py`
+  - 워크플로우 실행: `backend/agent/executor.py` (Notion 최근 페이지 조회/요약/페이지 생성/본문 추가)
+  - 결과 정리/전달: `backend/app/routes/telegram.py` 자연어 fallback 응답
+- **남은 작업**: Spotify 등 멀티서비스 실행 어댑터 확장, 실패 재계획(replan) 정책 고도화.
+
+### 2.2 향후 구현 단계 (우선순위: Notion 기반 에이전트 완성)
+
+1. **Notion 읽기 작업 완성**
+   - 케이스: "특정 페이지 내용 상위 N줄 출력", "특정 페이지 본문 조회", "제목 기반 페이지 찾기"
+   - 목표: 자연어 요청을 Notion 검색/본문조회 API로 안정적으로 연결
+2. **Notion 복합 워크플로우 일반화**
+   - 조회 → 요약 → 생성 → 본문추가를 요청 기반으로 동적으로 조합
+   - 목표: 하드코딩 명령 없이 복합 요청 수행
+3. **실패 원인 가시화**
+   - "문장 이해 실패" vs "페이지 미존재" vs "권한/API 실패"를 분리해 사용자 메시지 제공
+4. **실행 안전장치**
+   - turn/call/timeout 제한, 재시도/재계획 정책 추가
+5. **관측/회귀 방지**
+   - 단계별 로그 고도화 + Notion E2E 테스트 시나리오 확장
+6. **그 다음 멀티서비스 확장**
+   - Spotify는 Notion 에이전트 완성 후 동일 패턴으로 추가
+
 ## 3. 개발 단계별 상세 계획
 
 ### 3.1. Phase 1: 초기 환경 설정 및 기본 웹 서비스 구축
@@ -219,6 +256,220 @@ Notion은 생산성 도구로서 다양한 API를 제공하며, OAuth 연동이 
 *   **예상 소요 시간:** 3일
 *   **외부 서비스 설정:** 없음
 *   **완료 기준:** 프로토타입의 핵심 플로우가 오류 없이 정상적으로 동작하며, 사용자 경험이 매끄러움.
+
+### 3.6. Phase 6: 규칙 매핑 → LLM 자율 에이전트 전환
+
+#### 3.6.1. 에이전트 실행 계약(Contract) 정의
+
+*   **구현 내용:**
+    *   `backend/agent/`에 Planner/Executor/Verifier 역할을 분리.
+    *   if-else 규칙 분기가 아니라 `tool_use` 루프를 표준 실행 경로로 고정.
+    *   실행 제한(`max_turns`, `max_tool_calls`, `timeout`)을 공통 적용.
+*   **진행 순서:**
+    1.  에이전트 상태 모델(`goal`, `plan`, `step_results`, `final_answer`) 정의.
+    2.  `run_agent_turn`을 계획-실행-검증 루프로 리팩토링.
+    3.  실패 시 재계획(replan) 정책 1회 적용.
+*   **예상 소요 시간:** 1일
+*   **외부 서비스 설정:** 없음
+*   **완료 기준:** 복합 요청이 고정 분기 없이 루프 내에서 단계적으로 처리됨.
+
+#### 3.6.2. Notion Tool 카탈로그 정식화
+
+*   **구현 내용:**
+    *   Notion 공식 레퍼런스 기반 도구를 사전 등록하고 JSON Schema를 고정.
+    *   읽기/쓰기 도구를 분리하고 권한 범위를 명시.
+*   **진행 순서:**
+    1.  Core Read: `search`, `retrieve page`, `retrieve block children`, `query data source` 구현.
+    2.  Core Write: `create page`, `update page`, `append block children`, `delete block` 구현.
+    3.  Tool 에러 표준 응답 형식(`ok/data/error/request_id`) 통일.
+*   **예상 소요 시간:** 2일
+*   **외부 서비스 설정:** Notion Integration 권한(scope/capability) 점검.
+*   **완료 기준:** 에이전트가 복합 Notion 작업에서 필요한 도구를 동적으로 선택/호출할 수 있음.
+
+#### 3.6.3. 복합 시나리오 E2E 검증
+
+*   **구현 내용:**
+    *   사용자 핵심 시나리오를 통합 테스트로 고정.
+    *   결과물 URL/ID를 검증하는 종료 조건 테스트 추가.
+*   **진행 순서:**
+    1.  "최근 3개 페이지 요약 후 새 페이지 생성" 시나리오 테스트 작성.
+    2.  실패 케이스(권한 부족, 429, 빈 검색결과) 테스트 작성.
+    3.  텔레그램 응답 메시지 품질(완료/실패 안내) 점검.
+*   **예상 소요 시간:** 1일
+*   **외부 서비스 설정:** 없음
+*   **완료 기준:** 위 시나리오가 자동/수동 테스트에서 반복 통과.
+
+#### 3.6.4. 관측 가능성 및 운영 가드레일 강화
+
+*   **구현 내용:**
+    *   `command_logs`/`access_logs`에 계획 단계, 도구 호출, 실패 원인을 구조적으로 기록.
+    *   사용자 메시지는 친화적으로, 운영 로그는 디버깅 가능하게 이중화.
+*   **진행 순서:**
+    1.  요청 단위 `request_id` 전파.
+    2.  단계별 로그(`plan_generated`, `tool_called`, `tool_failed`, `finalized`) 추가.
+    3.  대시보드 "최근 명령 20건"에 실행 상태 및 요약 표시.
+*   **예상 소요 시간:** 1일
+*   **외부 서비스 설정:** 없음
+*   **완료 기준:** 장애 발생 시 로그만으로 실패 단계를 역추적할 수 있음.
+
+### 3.7. Phase 7: 실제 구현 참조용 파일 단위 실행 계획
+
+아래 순서대로 구현하면 다음 스프린트에서 바로 개발을 시작할 수 있다.
+
+#### 3.7.1. 서비스별 API 가이드/툴 스펙 체계 구축
+
+*   **구현 내용:**
+    *   사람용 API 가이드와 에이전트용 기계 스펙을 분리 관리.
+*   **생성/수정 파일:**
+    *   `docs/api_guides/notion.md`
+    *   `docs/api_guides/spotify.md` (후속 서비스 추가 시)
+    *   `backend/agent/tool_specs/notion.json`
+    *   `backend/agent/tool_specs/spotify.json` (후속 서비스 추가 시)
+*   **진행 순서:**
+    1.  `docs/api_guides/notion.md`에 인증, 엔드포인트, 제약사항, 예외 케이스 정리.
+    2.  `backend/agent/tool_specs/notion.json`에 tool name / input schema / required scopes 정의.
+    3.  신규 서비스는 동일 패턴으로 가이드+스펙 동시 추가.
+*   **완료 기준:** 에이전트가 서비스 문서가 아니라 `tool_specs`를 기준으로 호출 가능한 도구를 판단할 수 있음.
+
+#### 3.7.2. Planner/Registry/Loop 코드 골격 구현
+
+*   **구현 내용:**
+    *   LLM 자율 실행을 위한 핵심 모듈 생성.
+*   **생성/수정 파일:**
+    *   `backend/agent/planner.py`
+    *   `backend/agent/registry.py`
+    *   `backend/agent/loop.py`
+    *   `backend/agent/types.py`
+*   **진행 순서:**
+    1.  `planner.py`: `goal`, `constraints`, `success_criteria`, `steps` 생성.
+    2.  `registry.py`: `tool_specs/*.json` 로드 및 실행 라우팅.
+    3.  `loop.py`: plan→tool_call→verify 반복 루프 구현.
+    4.  `types.py`: `AgentPlan`, `AgentStepResult`, `AgentFinalResult` 타입 고정.
+*   **완료 기준:** 단일 요청에 대해 최소 1회 이상 동적 계획 + 도구 실행 + 결과 검증이 동작.
+*   **상태:** 부분 완료 (요구사항 도출/서비스/API 선정까지 연결됨, 실행 루프는 진행 중).
+
+#### 3.7.3. Notion Adapter 확장 (실행 가능한 Tool)
+
+*   **구현 내용:**
+    *   Notion Core Read/Write 도구를 실제 API 호출로 제공.
+*   **생성/수정 파일:**
+    *   `backend/integrations/notion.py`
+    *   `backend/agent/tools.py` (또는 `registry.py`에서 직접 어댑터 연결)
+*   **진행 순서:**
+    1.  `search`, `retrieve page`, `retrieve block children` 구현.
+    2.  `create page`, `append block children`, `update page` 구현.
+    3.  응답 정규화(`ok`, `data`, `error`, `request_id`) 적용.
+*   **완료 기준:** "최근 3개 페이지 요약 후 회의록 생성"에서 필요한 Notion API 호출이 모두 가능.
+
+#### 3.7.4. Safety/Observability 모듈 고도화
+
+*   **구현 내용:**
+    *   실행 제한, 오류 표준화, 로그 추적성 강화.
+*   **생성/수정 파일:**
+    *   `backend/agent/safety.py`
+    *   `backend/agent/observability.py`
+    *   `backend/app/routes/telegram.py`
+    *   `backend/app/routes/notion.py` (존재 시)
+*   **진행 순서:**
+    1.  `max_turns`, `max_tool_calls`, `timeout` 강제.
+    2.  오류 코드 표준화(`AUTH_REQUIRED`, `RATE_LIMITED`, `TOOL_FAILED`).
+    3.  단계 로그(`plan_generated`, `tool_called`, `tool_failed`, `finalized`) 저장.
+*   **완료 기준:** CORS/인증/권한/레이트리밋 실패가 사용자 메시지와 운영 로그에서 동시에 식별 가능.
+
+#### 3.7.5. E2E 테스트 및 회귀 방지
+
+*   **구현 내용:**
+    *   핵심 복합 시나리오를 자동화 테스트로 고정.
+*   **생성/수정 파일:**
+    *   `backend/tests/test_agent_notion_workflow.py`
+    *   `backend/tests/test_tool_registry.py`
+*   **진행 순서:**
+    1.  복합 시나리오 성공 테스트.
+    2.  실패 시나리오(권한 없음/빈 결과/429) 테스트.
+    3.  텔레그램 응답 포맷(완료 URL 포함) 검증.
+*   **완료 기준:** 배포 전 테스트에서 핵심 시나리오가 반복 통과하고 회귀가 차단됨.
+
+### 3.8. Phase 8: 가이드 참조형 멀티서비스 에이전트 고도화
+
+#### 3.8.1. API 가이드 표준 템플릿 도입
+
+*   **구현 내용:**
+    *   서비스별 API 가이드 문서 템플릿을 고정하여 신규 서비스 추가 비용을 최소화.
+*   **생성/수정 파일:**
+    *   `docs/api_guides/_template.md`
+    *   `docs/api_guides/spotify.md`
+    *   `docs/api_guides/notion.md` (보강)
+*   **진행 순서:**
+    1.  템플릿에 인증/scope/endpoint/error/rate-limit/workflow 섹션 고정.
+    2.  Spotify/Notion 가이드를 템플릿 기준으로 정리.
+    3.  문서 변경 시 스펙 동기화 체크리스트 추가.
+*   **완료 기준:** 신규 서비스 문서를 같은 형식으로 작성 가능하고, 누락 필드 없이 검수 가능.
+
+#### 3.8.2. Guide Retriever + Service Resolver 구현
+
+*   **구현 내용:**
+    *   사용자 요청에서 대상 서비스를 추론하고 해당 가이드를 참조 컨텍스트로 로드.
+*   **생성/수정 파일:**
+    *   `backend/agent/service_resolver.py`
+    *   `backend/agent/guide_retriever.py`
+    *   `backend/agent/planner.py`
+*   **진행 순서:**
+    1.  요청 텍스트/연결 상태 기반 서비스 추론 로직 구현.
+    2.  추론된 서비스의 가이드 핵심 섹션만 추출.
+    3.  Planner 입력 컨텍스트에 가이드 요약 포함.
+*   **완료 기준:** 요청별로 서비스 추론 결과와 참조된 가이드 섹션이 로그에 남음.
+
+#### 3.8.3. Tool Spec 컴파일/검증 파이프라인
+
+*   **구현 내용:**
+    *   `tool_specs`의 스키마 유효성 검증과 런타임 로딩 안정화.
+*   **생성/수정 파일:**
+    *   `backend/agent/tool_specs/schema.json`
+    *   `backend/agent/registry.py`
+    *   `backend/tests/test_tool_spec_schema.py`
+*   **진행 순서:**
+    1.  tool spec JSON Schema 정의.
+    2.  서버 시작 시 전체 스펙 검증/로드.
+    3.  invalid spec 발견 시 부팅 실패 또는 경고 정책 적용.
+*   **완료 기준:** 잘못된 tool spec이 런타임까지 유입되지 않음.
+
+#### 3.8.4. Spotify 실행 도구 세트 추가
+
+*   **구현 내용:**
+    *   Spotify 요청을 실제로 수행하는 최소 도구 세트 구현.
+*   **생성/수정 파일:**
+    *   `backend/agent/tool_specs/spotify.json`
+    *   `backend/integrations/spotify.py`
+    *   `backend/agent/tools.py` 또는 `backend/agent/registry.py`
+*   **진행 순서:**
+    1.  `spotify_get_top_tracks`
+    2.  `spotify_create_playlist`
+    3.  `spotify_add_tracks`
+*   **완료 기준:** "출근용 잔잔한 플레이리스트 만들어줘"를 에이전트 루프가 자동 수행.
+
+#### 3.8.5. Workflow Mining → Skill Candidate 자동화
+
+*   **구현 내용:**
+    *   자주 반복되는 성공 실행을 Skill 후보로 자동 추출.
+*   **생성/수정 파일:**
+    *   `backend/agent/workflow_mining.py`
+    *   `backend/app/routes/skills.py` (존재 시)
+    *   `frontend/app/dashboard/skills/page.tsx` (추천 Skill 노출)
+*   **진행 순서:**
+    1.  `command_logs`/`access_logs`에서 의도+도구시퀀스 군집화.
+    2.  성공률/지연시간/재시도율 기준으로 후보 필터링.
+    3.  후보를 사용자 대시보드에 추천 카드로 노출.
+*   **완료 기준:** 최소 1개 이상의 추천 Skill 후보가 자동 생성/노출됨.
+
+#### 3.8.6. 운영 수용 테스트 (서비스 추가 가능성 검증)
+
+*   **구현 내용:**
+    *   "신규 서비스 추가시 코드 영향 범위 최소화"를 검증하는 운영 테스트.
+*   **진행 순서:**
+    1.  가상 서비스(모의 API) 하나를 `guide + spec + adapter`로만 추가.
+    2.  에이전트가 해당 서비스 요청을 인식/계획/실행하는지 검증.
+    3.  실패 시 어떤 단계에서 막혔는지 로그로 추적 확인.
+*   **완료 기준:** 핵심 라우터 수정 없이 신규 서비스가 동작.
 
 ## 4. 결론
 

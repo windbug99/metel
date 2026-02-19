@@ -1,0 +1,112 @@
+{
+  "service": "spotify",
+  "version": "web-api-v1",
+  "base_url": "https://api.spotify.com",
+  "auth": {
+    "type": "oauth2",
+    "required_scopes": [
+      "playlist-read-private",
+      "playlist-modify-private",
+      "playlist-modify-public",
+      "user-top-read"
+    ]
+  },
+  "limits": {
+    "timeout_ms": 12000,
+    "max_calls_per_run": 8
+  },
+  "tools": [
+    {
+      "tool_name": "spotify_get_me",
+      "description": "Get current Spotify user profile",
+      "method": "GET",
+      "path": "/v1/me",
+      "adapter_function": "spotify_get_me",
+      "required_scopes": [],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "spotify_get_top_tracks",
+      "description": "Get user's top tracks for recommendation seed",
+      "method": "GET",
+      "path": "/v1/me/top/tracks",
+      "adapter_function": "spotify_get_top_tracks",
+      "required_scopes": ["user-top-read"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer", "minimum": 1, "maximum": 50 },
+          "time_range": {
+            "type": "string",
+            "enum": ["short_term", "medium_term", "long_term"]
+          }
+        }
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "spotify_create_playlist",
+      "description": "Create playlist for current user",
+      "method": "POST",
+      "path": "/v1/users/{user_id}/playlists",
+      "adapter_function": "spotify_create_playlist",
+      "required_scopes": ["playlist-modify-private", "playlist-modify-public"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "user_id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "public": { "type": "boolean" }
+        },
+        "required": ["user_id", "name"]
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "spotify_add_tracks_to_playlist",
+      "description": "Add track URIs to playlist",
+      "method": "POST",
+      "path": "/v1/playlists/{playlist_id}/tracks",
+      "adapter_function": "spotify_add_tracks_to_playlist",
+      "required_scopes": ["playlist-modify-private", "playlist-modify-public"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "playlist_id": { "type": "string" },
+          "uris": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1
+          }
+        },
+        "required": ["playlist_id", "uris"]
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "404": "NOT_FOUND",
+        "429": "RATE_LIMITED"
+      }
+    }
+  ]
+}

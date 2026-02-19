@@ -12,6 +12,7 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException, Request
 from supabase import create_client
 
+from agent.loop import run_agent_analysis
 from app.core.auth import get_authenticated_user_id
 from app.core.config import get_settings
 from app.security.token_vault import TokenVault
@@ -272,6 +273,25 @@ def _is_notion_connected(user_id: str) -> bool:
     return bool(result.data)
 
 
+def _get_connected_services_for_user(user_id: str) -> list[str]:
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    result = (
+        supabase.table("oauth_tokens")
+        .select("provider")
+        .eq("user_id", user_id)
+        .execute()
+    )
+    rows = result.data or []
+    services = []
+    for row in rows:
+        provider = (row.get("provider") or "").strip().lower()
+        if provider:
+            services.append(provider)
+    # unique while preserving order
+    return list(dict.fromkeys(services))
+
+
 def _map_natural_text_to_command(text: str) -> tuple[str, str]:
     raw = text.strip()
     lower = raw.lower()
@@ -524,6 +544,54 @@ async def telegram_webhook(
         if mapped_command:
             command = mapped_command
             rest = mapped_rest
+        else:
+            connected_services = _get_connected_services_for_user(user_id)
+            analysis = await run_agent_analysis(text, connected_services, user_id)
+
+            requirements_text = "\n".join(f"- {item.summary}" for item in analysis.plan.requirements) or "- (없음)"
+            services_text = ", ".join(analysis.plan.target_services) if analysis.plan.target_services else "(추론 실패)"
+            tools_text = (
+                "\n".join(f"- {tool}" for tool in analysis.plan.selected_tools)
+                if analysis.plan.selected_tools
+                else "- (선정된 API 없음)"
+            )
+            workflow_text = "\n".join(f"{idx}. {step}" for idx, step in enumerate(analysis.plan.workflow_steps, start=1))
+            execution_steps_text = ""
+            execution_message = analysis.result_summary
+            if analysis.execution:
+                execution_steps_text = (
+                    "\n".join(f"- {step.name}: {step.status} ({step.detail})" for step in analysis.execution.steps)
+                    or "- (실행 단계 없음)"
+                )
+                execution_message = analysis.execution.user_message
+
+            _record_command_log(
+                user_id=user_id,
+                chat_id=chat_id,
+                command="agent_plan",
+                status="success" if analysis.ok else "error",
+                error_code=None if analysis.ok else "execution_failed",
+                detail=f"services={services_text}",
+            )
+
+            await _telegram_api(
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": (
+                        "에이전트 실행 결과\n\n"
+                        f"[1] 작업 요구사항\n{requirements_text}\n\n"
+                        f"[2-3] 타겟 서비스 및 필요 API\n"
+                        f"- 서비스: {services_text}\n"
+                        f"- API/Tool:\n{tools_text}\n\n"
+                        f"[4] 생성된 워크플로우\n{workflow_text}\n\n"
+                        f"[5-6] 실행/결과 정리\n{execution_message}\n\n"
+                        f"[실행 단계 로그]\n{execution_steps_text}"
+                    ),
+                    "disable_web_page_preview": True,
+                },
+            )
+            return {"ok": True}
 
     if command in {"/status", "/my_status"}:
         notion_connected = _is_notion_connected(user_id)
