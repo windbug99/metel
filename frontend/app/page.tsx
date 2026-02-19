@@ -1,26 +1,11 @@
 import AuthPanel from "../components/auth-panel";
 
 export default function Home() {
-  const matrixRows = [
-    "<> [] // || ++ -- :: .. ## ## ++ ||",
-    "01 10 01 11 00 10 11 00 01 10 11 01",
-    "{} <> [] () // \\\\ || :: == ++ -- ##",
-    "11001010 01101001 10110010 01001101",
-    "[] <> {} // || :: ++ -- __ .. ## ##",
-    "0011 1100 1010 0101 1110 0001 0111"
-  ];
-
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#f2f2f2] text-neutral-900">
       <div className="pointer-events-none absolute inset-0 opacity-60">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#e5e5e5_1px,transparent_1px),linear-gradient(to_bottom,#e5e5e5_1px,transparent_1px)] bg-[size:48px_48px]" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,#d9d9d9_0px,transparent_420px),radial-gradient(circle_at_80%_70%,#dfdfdf_0px,transparent_460px)]" />
-        <pre className="absolute -left-20 top-8 rotate-[-8deg] text-[10px] leading-4 text-neutral-500/50 sm:text-xs">
-          {matrixRows.join("\n")}
-        </pre>
-        <pre className="absolute -right-24 bottom-10 rotate-[7deg] text-[10px] leading-4 text-neutral-600/40 sm:text-xs">
-          {matrixRows.slice().reverse().join("\n")}
-        </pre>
       </div>
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col px-6 py-8 sm:px-10 sm:py-12">
@@ -29,8 +14,8 @@ export default function Home() {
           <p className="font-mono text-xs text-neutral-500">v0.1</p>
         </header>
 
-        <section className="grid flex-1 gap-8 py-8 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
-          <div>
+        <section className="flex flex-1 flex-col gap-8 py-8">
+          <div className="max-w-3xl">
             <h1 className="text-5xl font-semibold tracking-tight text-black sm:text-6xl">Metel</h1>
             <p className="mt-4 max-w-xl text-base text-neutral-700 sm:text-lg">
               One assistant layer for your connected tools. Ask once, run across services.
@@ -71,7 +56,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-neutral-300 bg-white/85 p-6 shadow-[0_12px_40px_rgba(10,10,10,0.08)] backdrop-blur-sm">
+          <div className="max-w-xl rounded-2xl border border-neutral-300 bg-white/85 p-6 shadow-[0_12px_40px_rgba(10,10,10,0.08)] backdrop-blur-sm">
             <p className="font-mono text-xs uppercase tracking-[0.2em] text-neutral-500">Get Started</p>
             <h2 className="mt-2 text-2xl font-semibold text-black">Sign in to your workspace</h2>
             <p className="mt-2 text-sm text-neutral-600">
