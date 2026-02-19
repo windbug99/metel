@@ -94,6 +94,7 @@ export default function DashboardPage() {
   const [commandLogsError, setCommandLogsError] = useState<string | null>(null);
   const [commandLogStatusFilter, setCommandLogStatusFilter] = useState<"all" | "success" | "error">("all");
   const [commandLogCommandFilter, setCommandLogCommandFilter] = useState<string>("all");
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const telegramPollIntervalRef = useRef<number | null>(null);
   const telegramPollTimeoutRef = useRef<number | null>(null);
@@ -570,6 +571,19 @@ export default function DashboardPage() {
     }
   };
 
+  const handleLogout = async () => {
+    if (loggingOut) {
+      return;
+    }
+    setLoggingOut(true);
+    try {
+      await supabase.auth.signOut();
+      router.replace("/");
+    } finally {
+      setLoggingOut(false);
+    }
+  };
+
   if (loading) {
     return (
       <main className="mx-auto max-w-5xl px-6 py-16">
@@ -589,7 +603,19 @@ export default function DashboardPage() {
       </header>
 
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-black">User</h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold text-black">User</h2>
+          <button
+            type="button"
+            onClick={() => {
+              void handleLogout();
+            }}
+            disabled={loggingOut}
+            className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+          >
+            {loggingOut ? "Logging out..." : "Logout"}
+          </button>
+        </div>
         <div className="mt-4 grid gap-4 sm:grid-cols-3">
           <div>
             <p className="text-xs text-gray-500">Email</p>
