@@ -1,7 +1,6 @@
 import AuthPanel from "../components/auth-panel";
 
 export default function Home() {
-  const navItems = ["Products", "Solutions", "Resources", "Enterprise", "Docs", "Pricing"];
   const services = ["Notion", "Linear", "Telegram", "Spotify (Disabled)", "Slack (Disabled)"];
 
   return (
@@ -12,48 +11,22 @@ export default function Home() {
       </div>
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col px-5 py-6 sm:px-8">
-        <header className="rounded-xl border border-neutral-300/80 bg-white/65 px-4 py-3 backdrop-blur sm:px-5">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <p className="text-lg font-semibold tracking-tight text-black">Metel</p>
-              <p className="hidden font-mono text-[11px] uppercase tracking-[0.2em] text-neutral-500 sm:block">API Layer</p>
-            </div>
-            <nav className="hidden items-center gap-5 text-sm text-neutral-600 lg:flex">
-              {navItems.map((item) => (
-                <a key={item} href="#" className="transition hover:text-neutral-900">
-                  {item}
-                </a>
-              ))}
-            </nav>
-            <AuthPanel
-              variant="button"
-              signInButtonClassName="rounded-md border border-neutral-900 bg-neutral-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-neutral-800"
-            />
-          </div>
-        </header>
-
-        <section className="flex flex-1 flex-col py-16 sm:py-20">
+        <section className="flex flex-1 flex-col py-20 sm:py-24">
           <div className="mx-auto w-full max-w-4xl text-center">
             <p className="font-mono text-xs uppercase tracking-[0.3em] text-neutral-500">Autonomous API Router</p>
-            <h1 className="mt-5 text-4xl font-semibold tracking-tight text-black sm:text-6xl">
+            <h1 className="mt-6 text-6xl font-semibold tracking-tight text-black sm:text-7xl lg:text-8xl">
               Connect your tools.
               <br />
               Automate with one command.
             </h1>
-            <p className="mx-auto mt-6 max-w-2xl text-base text-neutral-700 sm:text-lg">
+            <p className="mx-auto mt-7 max-w-2xl text-lg text-neutral-700 sm:text-xl">
               Metel routes one request across connected services and returns traceable execution results.
             </p>
-            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
               <AuthPanel
                 variant="button"
-                signInButtonClassName="rounded-md border border-neutral-900 bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800"
+                signInButtonClassName="rounded-md border border-neutral-900 bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-800"
               />
-              <a
-                href="#overview"
-                className="rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-800 transition hover:bg-neutral-100"
-              >
-                View Overview
-              </a>
             </div>
             <div className="mt-10 flex flex-wrap items-center justify-center gap-2">
               {services.map((service) => (
@@ -67,7 +40,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div id="overview" className="mx-auto mt-14 grid w-full max-w-6xl gap-4 md:grid-cols-3">
+          <div id="overview" className="mx-auto mt-16 grid w-full max-w-6xl gap-4 md:grid-cols-3">
             <article className="rounded-xl border border-neutral-300 bg-white/80 p-5 backdrop-blur">
               <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-neutral-500">01</p>
               <p className="mt-2 text-base font-medium text-neutral-900">Unified Commands</p>
