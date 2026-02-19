@@ -1,11 +1,35 @@
 from __future__ import annotations
 
+import re
+
 from agent.autonomous import run_autonomous_loop
 from agent.executor import execute_agent_plan
 from agent.planner import build_agent_plan
 from agent.planner_llm import try_build_agent_plan_with_llm
-from agent.types import AgentRunResult
+from agent.types import AgentExecutionResult, AgentExecutionStep, AgentRunResult
 from app.core.config import get_settings
+
+
+def _parse_data_source_query_state(user_text: str) -> tuple[bool, str]:
+    text = user_text or ""
+    lower = text.lower()
+    if not (("데이터소스" in text) or ("data source" in lower) or ("data_source" in lower)):
+        return False, "none"
+    if not any(keyword in text for keyword in ("조회", "목록", "query", "불러", "보여")):
+        return False, "none"
+
+    id_match = re.search(r"([0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12})", text)
+    if id_match:
+        return True, "ok"
+
+    token_match = re.search(r"(?i)(?:데이터소스|data[_ ]source)\s+([^\s]+)", text)
+    if not token_match:
+        return True, "missing"
+
+    candidate = token_match.group(1).strip(" \"'`,.;:()[]{}")
+    if not candidate or candidate in {"조회", "목록", "검색", "불러", "보여", "최근", "상위"}:
+        return True, "missing"
+    return True, "invalid"
 
 
 async def run_agent_analysis(user_text: str, connected_services: list[str], user_id: str) -> AgentRunResult:
@@ -18,6 +42,41 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     4) workflow execution
     5) result summary and return payload generation
     """
+    is_data_source_query, data_source_state = _parse_data_source_query_state(user_text)
+    if is_data_source_query and data_source_state in {"missing", "invalid"}:
+        plan = build_agent_plan(user_text=user_text, connected_services=connected_services)
+        detail = "id_missing" if data_source_state == "missing" else "id_invalid_format"
+        user_message = (
+            "데이터소스 조회를 위해 ID가 필요합니다.\n"
+            "예: '노션 데이터소스 <id> 최근 5개 조회'"
+            if data_source_state == "missing"
+            else (
+                "데이터소스 ID 형식이 올바르지 않습니다.\n"
+                "UUID 형식으로 입력해주세요.\n"
+                "예: '노션 데이터소스 12345678-1234-1234-1234-1234567890ab 최근 5개 조회'"
+            )
+        )
+        summary = (
+            "데이터소스 ID를 찾지 못했습니다."
+            if data_source_state == "missing"
+            else "데이터소스 ID 형식이 올바르지 않습니다."
+        )
+        execution = AgentExecutionResult(
+            success=False,
+            summary=summary,
+            user_message=user_message,
+            artifacts={"error_code": "validation_error"},
+            steps=[AgentExecutionStep(name="parse_data_source_id", status="error", detail=detail)],
+        )
+        return AgentRunResult(
+            ok=False,
+            stage="validation",
+            plan=plan,
+            result_summary=summary,
+            execution=execution,
+            plan_source="rule",
+        )
+
     plan_source = "rule"
     llm_plan, llm_error = await try_build_agent_plan_with_llm(
         user_text=user_text,

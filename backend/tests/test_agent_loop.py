@@ -17,6 +17,8 @@ def _sample_plan() -> AgentPlan:
 
 def test_run_agent_analysis_uses_llm_plan(monkeypatch):
     llm_plan = _sample_plan()
+    class _Settings:
+        llm_autonomous_enabled = False
 
     async def _fake_try_build(**kwargs):
         return llm_plan, None
@@ -27,6 +29,7 @@ def test_run_agent_analysis_uses_llm_plan(monkeypatch):
 
     monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
     monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
 
     result = asyncio.run(run_agent_analysis("text", ["notion"], "user-1"))
     assert result.ok is True
@@ -35,6 +38,8 @@ def test_run_agent_analysis_uses_llm_plan(monkeypatch):
 
 def test_run_agent_analysis_falls_back_to_rule(monkeypatch):
     rule_plan = _sample_plan()
+    class _Settings:
+        llm_autonomous_enabled = False
 
     async def _fake_try_build(**kwargs):
         return None, "llm_planner_disabled"
@@ -49,6 +54,7 @@ def test_run_agent_analysis_falls_back_to_rule(monkeypatch):
     monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
     monkeypatch.setattr("agent.loop.build_agent_plan", _fake_build_plan)
     monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
 
     result = asyncio.run(run_agent_analysis("text", ["notion"], "user-1"))
     assert result.ok is True
@@ -117,3 +123,27 @@ def test_run_agent_analysis_autonomous_fallback_to_executor(monkeypatch):
     assert result.ok is True
     assert result.result_summary == "done"
     assert any(item == "execution=autonomous_fallback" for item in result.plan.notes)
+    assert any(item == "autonomous_error=turn_limit" for item in result.plan.notes)
+
+
+def test_run_agent_analysis_validates_data_source_id_early(monkeypatch):
+    called = {"llm": False, "exec": False}
+
+    async def _fake_try_build(**kwargs):
+        called["llm"] = True
+        raise AssertionError("llm planner should not be called for invalid data source id")
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        called["exec"] = True
+        raise AssertionError("executor should not be called for invalid data source id")
+
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("노션 데이터소스 invalid-id 조회해줘", ["notion"], "user-1"))
+    assert result.ok is False
+    assert result.stage == "validation"
+    assert result.execution is not None
+    assert result.execution.artifacts.get("error_code") == "validation_error"
+    assert "형식이 올바르지" in result.execution.user_message
+    assert called == {"llm": False, "exec": False}

@@ -231,6 +231,14 @@ def _extract_requested_count(plan: AgentPlan, default_count: int = 3) -> int:
 
 
 def _extract_output_title(user_text: str, default_title: str = "Metel 자동 요약 회의록") -> str:
+    def _sanitize_title(raw: str) -> str:
+        cleaned = raw.strip(" \"'`")
+        cleaned = re.sub(r"[\"'`]+", "", cleaned).strip()
+        cleaned = re.sub(r"\s*(페이지|문서)\s*$", "", cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r"\s+(로|으로)\s*$", "", cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+        return cleaned
+
     patterns = [
         r"(?i)요약(?:해서|하여)\s*(.+?)\s*로\s*(?:새로\s*)?(?:생성|만들)",
         r"(?i)(.+?)로\s*(?:새로\s*)?(?:생성|만들)",
@@ -241,7 +249,7 @@ def _extract_output_title(user_text: str, default_title: str = "Metel 자동 요
         match = re.search(pattern, user_text)
         if not match:
             continue
-        candidate = match.group(1).strip(" \"'`")
+        candidate = _sanitize_title(match.group(1))
         candidate = re.sub(r"^(노션|notion)\s*", "", candidate, flags=re.IGNORECASE).strip()
         if "으로" in user_text and candidate.endswith("으"):
             candidate = candidate[:-1].strip()
@@ -412,6 +420,8 @@ def _requires_summary(plan: AgentPlan) -> bool:
 
 
 def _requires_creation(plan: AgentPlan) -> bool:
+    if _requires_append_to_page(plan):
+        return False
     return any("생성" in req.summary for req in plan.requirements) or any(
         keyword in plan.user_text for keyword in ("생성", "만들", "작성", "create")
     )
@@ -434,6 +444,12 @@ def _pick_tool(plan: AgentPlan, keyword: str, default_tool: str) -> str:
         if keyword in tool:
             return tool
     return default_tool
+
+
+def _is_valid_notion_id(value: str | None) -> bool:
+    if not value:
+        return False
+    return bool(re.fullmatch(r"[0-9a-fA-F]{32}|[0-9a-fA-F\-]{36}", value.strip()))
 
 
 async def _read_page_lines_or_summary(
@@ -846,11 +862,30 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             (page for page in normalized_pages if normalized_target in _normalize_title(page["title"])),
             normalized_pages[0],
         )
-        await execute_tool(
-            user_id=user_id,
-            tool_name=_pick_tool(plan, "update_page", "notion_update_page"),
-            payload={"page_id": selected_page["id"], "archived": True},
-        )
+        selected_page_id = selected_page.get("id")
+        if not _is_valid_notion_id(selected_page_id):
+            return AgentExecutionResult(
+                success=False,
+                summary="삭제 대상 페이지 ID가 유효하지 않습니다.",
+                user_message="삭제 대상 페이지 ID를 확인하지 못했습니다. 페이지 제목을 더 구체적으로 입력해주세요.",
+                artifacts={"error_code": "validation_error"},
+                steps=steps + [AgentExecutionStep(name="select_page", status="error", detail="invalid_page_id")],
+            )
+        try:
+            await execute_tool(
+                user_id=user_id,
+                tool_name=_pick_tool(plan, "update_page", "notion_update_page"),
+                payload={"page_id": selected_page_id, "archived": True},
+            )
+        except HTTPException as exc:
+            if "notion_update_page:BAD_REQUEST" not in str(exc.detail):
+                raise
+            await execute_tool(
+                user_id=user_id,
+                tool_name=_pick_tool(plan, "update_page", "notion_update_page"),
+                payload={"page_id": selected_page_id, "in_trash": True},
+            )
+            steps.append(AgentExecutionStep(name="archive_retry", status="success", detail="fallback=in_trash"))
         steps.append(AgentExecutionStep(name="archive_page", status="success", detail=f"페이지 아카이브: {selected_page['title']}"))
         return AgentExecutionResult(
             success=True,

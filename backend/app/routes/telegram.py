@@ -316,7 +316,8 @@ def _map_natural_text_to_command(text: str) -> tuple[str, str]:
     raw = text.strip()
     lower = raw.lower()
     list_keywords = ["목록", "리스트", "최근", "조회", "보여", "불러", "확인"]
-    create_keywords = ["만들", "create", "추가", "작성", "생성해", "생성해줘"]
+    create_keywords = ["만들", "create", "작성", "생성해", "생성해줘"]
+    append_keywords = ["추가", "붙여", "append"]
     notion_keywords = ["notion", "노션"]
     page_keywords = ["페이지", "문서"]
     looks_like_list_intent = any(keyword in lower for keyword in list_keywords) or "몇 개" in raw or "몇개" in raw
@@ -346,6 +347,10 @@ def _map_natural_text_to_command(text: str) -> tuple[str, str]:
 
     # 고급/복합 작업은 강제 매핑하지 않고 LLM/에이전트 경로로 전달
     if any(keyword in lower for keyword in advanced_agent_keywords):
+        return "", ""
+
+    # "페이지에 ... 추가"는 생성이 아니라 append 계열이므로 매핑하지 않고 에이전트 경로로 전달
+    if any(keyword in lower for keyword in append_keywords) and "페이지에" in raw:
         return "", ""
 
     # 생성 의도는 목록보다 먼저 매칭해야 오탐이 줄어듭니다.
@@ -606,6 +611,10 @@ async def telegram_webhook(
             execution_message = analysis.result_summary
             execution_error_code = None
             execution_mode = "rule"
+            autonomous_fallback_reason = None
+            for note in analysis.plan.notes:
+                if note.startswith("autonomous_error="):
+                    autonomous_fallback_reason = note.split("=", 1)[1]
             if analysis.execution:
                 execution_steps_text = (
                     "\n".join(f"- {step.name}: {step.status} ({step.detail})" for step in analysis.execution.steps)
@@ -617,6 +626,9 @@ async def telegram_webhook(
                     execution_mode = "autonomous"
                 if execution_error_code:
                     execution_message += _agent_error_guide(execution_error_code)
+            mode_extra = ""
+            if execution_mode == "rule" and autonomous_fallback_reason:
+                mode_extra = f"\n- autonomous_fallback_reason: {autonomous_fallback_reason}"
 
             _record_command_log(
                 user_id=user_id,
@@ -638,7 +650,7 @@ async def telegram_webhook(
                         f"- 서비스: {services_text}\n"
                         f"- API/Tool:\n{tools_text}\n\n"
                         f"[4] 생성된 워크플로우\n{workflow_text}\n\n"
-                        f"[실행 모드]\n- plan_source: {analysis.plan_source}\n- execution_mode: {execution_mode}\n\n"
+                        f"[실행 모드]\n- plan_source: {analysis.plan_source}\n- execution_mode: {execution_mode}{mode_extra}\n\n"
                         f"[5-6] 실행/결과 정리\n{execution_message}\n\n"
                         f"[실행 단계 로그]\n{execution_steps_text}"
                     ),

@@ -17,3 +17,9 @@ def test_map_data_source_query_to_agent_path():
     command, rest = _map_natural_text_to_command("노션 데이터소스 invalid-id 조회해줘")
     assert command == ""
     assert rest == ""
+
+
+def test_map_append_intent_to_agent_path():
+    command, rest = _map_natural_text_to_command('일일 회의록 테스트 페이지에 "액션 아이템: API 테스트 완료" 추가해줘')
+    assert command == ""
+    assert rest == ""

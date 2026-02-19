@@ -104,7 +104,7 @@ def test_execute_notion_archive_flow(monkeypatch):
                 "data": {
                     "results": [
                         {
-                            "id": "page-1",
+                            "id": "30c50e84a3bf8109b781ed4e0e0dacb3",
                             "url": "https://notion.so/page-1",
                             "properties": {"title": {"type": "title", "title": [{"plain_text": "Metel test page"}]}},
                         }
@@ -113,7 +113,7 @@ def test_execute_notion_archive_flow(monkeypatch):
             }
         if tool_name == "notion_update_page":
             assert payload["archived"] is True
-            return {"ok": True, "data": {"id": "page-1"}}
+            return {"ok": True, "data": {"id": "30c50e84a3bf8109b781ed4e0e0dacb3"}}
         raise AssertionError(f"unexpected tool: {tool_name}")
 
     monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
@@ -127,6 +127,46 @@ def test_execute_notion_archive_flow(monkeypatch):
     assert result.success is True
     assert "아카이브" in result.summary
     assert len(calls) == 2
+
+
+def test_execute_notion_archive_flow_retries_with_in_trash_on_bad_request(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "notion_search":
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {
+                            "id": "30c50e84a3bf8109b781ed4e0e0dacb3",
+                            "url": "https://notion.so/page-1",
+                            "properties": {"title": {"type": "title", "title": [{"plain_text": "일일 회의록 테스트"}]}},
+                        }
+                    ]
+                },
+            }
+        if tool_name == "notion_update_page":
+            if payload.get("archived") is True:
+                raise HTTPException(status_code=400, detail="notion_update_page:BAD_REQUEST")
+            assert payload.get("in_trash") is True
+            return {"ok": True, "data": {"id": "30c50e84a3bf8109b781ed4e0e0dacb3"}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = _plan(
+        "일일 회의록 테스트 페이지 삭제해줘",
+        ["notion_search", "notion_update_page"],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+
+    assert result.success is True
+    assert "아카이브" in result.summary
+    assert [item[0] for item in calls] == ["notion_search", "notion_update_page", "notion_update_page"]
+    assert calls[1][1]["archived"] is True
+    assert calls[2][1]["in_trash"] is True
 
 
 def test_execute_notion_rename_then_top_lines_flow(monkeypatch):
@@ -281,3 +321,10 @@ def test_execute_notion_summary_one_line(monkeypatch):
     assert "페이지 요약" in result.summary
     summary_text = result.user_message.split("\n\n", 1)[1]
     assert "\n" not in summary_text
+
+
+def test_extract_output_title_strips_trailing_page_token():
+    from agent.executor import _extract_output_title
+
+    title = _extract_output_title('노션에서 최근 생성된 페이지 3개를 요약해서 "일일 회의록 테스트" 페이지로 만들어줘')
+    assert title == "일일 회의록 테스트"
