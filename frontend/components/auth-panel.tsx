@@ -8,7 +8,12 @@ type UserState = {
   email: string;
 } | null;
 
-export default function AuthPanel() {
+type AuthPanelProps = {
+  className?: string;
+  signInButtonClassName?: string;
+};
+
+export default function AuthPanel({ className, signInButtonClassName }: AuthPanelProps) {
   const router = useRouter();
   const [user, setUser] = useState<UserState>(null);
   const [loading, setLoading] = useState(true);
@@ -64,6 +69,12 @@ export default function AuthPanel() {
     };
   }, [router]);
 
+  useEffect(() => {
+    if (!loading && user) {
+      router.replace("/dashboard");
+    }
+  }, [loading, user, router]);
+
   const signInWithGoogle = async () => {
     const redirectTo = `${window.location.origin}/auth/callback`;
 
@@ -85,19 +96,37 @@ export default function AuthPanel() {
     }
   };
 
+  const containerClassName = className ?? "mt-8 rounded-xl border border-gray-200 p-5";
+  const defaultSignInButtonClassName =
+    signInButtonClassName ??
+    "rounded-md border border-neutral-900 bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800";
+
   if (loading) {
-    return <p className="mt-6 text-sm text-gray-500">Checking auth state...</p>;
+    return (
+      <section className={containerClassName}>
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">Checking auth state...</p>
+          <button
+            type="button"
+            onClick={signInWithGoogle}
+            className={defaultSignInButtonClassName}
+          >
+            Sign in with Google
+          </button>
+        </div>
+      </section>
+    );
   }
 
   return (
-    <section className="mt-8 rounded-xl border border-gray-200 p-5">
+    <section className={containerClassName}>
       {errorMessage ? <p className="mb-3 text-sm text-red-600">Auth check error: {errorMessage}</p> : null}
       {user ? (
         <div className="space-y-3">
           <p className="text-sm text-gray-700">Signed in: {user.email}</p>
           <a
             href="/dashboard"
-            className="inline-block rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900"
+            className="inline-block rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 hover:bg-gray-100"
           >
             Open Dashboard
           </a>
@@ -111,11 +140,11 @@ export default function AuthPanel() {
         </div>
       ) : (
         <div className="space-y-3">
-          <p className="text-sm text-gray-700">Sign in with Google.</p>
+          <p className="text-sm text-gray-700">Sign in to connect your services.</p>
           <button
             type="button"
             onClick={signInWithGoogle}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white"
+            className={defaultSignInButtonClassName}
           >
             Sign in with Google
           </button>
