@@ -42,6 +42,10 @@ type TelegramConnectInfo = {
   expiresInSeconds: number;
 } | null;
 
+type OAuthProviderRow = {
+  provider: string | null;
+};
+
 type CommandLog = {
   id: number;
   channel: string;
@@ -74,6 +78,10 @@ export default function DashboardPage() {
   const [telegramConnecting, setTelegramConnecting] = useState(false);
   const [telegramConnectInfo, setTelegramConnectInfo] = useState<TelegramConnectInfo>(null);
   const [telegramPolling, setTelegramPolling] = useState(false);
+  const [spotifyConnected, setSpotifyConnected] = useState(false);
+  const [spotifyStatusError, setSpotifyStatusError] = useState<string | null>(null);
+  const [spotifyConnecting, setSpotifyConnecting] = useState(false);
+  const [spotifyDisconnecting, setSpotifyDisconnecting] = useState(false);
   const [commandLogs, setCommandLogs] = useState<CommandLog[]>([]);
   const [commandLogsLoading, setCommandLogsLoading] = useState(false);
   const [commandLogsError, setCommandLogsError] = useState<string | null>(null);
@@ -197,6 +205,26 @@ export default function DashboardPage() {
       setCommandLogsError("Network error while fetching command logs.");
     } finally {
       setCommandLogsLoading(false);
+    }
+  }, []);
+
+  const fetchOAuthProviders = useCallback(async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("oauth_tokens")
+        .select("provider")
+        .eq("user_id", userId);
+      if (error) {
+        setSpotifyStatusError("Failed to fetch Spotify status.");
+        return;
+      }
+      const providers = new Set(
+        (data as OAuthProviderRow[] | null)?.map((row) => (row.provider || "").toLowerCase()) ?? []
+      );
+      setSpotifyConnected(providers.has("spotify"));
+      setSpotifyStatusError(null);
+    } catch {
+      setSpotifyStatusError("Network error while fetching Spotify status.");
     }
   }, []);
 
@@ -327,6 +355,7 @@ export default function DashboardPage() {
 
         await fetchNotionStatus();
         await fetchTelegramStatus();
+        await fetchOAuthProviders(user.id);
         await fetchCommandLogs();
 
         if (!mounted) {
@@ -346,7 +375,7 @@ export default function DashboardPage() {
     return () => {
       mounted = false;
     };
-  }, [router, fetchNotionStatus, fetchTelegramStatus, fetchCommandLogs]);
+  }, [router, fetchNotionStatus, fetchTelegramStatus, fetchOAuthProviders, fetchCommandLogs]);
 
   const handleDisconnectNotion = async () => {
     if (!apiBaseUrl || !profile?.id || disconnecting) {
@@ -469,6 +498,67 @@ export default function DashboardPage() {
     }
   };
 
+  const handleConnectSpotify = async () => {
+    if (!apiBaseUrl || !profile?.id || spotifyConnecting) {
+      return;
+    }
+    setSpotifyConnecting(true);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/oauth/spotify/start`, {
+        method: "POST",
+        headers,
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.auth_url) {
+        setSpotifyStatusError("Spotify OAuth flow is not configured yet.");
+        return;
+      }
+      window.location.href = payload.auth_url;
+    } catch {
+      setSpotifyStatusError("Network error while starting Spotify connection.");
+    } finally {
+      setSpotifyConnecting(false);
+    }
+  };
+
+  const handleDisconnectSpotify = async () => {
+    if (!profile?.id || spotifyDisconnecting) {
+      return;
+    }
+    setSpotifyDisconnecting(true);
+    try {
+      if (apiBaseUrl) {
+        const headers = await getAuthHeaders();
+        const response = await fetch(`${apiBaseUrl}/api/oauth/spotify/disconnect`, {
+          method: "DELETE",
+          headers,
+        });
+        if (response.ok) {
+          setSpotifyConnected(false);
+          setSpotifyStatusError(null);
+          return;
+        }
+      }
+
+      const { error } = await supabase
+        .from("oauth_tokens")
+        .delete()
+        .eq("user_id", profile.id)
+        .eq("provider", "spotify");
+      if (error) {
+        setSpotifyStatusError("Failed to disconnect Spotify.");
+        return;
+      }
+      setSpotifyConnected(false);
+      setSpotifyStatusError(null);
+    } catch {
+      setSpotifyStatusError("Network error while disconnecting Spotify.");
+    } finally {
+      setSpotifyDisconnecting(false);
+    }
+  };
+
   const copyText = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -546,45 +636,54 @@ export default function DashboardPage() {
 
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-black">Messenger Connection</h2>
-        {telegramStatusError ? (
-          <p className="mt-3 text-sm text-amber-700">{telegramStatusError}</p>
-        ) : null}
-        <p className="mt-3 text-sm text-gray-700">
-          Status: {telegramStatus?.connected ? "Connected" : "Not connected"}
-        </p>
-        {telegramStatus?.connected ? (
-          <p className="mt-1 text-sm text-gray-700">
-            Account: {telegramStatus.telegram_username ? `@${telegramStatus.telegram_username}` : "-"}
-          </p>
-        ) : null}
-        {apiBaseUrl && profile?.id ? (
-          <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-base font-semibold text-gray-900">✈ Telegram</p>
+              <p className="text-xs text-gray-600">{telegramStatus?.connected ? "Connected" : "Not connected"}</p>
+            </div>
+            <p className="mt-2 text-sm text-gray-700">
+              Account: {telegramStatus?.telegram_username ? `@${telegramStatus.telegram_username}` : "-"}
+            </p>
             <button
               type="button"
               onClick={() => {
+                if (telegramStatus?.connected) {
+                  void handleDisconnectTelegram();
+                  return;
+                }
                 void handleConnectTelegram();
               }}
-              disabled={telegramConnecting}
-              className="inline-block rounded-md bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              disabled={!apiBaseUrl || !profile?.id || telegramConnecting || telegramDisconnecting}
+              className="mt-3 inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
             >
-              {telegramConnecting ? "Generating link..." : "Connect Telegram"}
+              {telegramStatus?.connected
+                ? (telegramDisconnecting ? "Disconnecting..." : "Disconnect")
+                : (telegramConnecting ? "Generating link..." : "Connect")}
             </button>
-            {telegramStatus?.connected ? (
-              <button
-                type="button"
-                onClick={handleDisconnectTelegram}
-                disabled={telegramDisconnecting}
-                className="inline-block rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
-              >
-                {telegramDisconnecting ? "Disconnecting..." : "Disconnect"}
-              </button>
-            ) : null}
-          </div>
-        ) : (
+          </article>
+
+          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4 opacity-60">
+            <div className="flex items-center justify-between">
+              <p className="text-base font-semibold text-gray-900"># Slack</p>
+              <p className="text-xs text-gray-600">Disabled</p>
+            </div>
+            <p className="mt-2 text-sm text-gray-700">Slack connection is not enabled in this prototype.</p>
+            <button
+              type="button"
+              disabled
+              className="mt-3 inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+            >
+              Connect
+            </button>
+          </article>
+        </div>
+        {telegramStatusError ? <p className="mt-3 text-sm text-amber-700">{telegramStatusError}</p> : null}
+        {!apiBaseUrl || !profile?.id ? (
           <p className="mt-3 text-sm text-amber-700">
-            Set NEXT_PUBLIC_API_BASE_URL to enable Telegram connection.
+            Set NEXT_PUBLIC_API_BASE_URL to enable messenger connection.
           </p>
-        )}
+        ) : null}
         {telegramConnectInfo && !telegramStatus?.connected ? (
           <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
             <p className="text-sm text-gray-700">
@@ -635,44 +734,62 @@ export default function DashboardPage() {
 
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-black">Service Connection</h2>
-        {notionStatusError ? (
-          <p className="mt-3 text-sm text-amber-700">{notionStatusError}</p>
-        ) : null}
-        <p className="mt-3 text-sm text-gray-700">
-          Notion: {notionStatus?.connected ? "Connected" : "Not connected"}
-        </p>
-        {notionStatus?.connected ? (
-          <p className="mt-1 text-sm text-gray-700">
-            Workspace: {notionStatus.integration?.workspace_name ?? "-"}
-          </p>
-        ) : null}
-        {apiBaseUrl && profile?.id ? (
-          <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-base font-semibold text-gray-900">N Notion</p>
+              <p className="text-xs text-gray-600">{notionStatus?.connected ? "Connected" : "Not connected"}</p>
+            </div>
+            <p className="mt-2 text-sm text-gray-700">
+              Workspace: {notionStatus?.integration?.workspace_name ?? "-"}
+            </p>
             <button
               type="button"
               onClick={() => {
+                if (notionStatus?.connected) {
+                  void handleDisconnectNotion();
+                  return;
+                }
                 void handleConnectNotion();
               }}
-              className="inline-block rounded-md bg-black px-4 py-2 text-sm font-medium text-white"
+              disabled={!apiBaseUrl || !profile?.id || disconnecting}
+              className="mt-3 inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
             >
-              Connect Notion
+              {notionStatus?.connected ? (disconnecting ? "Disconnecting..." : "Disconnect") : "Connect"}
             </button>
-            {notionStatus?.connected ? (
-              <button
-                type="button"
-                onClick={handleDisconnectNotion}
-                disabled={disconnecting}
-                className="inline-block rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
-              >
-                {disconnecting ? "Disconnecting..." : "Disconnect"}
-              </button>
-            ) : null}
-          </div>
-        ) : (
+          </article>
+
+          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-base font-semibold text-gray-900">♫ Spotify</p>
+              <p className="text-xs text-gray-600">{spotifyConnected ? "Connected" : "Not connected"}</p>
+            </div>
+            <p className="mt-2 text-sm text-gray-700">Music integration for playlist and track actions.</p>
+            <button
+              type="button"
+              onClick={() => {
+                if (spotifyConnected) {
+                  void handleDisconnectSpotify();
+                  return;
+                }
+                void handleConnectSpotify();
+              }}
+              disabled={!profile?.id || spotifyConnecting || spotifyDisconnecting}
+              className="mt-3 inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+            >
+              {spotifyConnected
+                ? (spotifyDisconnecting ? "Disconnecting..." : "Disconnect")
+                : (spotifyConnecting ? "Connecting..." : "Connect")}
+            </button>
+          </article>
+        </div>
+        {notionStatusError ? <p className="mt-3 text-sm text-amber-700">{notionStatusError}</p> : null}
+        {spotifyStatusError ? <p className="mt-3 text-sm text-amber-700">{spotifyStatusError}</p> : null}
+        {!apiBaseUrl || !profile?.id ? (
           <p className="mt-3 text-sm text-amber-700">
-            Set NEXT_PUBLIC_API_BASE_URL to enable Notion connection.
+            Set NEXT_PUBLIC_API_BASE_URL to enable service connection.
           </p>
-        )}
+        ) : null}
         {notionStatus?.connected ? (
           <div className="mt-6 rounded-lg border border-gray-200 bg-gray-50 p-4">
             <div className="flex items-center justify-between gap-2">
