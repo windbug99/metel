@@ -258,6 +258,24 @@ def _extract_output_title(user_text: str, default_title: str = "Metel 자동 요
     return default_title
 
 
+def _extract_nested_create_request(user_text: str) -> tuple[str | None, str | None]:
+    patterns = [
+        r'(?i)(?:노션에서\s*)?(?P<parent>.+?)\s*페이지\s*(?:아래|밑에|하위에)\s*(?P<child>.+?)\s*페이지?\s*(?:를|을)?\s*(?:새로\s*)?(?:생성|만들|작성)(?:해줘|해주세요|하세요)?',
+        r'(?i)(?:노션에서\s*)?(?P<parent>.+?)\s*아래\s*(?P<child>.+?)\s*페이지?\s*(?:를|을)?\s*(?:새로\s*)?(?:생성|만들|작성)(?:해줘|해주세요|하세요)?',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, user_text.strip())
+        if not match:
+            continue
+        parent = match.group("parent").strip(" \"'`")
+        child = match.group("child").strip(" \"'`")
+        parent = re.sub(r"^(노션|notion)\s*", "", parent, flags=re.IGNORECASE).strip()
+        child = re.sub(r"^(노션|notion)\s*", "", child, flags=re.IGNORECASE).strip()
+        if parent and child:
+            return parent, child[:100]
+    return None, None
+
+
 def _extract_target_page_title(user_text: str) -> str | None:
     patterns = [
         r"(?i)(?:노션에서\s*)?(.+?)의\s*(?:내용|본문)",
@@ -395,10 +413,21 @@ def _requires_data_source_query(plan: AgentPlan) -> bool:
 
 
 def _requires_page_archive(plan: AgentPlan) -> bool:
-    text = plan.user_text
-    return any(keyword in text for keyword in ("삭제", "지워", "아카이브", "archive")) and any(
-        keyword in text for keyword in ("페이지", "노션", "notion")
-    )
+    text = plan.user_text.strip()
+    lower = text.lower()
+    if not any(keyword in lower for keyword in ("페이지", "문서", "노션", "notion")):
+        return False
+
+    # Do not treat noun usage like "삭제 테스트 페이지" as delete intent.
+    # Require explicit deletion action phrase.
+    delete_intent_patterns = [
+        r"(?i)(?:페이지|문서)?\s*(?:를|을)?\s*삭제(?:해줘|해|해주세요)\b",
+        r"(?i)(?:페이지|문서)?\s*(?:를|을)?\s*지워(?:줘|줘요|라|해줘|해)\b",
+        r"(?i)(?:페이지|문서)?\s*(?:를|을)?\s*아카이브(?:해줘|해|해주세요)\b",
+        r"(?i)\b페이지\s*삭제\b",
+        r"(?i)\barchive\b",
+    ]
+    return any(re.search(pattern, text) for pattern in delete_intent_patterns)
 
 
 async def _notion_append_summary_blocks(user_id: str, plan: AgentPlan, page_id: str, markdown: str) -> None:
@@ -1080,6 +1109,95 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
                 "예: '노션에서 Metel test page의 내용 중 상위 10줄 출력'"
             ),
             steps=steps + [AgentExecutionStep(name="extract_title", status="error", detail="title_missing")],
+        )
+
+    if _requires_creation(plan) and not _requires_summary(plan):
+        parent_title, child_title = _extract_nested_create_request(plan.user_text)
+        parent_page_id = None
+        parent_page_url = None
+
+        if parent_title:
+            search_result = await execute_tool(
+                user_id=user_id,
+                tool_name=_pick_tool(plan, "search", "notion_search"),
+                payload={
+                    "query": parent_title,
+                    "page_size": 10,
+                    "filter": {"property": "object", "value": "page"},
+                    "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+                },
+            )
+            raw_pages = (search_result.get("data") or {}).get("results", [])
+            normalized_pages = [
+                {"id": page.get("id"), "title": _extract_page_title(page), "url": page.get("url")}
+                for page in raw_pages
+            ]
+            steps.append(
+                AgentExecutionStep(
+                    name="search_pages",
+                    status="success",
+                    detail=f"상위 페이지 조회 '{parent_title}' 결과 {len(normalized_pages)}건",
+                )
+            )
+            if not normalized_pages:
+                return AgentExecutionResult(
+                    success=False,
+                    summary="상위 페이지를 찾지 못했습니다.",
+                    user_message=f"'{parent_title}' 상위 페이지를 찾지 못했습니다.",
+                    artifacts={"error_code": "not_found"},
+                    steps=steps,
+                )
+            normalized_target = _normalize_title(parent_title)
+            selected_parent = next(
+                (page for page in normalized_pages if _normalize_title(page["title"]) == normalized_target),
+                None,
+            ) or next(
+                (page for page in normalized_pages if normalized_target in _normalize_title(page["title"])),
+                normalized_pages[0],
+            )
+            parent_page_id = selected_parent["id"]
+            parent_page_url = selected_parent["url"]
+            steps.append(
+                AgentExecutionStep(
+                    name="select_parent_page",
+                    status="success",
+                    detail=f"상위 페이지: {selected_parent['title']} ({parent_page_id})",
+                )
+            )
+
+        output_title = child_title or _extract_output_title(plan.user_text, default_title="Metel 새 페이지")
+        parent_payload = {"page_id": parent_page_id} if parent_page_id else _notion_create_parent_payload()
+        create_result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "create_page", "notion_create_page"),
+            payload={
+                "parent": parent_payload,
+                "properties": {
+                    "title": {
+                        "title": [
+                            {
+                                "type": "text",
+                                "text": {"content": output_title},
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+        created = create_result.get("data") or {}
+        created_page_url = created.get("url")
+        steps.append(AgentExecutionStep(name="create_page", status="success", detail=f"페이지 생성: {output_title}"))
+        return AgentExecutionResult(
+            success=True,
+            summary="페이지 생성을 완료했습니다.",
+            user_message=(
+                "요청하신 페이지를 생성했습니다.\n"
+                f"- 제목: {output_title}\n"
+                f"- 링크: {created_page_url}\n"
+                + (f"- 상위 페이지: {parent_page_url}\n" if parent_page_url else "")
+            ),
+            artifacts={"created_page_url": created_page_url or "", "created_page_title": output_title},
+            steps=steps,
         )
 
     count = _extract_requested_count(plan, default_count=3)

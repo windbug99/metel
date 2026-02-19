@@ -442,3 +442,117 @@ def test_extract_output_title_strips_trailing_page_token():
 
     title = _extract_output_title('노션에서 최근 생성된 페이지 3개를 요약해서 "일일 회의록 테스트" 페이지로 만들어줘')
     assert title == "일일 회의록 테스트"
+
+
+def test_execute_notion_summary_create_with_delete_word_in_title(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "notion_search":
+            query = payload.get("query")
+            if query == "더 코어 3":
+                return {
+                    "ok": True,
+                    "data": {
+                        "results": [
+                            {
+                                "id": "30c50e84a3bf81c19f4ae0816b901fd4",
+                                "url": "https://notion.so/core-3",
+                                "properties": {"title": {"type": "title", "title": [{"plain_text": "더 코어 3"}]}},
+                            }
+                        ]
+                    },
+                }
+            if query == "사이먼 블로그":
+                return {
+                    "ok": True,
+                    "data": {
+                        "results": [
+                            {
+                                "id": "30b50e84a3bf814889b5d55fe4667af2",
+                                "url": "https://notion.so/simon",
+                                "properties": {"title": {"type": "title", "title": [{"plain_text": "사이먼 블로그"}]}},
+                            }
+                        ]
+                    },
+                }
+            raise AssertionError(f"unexpected query: {query}")
+        if tool_name == "notion_retrieve_block_children":
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {"type": "paragraph", "paragraph": {"rich_text": [{"plain_text": "본문 1"}]}},
+                    ]
+                },
+            }
+        if tool_name == "notion_create_page":
+            return {"ok": True, "data": {"id": "30c50e84a3bf814e99b7f697ce63254d", "url": "https://notion.so/new"}}
+        if tool_name == "notion_append_block_children":
+            return {"ok": True, "data": {"results": []}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    async def _fake_request_summary_with_provider(
+        *,
+        provider: str,
+        model: str,
+        text: str,
+        line_count: int | None,
+        openai_api_key: str | None,
+        google_api_key: str | None,
+    ):
+        return "요약 결과"
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_summary_with_provider", _fake_request_summary_with_provider)
+
+    plan = _plan(
+        '노션에서 "더 코어 3", "사이먼 블로그" 페이지를 요약해서 "삭제 테스트 페이지 1" 페이지로 만들어줘',
+        ["notion_search", "notion_retrieve_block_children", "notion_create_page", "notion_append_block_children"],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+
+    assert result.success is True
+    assert "요약/생성" in result.summary
+    assert "삭제 테스트 페이지 1" in result.user_message
+    assert any(name == "notion_create_page" for name, _ in calls)
+
+
+def test_execute_notion_create_child_page_under_parent(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "notion_search":
+            assert payload.get("query") == "일일 회의록"
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {
+                            "id": "30c50e84a3bf814d99f8d59defec4286",
+                            "url": "https://notion.so/parent",
+                            "properties": {"title": {"type": "title", "title": [{"plain_text": "일일 회의록"}]}},
+                        }
+                    ]
+                },
+            }
+        if tool_name == "notion_create_page":
+            assert payload.get("parent", {}).get("page_id") == "30c50e84a3bf814d99f8d59defec4286"
+            assert payload.get("properties", {}).get("title", {}).get("title", [])[0].get("text", {}).get("content") == "나의 일기"
+            return {"ok": True, "data": {"id": "child-1", "url": "https://notion.so/child"}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = _plan(
+        "일일 회의록 페이지 아래 나의 일기 페이지를 새로 생성하세요",
+        ["notion_search", "notion_create_page"],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+
+    assert result.success is True
+    assert "페이지 생성" in result.summary
+    assert "나의 일기" in result.user_message
+    assert [item[0] for item in calls] == ["notion_search", "notion_create_page"]
