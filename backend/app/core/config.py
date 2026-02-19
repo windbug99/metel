@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str | None = None
     telegram_bot_username: str | None = None
 
+    openai_api_key: str | None = None
+    google_api_key: str | None = None
+    llm_planner_enabled: bool = False
+    llm_planner_provider: str = "openai"
+    llm_planner_model: str = "gpt-4o-mini"
+    llm_planner_fallback_provider: str | None = None
+    llm_planner_fallback_model: str | None = None
+
     frontend_url: str = "http://localhost:3000"
     allowed_origins: str = "http://localhost:3000"
 

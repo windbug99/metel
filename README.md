@@ -30,6 +30,9 @@ Monorepo for metel prototype.
    - `TELEGRAM_LINK_SECRET` (랜덤 문자열)
    - `TELEGRAM_WEBHOOK_SECRET` (선택, 랜덤 문자열)
    - `TELEGRAM_BOT_USERNAME` (선택, 예: `my_metel_bot`)
+   - `OPENAI_API_KEY` (선택, LLM planner 사용 시)
+   - `LLM_PLANNER_ENABLED` (기본 `false`, LLM planner 활성화 여부)
+   - `LLM_PLANNER_MODEL` (기본 `gpt-4o-mini`)
    - `FRONTEND_URL` (예: `http://localhost:3000`)
 3. `cd backend && python3 -m venv .venv && source .venv/bin/activate`
 4. `pip install -r requirements.txt`
@@ -61,6 +64,21 @@ Monorepo for metel prototype.
      - `secret_token=<TELEGRAM_WEBHOOK_SECRET>` (설정한 경우)
 3. 대시보드에서 `Telegram 연결하기` 클릭
 4. 열린 `t.me` 링크에서 `/start ...` 실행 후 연결 상태 확인
+
+## LLM Planner (Optional)
+
+기본값은 규칙 기반 planner입니다. LLM planner를 켜면 요청 분석/서비스·tool 선택을 LLM이 우선 수행하고, 실패 시 규칙 기반으로 fallback 됩니다.
+
+필수 설정:
+- `OPENAI_API_KEY` (OpenAI 사용 시)
+- `LLM_PLANNER_ENABLED=true`
+
+선택 설정:
+- `LLM_PLANNER_PROVIDER` (기본 `openai`)
+- `LLM_PLANNER_MODEL` (기본 `gpt-4o-mini`)
+- `LLM_PLANNER_FALLBACK_PROVIDER` (예: `gemini`)
+- `LLM_PLANNER_FALLBACK_MODEL` (예: `gemini-2.5-flash-lite`)
+- `GOOGLE_API_KEY` (Gemini 사용 시)
 
 ## Supabase SQL
 

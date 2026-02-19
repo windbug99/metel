@@ -43,3 +43,4 @@ class AgentRunResult:
     plan: AgentPlan
     result_summary: str
     execution: AgentExecutionResult | None = None
+    plan_source: str = "rule"

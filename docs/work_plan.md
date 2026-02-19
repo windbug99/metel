@@ -81,6 +81,11 @@
   - 토큰 사전검증: `users/me` 호출로 invalid token 조기 진단
 - 테스트 상태:
   - `backend` 테스트 `25 passed, 5 skipped` (live integration 스킵 포함)
+- LLM 자율 에이전트 1차 착수:
+  - `backend/agent/planner_llm.py` 추가 (OpenAI chat completions 기반 planner)
+  - `loop`에서 `LLM planner -> 실패 시 rule planner fallback` 적용
+  - 실행 결과에 `plan_source`(`llm`/`rule`) 추가
+  - 관련 env: `OPENAI_API_KEY`, `LLM_PLANNER_ENABLED`, `LLM_PLANNER_MODEL`
 
 ## 3. 개발 단계별 상세 계획
 
