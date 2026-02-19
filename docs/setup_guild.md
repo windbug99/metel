@@ -15,7 +15,7 @@
 
 ### 1.2. 레포지토리 구조 (디렉토리 트리)
 
-다음은 `service_plan.md` 및 `prototype_dev_plan.md`를 기반으로 제안하는 프로젝트 디렉토리 구조입니다.
+다음은 `service_plan.md` 및 `work_plan.md`를 기반으로 제안하는 프로젝트 디렉토리 구조입니다.
 
 ```
 metel/
@@ -470,9 +470,9 @@ uvicorn main:app --reload
 3.  **프론트엔드-백엔드 통신 테스트 (선택 사항):**
     `frontend` 코드에서 `backend`의 `/api/health` 엔드포인트를 호출하는 간단한 버튼이나 로직을 추가하여 프론트엔드와 백엔드 간의 통신이 원활한지 확인합니다.
 
-이 가이드를 통해 **metel** 프로젝트의 초기 세팅을 성공적으로 완료하고 개발을 시작할 수 있습니다. 추가적인 기능 구현은 `prototype_dev_plan.md`를 참조하여 진행하십시오.
+이 가이드를 통해 **metel** 프로젝트의 초기 세팅을 성공적으로 완료하고 개발을 시작할 수 있습니다. 추가적인 기능 구현은 `work_plan.md`를 참조하여 진행하십시오.
 
 ## References
 
 [1] 서비스 기획서: `service_plan.md`
-[2] 프로토타입 개발 계획: `prototype_dev_plan.md`
+[2] 프로토타입 개발 계획: `work_plan.md`

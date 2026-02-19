@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     llm_planner_model: str = "gpt-4o-mini"
     llm_planner_fallback_provider: str | None = None
     llm_planner_fallback_model: str | None = None
+    llm_autonomous_enabled: bool = False
+    llm_autonomous_max_turns: int = 6
+    llm_autonomous_max_tool_calls: int = 8
+    llm_autonomous_timeout_sec: int = 45
+    llm_autonomous_replan_limit: int = 1
 
     frontend_url: str = "http://localhost:3000"
     allowed_origins: str = "http://localhost:3000"

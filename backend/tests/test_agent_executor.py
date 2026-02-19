@@ -6,6 +6,7 @@ from agent.executor import (
     _extract_page_rename_request,
     _extract_requested_count,
     _extract_requested_line_count,
+    _extract_summary_line_count,
     _extract_target_page_title,
 )
 from agent.types import AgentPlan, AgentRequirement
@@ -65,11 +66,25 @@ def test_extract_page_rename_request():
 
 
 def test_extract_data_source_query_request():
-    source_id, page_size = _extract_data_source_query_request(
+    source_id, page_size, parse_error = _extract_data_source_query_request(
         "노션 데이터소스 12345678-1234-1234-1234-1234567890ab 최근 7개 조회"
     )
     assert source_id == "12345678-1234-1234-1234-1234567890ab"
     assert page_size == 7
+    assert parse_error is None
+
+
+def test_extract_data_source_query_request_invalid_id():
+    source_id, page_size, parse_error = _extract_data_source_query_request(
+        "노션 데이터소스 invalid-id 조회해줘"
+    )
+    assert source_id is None
+    assert page_size == 5
+    assert parse_error == "invalid"
+
+
+def test_extract_summary_line_count():
+    assert _extract_summary_line_count("노션에서 더 코어 2 페이지 내용을 1줄 요약해줘") == 1
 
 
 def test_extract_page_archive_target():

@@ -209,3 +209,75 @@ def test_execute_plan_error_message_standardized(monkeypatch):
     assert result.success is False
     assert result.artifacts.get("error_code") == "auth_error"
     assert "권한" in result.user_message
+
+
+def test_execute_notion_data_source_query_invalid_id(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        raise AssertionError("invalid id path should not call external tool")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = _plan(
+        "노션 데이터소스 invalid-id 조회해줘",
+        ["notion_query_data_source"],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "validation_error"
+    assert "형식이 올바르지" in result.user_message
+
+
+def test_execute_notion_summary_one_line(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        if tool_name == "notion_search":
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {
+                            "id": "page-1",
+                            "url": "https://notion.so/page-1",
+                            "properties": {"title": {"type": "title", "title": [{"plain_text": "더 코어 2"}]}},
+                        }
+                    ]
+                },
+            }
+        if tool_name == "notion_retrieve_page":
+            return {"ok": True, "data": {"id": "page-1"}}
+        if tool_name == "notion_retrieve_block_children":
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {"type": "paragraph", "paragraph": {"rich_text": [{"plain_text": "line 1"}]}},
+                        {"type": "paragraph", "paragraph": {"rich_text": [{"plain_text": "line 2"}]}},
+                    ]
+                },
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    async def _fake_request_summary_with_provider(
+        *,
+        provider: str,
+        model: str,
+        text: str,
+        line_count: int | None,
+        openai_api_key: str | None,
+        google_api_key: str | None,
+    ):
+        return "첫 줄 요약\n둘째 줄 요약"
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_summary_with_provider", _fake_request_summary_with_provider)
+
+    plan = _plan(
+        "노션에서 더 코어 2 페이지의 내용을 1줄요약해주세요",
+        ["notion_search", "notion_retrieve_page", "notion_retrieve_block_children"],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+
+    assert result.success is True
+    assert "페이지 요약" in result.summary
+    summary_text = result.user_message.split("\n\n", 1)[1]
+    assert "\n" not in summary_text

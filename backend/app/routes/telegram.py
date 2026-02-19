@@ -605,6 +605,7 @@ async def telegram_webhook(
             execution_steps_text = ""
             execution_message = analysis.result_summary
             execution_error_code = None
+            execution_mode = "rule"
             if analysis.execution:
                 execution_steps_text = (
                     "\n".join(f"- {step.name}: {step.status} ({step.detail})" for step in analysis.execution.steps)
@@ -612,6 +613,8 @@ async def telegram_webhook(
                 )
                 execution_message = analysis.execution.user_message
                 execution_error_code = analysis.execution.artifacts.get("error_code")
+                if analysis.execution.artifacts.get("autonomous") == "true":
+                    execution_mode = "autonomous"
                 if execution_error_code:
                     execution_message += _agent_error_guide(execution_error_code)
 
@@ -635,6 +638,7 @@ async def telegram_webhook(
                         f"- 서비스: {services_text}\n"
                         f"- API/Tool:\n{tools_text}\n\n"
                         f"[4] 생성된 워크플로우\n{workflow_text}\n\n"
+                        f"[실행 모드]\n- plan_source: {analysis.plan_source}\n- execution_mode: {execution_mode}\n\n"
                         f"[5-6] 실행/결과 정리\n{execution_message}\n\n"
                         f"[실행 단계 로그]\n{execution_steps_text}"
                     ),

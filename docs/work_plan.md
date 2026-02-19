@@ -26,27 +26,25 @@
 
 현재 구현 상태(2026-02-19 기준):
 - **1~3단계는 구현됨**: `backend/app/routes/telegram.py`에서 자연어 메시지를 `run_agent_analysis`로 전달하여 요구사항/서비스/API를 도출.
-- **4~7단계 1차 구현 완료(Notion 중심)**:
-  - 워크플로우 생성: `backend/agent/planner.py`
-  - 워크플로우 실행: `backend/agent/executor.py` (Notion 최근 페이지 조회/요약/페이지 생성/본문 추가)
-  - 결과 정리/전달: `backend/app/routes/telegram.py` 자연어 fallback 응답
-- **남은 작업**: Spotify 등 멀티서비스 실행 어댑터 확장, 실패 재계획(replan) 정책 고도화.
+- **4~7단계는 부분 구현(Notion 중심)**:
+  - 워크플로우 생성: `backend/agent/planner.py` + `backend/agent/planner_llm.py` (LLM planner + rule fallback)
+  - 워크플로우 실행: `backend/agent/executor.py` (Notion 읽기/쓰기 핵심 시나리오)
+  - 결과 정리/전달: `backend/app/routes/telegram.py`
+  - 제한 사항: executor 내부에 규칙/분기 로직이 아직 남아 있어, 완전한 자율 루프(max turns/replan/verifier 중심)는 미완
+- **최우선 남은 작업**: 규칙 분기 축소, LLM 중심 자율 실행 루프(계획-실행-검증-재계획) 완성.
 
-### 2.2 향후 구현 단계 (우선순위: Notion 기반 에이전트 완성)
+### 2.2 향후 구현 단계 (최우선: 자율 LLM 에이전트 루프 완성)
 
-1. **Notion 읽기 작업 완성**
-   - 케이스: "특정 페이지 내용 상위 N줄 출력", "특정 페이지 본문 조회", "제목 기반 페이지 찾기"
-   - 목표: 자연어 요청을 Notion 검색/본문조회 API로 안정적으로 연결
-2. **Notion 복합 워크플로우 일반화**
-   - 조회 → 요약 → 생성 → 본문추가를 요청 기반으로 동적으로 조합
-   - 목표: 하드코딩 명령 없이 복합 요청 수행
-3. **실패 원인 가시화**
+1. **자율 루프 엔진 완성**
+   - 목표: Planner 출력 plan을 step 단위로 실행하고 Verifier로 완료 검증
+   - 필수: `max_turns`, `max_tool_calls`, `timeout`, `replan(1회)` 강제
+2. **Notion 복합 워크플로우의 분기 제거**
+   - 목표: 조회 → 요약 → 생성 → 본문추가를 고정 분기 없이 plan-driven 실행
+3. **실패 원인 가시화/복구**
    - "문장 이해 실패" vs "페이지 미존재" vs "권한/API 실패"를 분리해 사용자 메시지 제공
-4. **실행 안전장치**
-   - turn/call/timeout 제한, 재시도/재계획 정책 추가
-5. **관측/회귀 방지**
+4. **관측/회귀 방지**
    - 단계별 로그 고도화 + Notion E2E 테스트 시나리오 확장
-6. **그 다음 멀티서비스 확장**
+5. **그 다음 멀티서비스 확장**
    - Spotify는 Notion 에이전트 완성 후 동일 패턴으로 추가
 
 진행 메모(2026-02-19):
@@ -85,7 +83,24 @@
   - `backend/agent/planner_llm.py` 추가 (OpenAI chat completions 기반 planner)
   - `loop`에서 `LLM planner -> 실패 시 rule planner fallback` 적용
   - 실행 결과에 `plan_source`(`llm`/`rule`) 추가
-  - 관련 env: `OPENAI_API_KEY`, `LLM_PLANNER_ENABLED`, `LLM_PLANNER_MODEL`
+  - 관련 env: `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `LLM_PLANNER_ENABLED`,
+    `LLM_PLANNER_PROVIDER`, `LLM_PLANNER_MODEL`,
+    `LLM_PLANNER_FALLBACK_PROVIDER`, `LLM_PLANNER_FALLBACK_MODEL`
+
+### 2.3 상태 체크리스트 (코드 기준)
+
+- 완료:
+  - service resolver / guide retriever / tool_specs registry
+  - LLM planner + rule fallback 경로
+  - Notion 핵심 read/write tool 호출과 에러 표준화
+  - Telegram 응답에 실행 단계/오류 가이드 출력
+- 부분 완료:
+  - planner 출력을 executor가 일부 반영하나, 전면적인 plan-step 실행기는 미완
+  - 요약 품질 개선(LLM 사용)은 적용되었으나, 전체 실행 루프는 하이브리드
+- 미완:
+  - Verifier 중심 완료 검증
+  - 실패 후 자동 replan 1회 실행
+  - turn/call/time budget 강제 정책의 전 구간 적용
 
 ## 3. 개발 단계별 상세 계획
 
@@ -305,8 +320,10 @@ Notion은 생산성 도구로서 다양한 API를 제공하며, OAuth 연동이 
     *   실행 제한(`max_turns`, `max_tool_calls`, `timeout`)을 공통 적용.
 *   **진행 순서:**
     1.  에이전트 상태 모델(`goal`, `plan`, `step_results`, `final_answer`) 정의.
-    2.  `run_agent_turn`을 계획-실행-검증 루프로 리팩토링.
-    3.  실패 시 재계획(replan) 정책 1회 적용.
+    2.  Executor를 `plan.steps` 기반 실행기로 전환(의도별 분기 최소화).
+    3.  Verifier에서 `success_criteria` 충족 여부 검사.
+    4.  실패 시 재계획(replan) 정책 1회 적용 후 재실행.
+    5.  budget 초과/치명 오류 시 안전 종료 및 사용자 안내.
 *   **예상 소요 시간:** 1일
 *   **외부 서비스 설정:** 없음
 *   **완료 기준:** 복합 요청이 고정 분기 없이 루프 내에서 단계적으로 처리됨.

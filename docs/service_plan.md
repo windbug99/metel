@@ -316,11 +316,11 @@ metel:
                          │
               ┌──────────┴──────────┐
               │                     │
-    ┌─────────▼──────┐   ┌──────────▼──────┐
-    │  외부 API들     │   │  Anthropic API  │
-    │  Spotify        │   │  claude-opus    │
-    │  Google         │   │  Tool Use       │
-    │  Notion 등      │   └─────────────────┘
+    ┌─────────▼──────┐   ┌──────────▼──────────────────────────┐
+    │  외부 API들     │   │  LLM Provider Layer                │
+    │  Spotify        │   │  OpenAI gpt-4o-mini (primary)      │
+    │  Google         │   │  Gemini 2.5 flash-lite (fallback)  │
+    │  Notion 등      │   └─────────────────────────────────────┘
     └─────────────────┘
 
 데이터:
@@ -341,7 +341,7 @@ metel:
 | **스케줄러** | APScheduler → Celery | MVP는 APScheduler, 이후 Celery 전환 |
 | **텔레그램 봇** | python-telegram-bot v20 | Python 생태계 최고, async 지원 |
 | **슬랙 봇** | slack_bolt | 공식 SDK |
-| **LLM** | Anthropic Claude API | Tool Use 기능 성숙도 높음 |
+| **LLM** | OpenAI(`gpt-4o-mini`) 우선 + Google Gemini(`gemini-2.5-flash-lite`) 폴백 | 비용/지연/안정성 균형 + 공급자 장애 대응 |
 | **토큰 암호화** | cryptography 라이브러리 | MVP 시작, 이후 AWS KMS 전환 |
 
 ### 단계별 인프라 전환
@@ -806,16 +806,17 @@ async def handle_start(update: Update, context):
 ### 7-8. 에이전트 루프 (핵심)
 
 LLM의 Tool Use 기능을 활용해 실제 API를 호출하는 에이전트 구현이다.
+아래 코드는 개념 설명용 예시이며, 현재 프로토타입의 실제 실행 경로는 `planner_llm + loop + executor` 조합으로 동작한다.
 
 ```python
 # backend/agent/agent.py
 
-import anthropic
+# 예시용 pseudo import (실제 구현은 provider별 HTTP client 사용)
 import json
 from agent.tools import TOOL_DEFINITIONS, execute_tool
 from db.supabase import save_conversation_history
 
-client = anthropic.Anthropic()
+client = llm_client  # 현재 구현은 OpenAI 우선 + Gemini 폴백 구성
 
 async def run_agent(user_id: str, user_message: str, history: list) -> str:
     """
@@ -832,7 +833,7 @@ async def run_agent(user_id: str, user_message: str, history: list) -> str:
 
     while True:
         response = client.messages.create(
-            model="claude-opus-4-5-20251101",
+            model="gpt-4o-mini",
             max_tokens=2048,
             system=f"""당신은 사용자의 개인 AI 비서 metel입니다.
 사용자가 연결한 서비스: {', '.join(connected)}
@@ -1206,7 +1207,7 @@ Freemium 모델(Free/Pro/Power)은 SaaS 서비스에서 널리 사용되며 사�
 
 ### LLM 비용 최적화 및 관리
 
-Claude Opus와 같은 고성능 모델은 비용이 높으므로, 무료 티어 사용자에게는 Claude Haiku와 같은 저비용 모델을 제공하거나, 작업의 복잡도에 따라 동적으로 모델을 전환하는 전략이 필요하다. OpenClaw의 컨텍스트 압축(Compaction) 로직을 활용하여 토큰 사용량을 절감하는 방안은 매우 효과적이다. 또한, 사용자 대시보드에서 LLM 토큰 사용량을 시각적으로 보여주고, 비용 예측 기능을 제공하여 사용자가 자신의 사용량을 인지하고 관리할 수 있도록 지원하는 것이 좋다.
+고성능 모델은 비용이 높으므로, 기본 실행은 `gpt-4o-mini`로 하고 복구/폴백 경로로 `gemini-2.5-flash-lite`를 두는 전략이 필요하다. 작업 난이도에 따라 모델을 동적으로 선택하고, 컨텍스트 압축(Compaction)으로 토큰 사용량을 줄여야 한다. 또한, 사용자 대시보드에서 LLM 토큰 사용량을 시각화하고 비용 예측을 제공해 사용자가 사용량을 관리할 수 있도록 지원한다.
 
 ### 가격 책정 전략
 
@@ -1248,7 +1249,7 @@ Lindy.ai의 Pro 플랜이 $49.99/월인 점을 고려할 때, **metel**은 초�
 | :--- | :--- | :--- |
 | **외부 API 의존성** | 서비스의 핵심 기능이 Spotify, Google, Notion 등 외부 서비스의 API에 크게 의존. 이들 서비스의 API 정책 변경, 사용량 제한, 서비스 중단은 metel 기능에 직접적인 영향. | - 외부 API 변경 사항에 대한 지속적인 모니터링 및 알림 시스템 구축<br>- 주요 기능에 대한 대체 API 또는 우회 로직 마련<br>- API 사용량 예측 및 비용 관리, 서비스 제공자와의 관계 강화 |
 | **보안 신뢰도 확보의 어려움** | "보안이 강점"을 강조하나, 민감한 API 키와 데이터가 중앙 서버에 저장되는 SaaS 모델 특성상 절대적 신뢰 확보가 어려움. | - 제3자 보안 감사 및 **ISMS, ISO 27001 등 보안 인증 획득 추진**<br>- **토큰 암호화 및 처리 로직의 핵심 부분 오픈소스화** 검토<br>- 투명한 보안 정책 공개 및 사용자 대시보드에서 상세 `access_logs` 제공 |
-| **LLM의 환각(Hallucination) 및 오작동** | LLM 기반 서비스의 고질적인 문제로, 사용자 경험 저해 및 신뢰도 하락 가능성. | - 정교한 프롬프트 엔지니어링 및 가드레일(Guardrails) 적용<br>- Tool Use의 안정성 확보 및 오류 처리 로직 강화<br>- 사용자 피드백을 통한 지속적인 모델 개선 및 파인튜닝<br>- **무료 티어 사용자에게는 Claude Haiku와 같은 저비용 모델을 제공하거나, 작업의 복잡도에 따라 동적으로 모델을 전환하는 전략 도입** |
+| **LLM의 환각(Hallucination) 및 오작동** | LLM 기반 서비스의 고질적인 문제로, 사용자 경험 저해 및 신뢰도 하락 가능성. | - 정교한 프롬프트 엔지니어링 및 가드레일(Guardrails) 적용<br>- Tool Use의 안정성 확보 및 오류 처리 로직 강화<br>- 사용자 피드백을 통한 지속적인 모델 개선 및 파인튜닝<br>- **기본 모델(`gpt-4o-mini`) + 폴백 모델(`gemini-2.5-flash-lite`) 전략과 작업 난이도별 동적 모델 전환 도입** |
 | **데이터 프라이버시 및 규제** | 개인 정보 보호 및 데이터 처리 관련 규제(GDPR, 국내 개인정보보호법 등) 준수 필수. 민감한 사용자 데이터를 다루는 만큼 법률 전문가 자문 필요. | - 법률 전문가 자문을 통한 규제 준수 여부 철저히 검토 및 시스템 반영<br>- 데이터 암호화, 접근 제어, 익명화 등 기술적 보호 조치 강화<br>- 투명한 개인정보 처리 방침 공개 및 사용자 동의 절차 명확화 |
 | **사용자 온보딩 및 교육 부족** | AI 비서 서비스는 아직 일반 사용자에게 생소할 수 있어, 서비스 가치 경험 및 숙련도 향상에 어려움. | - 명확하고 직관적인 온보딩 프로세스 설계<br>- Skills 활용 가이드, FAQ, 튜토리얼 등 풍부한 교육 자료 제공<br>- 인앱 도움말 및 고객 지원 채널 강화 |
 
@@ -1474,3 +1475,19 @@ Responder (한국어 사용자 응답)
 2. 에이전트가 서비스별 허용 도구만 선택
 3. Spotify/Notion 각 2개 이상 복합 시나리오 성공
 4. 반복 워크플로우 1건 이상 Skill 후보 자동 생성
+
+### 17-9. 구현 동기화 상태 (2026-02-19)
+
+- 완료:
+  - Telegram 요청 -> `run_agent_analysis` 진입
+  - LLM planner(`planner_llm`) + rule planner fallback
+  - `tool_specs` + registry + guide retriever/service resolver 기반 선택 경로
+  - Notion read/write 핵심 실행(검색/조회/생성/업데이트/추가/아카이브/데이터소스 조회)
+  - 표준 오류 코드와 사용자 친화 오류 메시지
+- 부분 완료:
+  - executor가 일부 plan을 반영하지만, 아직 의도별 분기 로직이 남아 있음
+  - 요약에서 LLM 사용은 적용됐으나 전체 실행 루프의 자율성은 제한적
+- 미완(최우선):
+  - **진짜 자율 루프**: plan-step 실행기 + verifier + replan(1회) + budget(max_turns/max_tool_calls/timeout) 강제
+  - 분기형 executor를 plan-driven executor로 전환
+  - 복합 시나리오의 완전 자동화(예: 조회→요약→생성→작성)를 하드코딩 없이 수행

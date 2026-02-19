@@ -3,6 +3,11 @@
 > OpenClaw GitHub(https://github.com/openclaw/openclaw) 소스코드 및 공식 문서 분석 기반
 > 우리 서비스 구현에 필요한 부분만 추출·정리
 
+> 상태 주의 (2026-02-19): 본 문서는 OpenClaw 패턴 분석 문서입니다.  
+> metel의 현재 구현 기준 모델/실행 경로는 `OpenAI(gpt-4o-mini) 우선 + Gemini 폴백`,  
+> 그리고 `planner_llm + loop + executor + tool_specs` 조합입니다.  
+> 아래 Anthropic 예시는 OpenClaw 구조 이해를 위한 참고 코드로 간주합니다.
+
 ---
 
 ## 목차

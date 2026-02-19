@@ -3,10 +3,16 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import HTTPException
 
 from agent.tool_runner import execute_tool
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan
+from app.core.config import get_settings
+
+
+OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
+GEMINI_GENERATE_CONTENT_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
 
 def _map_execution_error(detail: str) -> tuple[str, str, str]:
@@ -100,6 +106,123 @@ def _simple_korean_summary(text: str, max_chars: int = 320) -> str:
     return cleaned[:max_chars].rstrip() + "..."
 
 
+def _extract_summary_line_count(user_text: str) -> int | None:
+    match = re.search(r"(\d{1,2})\s*(줄|라인|line|lines|문장|sentence|sentences)", user_text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return max(1, min(10, int(match.group(1))))
+
+
+def _format_summary_output(text: str, requested_lines: int | None) -> str:
+    cleaned = text.strip()
+    if not cleaned:
+        return "본문 텍스트를 찾지 못했습니다."
+    if not requested_lines:
+        return cleaned
+    compact = re.sub(r"\s+", " ", cleaned).strip()
+    if requested_lines == 1:
+        return compact
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    if not lines:
+        lines = [compact]
+    lines = lines[:requested_lines]
+    return "\n".join(f"{idx}. {line}" for idx, line in enumerate(lines, start=1))
+
+
+async def _request_summary_with_provider(
+    *,
+    provider: str,
+    model: str,
+    text: str,
+    line_count: int | None,
+    openai_api_key: str | None,
+    google_api_key: str | None,
+) -> str | None:
+    line_rule = (
+        f"반드시 정확히 {line_count}줄로 출력하세요. 각 줄은 핵심만 간결하게 작성하세요."
+        if line_count
+        else "3문장 이내로 간결하게 요약하세요."
+    )
+    prompt = (
+        "다음 Notion 페이지 본문을 한국어로 요약하세요.\n"
+        f"{line_rule}\n"
+        "원문 사실을 벗어나지 말고, 추측하지 마세요.\n\n"
+        f"[본문]\n{text}"
+    )
+    if provider == "openai":
+        if not openai_api_key:
+            return None
+        payload = {
+            "model": model,
+            "temperature": 0,
+            "messages": [
+                {"role": "system", "content": "당신은 요약 도우미입니다."},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        headers = {"Authorization": f"Bearer {openai_api_key}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(OPENAI_CHAT_COMPLETIONS_URL, headers=headers, json=payload)
+        if resp.status_code >= 400:
+            return None
+        data = resp.json()
+        return ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "").strip() or None
+    if provider == "gemini":
+        if not google_api_key:
+            return None
+        url = GEMINI_GENERATE_CONTENT_URL.format(model=model, api_key=google_api_key)
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.1},
+        }
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
+        if resp.status_code >= 400:
+            return None
+        data = resp.json()
+        parts = ((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+        text_out = "".join(part.get("text", "") for part in parts if isinstance(part, dict)).strip()
+        return text_out or None
+    return None
+
+
+async def _summarize_text_with_llm(text: str, user_text: str) -> tuple[str, str]:
+    line_count = _extract_summary_line_count(user_text)
+    settings = get_settings()
+    attempts: list[tuple[str, str]] = []
+
+    primary_provider = (settings.llm_planner_provider or "openai").strip().lower()
+    primary_model = (settings.llm_planner_model or "gpt-4o-mini").strip()
+    if primary_provider and primary_model:
+        attempts.append((primary_provider, primary_model))
+
+    fallback_provider = (settings.llm_planner_fallback_provider or "").strip().lower()
+    fallback_model = (settings.llm_planner_fallback_model or "").strip()
+    if fallback_provider and fallback_model:
+        attempts.append((fallback_provider, fallback_model))
+
+    if not attempts:
+        attempts = [("openai", "gpt-4o-mini"), ("gemini", "gemini-2.5-flash-lite")]
+
+    for provider, model in attempts:
+        try:
+            summary = await _request_summary_with_provider(
+                provider=provider,
+                model=model,
+                text=text,
+                line_count=line_count,
+                openai_api_key=settings.openai_api_key,
+                google_api_key=settings.google_api_key,
+            )
+            if summary:
+                return _format_summary_output(summary, line_count), f"llm:{provider}:{model}"
+        except Exception:
+            continue
+
+    fallback = _simple_korean_summary(text, max_chars=700)
+    return _format_summary_output(fallback, line_count), "fallback"
+
+
 def _extract_requested_count(plan: AgentPlan, default_count: int = 3) -> int:
     for req in plan.requirements:
         if req.quantity and req.quantity > 0:
@@ -178,7 +301,7 @@ def _extract_page_rename_request(user_text: str) -> tuple[str | None, str | None
     return None, None
 
 
-def _extract_data_source_query_request(user_text: str) -> tuple[str | None, int]:
+def _extract_data_source_query_request(user_text: str) -> tuple[str | None, int, str | None]:
     id_match = re.search(r"([0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12})", user_text)
     data_source_id = id_match.group(1) if id_match else None
     count_match = re.search(
@@ -186,7 +309,17 @@ def _extract_data_source_query_request(user_text: str) -> tuple[str | None, int]
         user_text,
     )
     count = int(count_match.group(1)) if count_match else 5
-    return data_source_id, max(1, min(20, count))
+    if data_source_id:
+        return data_source_id, max(1, min(20, count)), None
+
+    token_match = re.search(r"(?i)(?:데이터소스|data[_ ]source)\s+([^\s]+)", user_text)
+    if not token_match:
+        return None, max(1, min(20, count)), "missing"
+
+    candidate = token_match.group(1).strip(" \"'`,.;:()[]{}")
+    if not candidate or candidate in {"조회", "목록", "검색", "불러", "보여", "최근", "상위"}:
+        return None, max(1, min(20, count)), "missing"
+    return None, max(1, min(20, count)), "invalid"
 
 
 def _extract_page_archive_target(user_text: str) -> str | None:
@@ -341,12 +474,12 @@ async def _read_page_lines_or_summary(
         )
 
     if _requires_summary_only(plan):
-        summary = _simple_korean_summary("\n".join(raw_lines), max_chars=700)
+        summary, summarize_mode = await _summarize_text_with_llm("\n".join(raw_lines), plan.user_text)
         steps.append(
             AgentExecutionStep(
                 name="summarize_page",
                 status="success",
-                detail=f"본문 {len(raw_lines)}라인 요약",
+                detail=f"본문 {len(raw_lines)}라인 요약 ({summarize_mode})",
             )
         )
         return AgentExecutionResult(
@@ -491,8 +624,8 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         )
 
     if _requires_data_source_query(plan):
-        data_source_id, page_size = _extract_data_source_query_request(plan.user_text)
-        if not data_source_id:
+        data_source_id, page_size, parse_error = _extract_data_source_query_request(plan.user_text)
+        if not data_source_id and parse_error == "missing":
             return AgentExecutionResult(
                 success=False,
                 summary="데이터소스 ID를 찾지 못했습니다.",
@@ -500,7 +633,20 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
                     "데이터소스 조회를 위해 ID가 필요합니다.\n"
                     "예: '노션 데이터소스 <id> 최근 5개 조회'"
                 ),
+                artifacts={"error_code": "validation_error"},
                 steps=steps + [AgentExecutionStep(name="parse_data_source_id", status="error", detail="id_missing")],
+            )
+        if not data_source_id and parse_error == "invalid":
+            return AgentExecutionResult(
+                success=False,
+                summary="데이터소스 ID 형식이 올바르지 않습니다.",
+                user_message=(
+                    "데이터소스 ID 형식이 올바르지 않습니다.\n"
+                    "UUID 형식으로 입력해주세요.\n"
+                    "예: '노션 데이터소스 12345678-1234-1234-1234-1234567890ab 최근 5개 조회'"
+                ),
+                artifacts={"error_code": "validation_error"},
+                steps=steps + [AgentExecutionStep(name="parse_data_source_id", status="error", detail="id_invalid_format")],
             )
         query_result = await execute_tool(
             user_id=user_id,
@@ -819,7 +965,7 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             )
             blocks = (block_result.get("data") or {}).get("results", [])
             plain = _extract_plain_text_from_blocks(blocks)
-            short = _simple_korean_summary(plain)
+            short, _ = await _summarize_text_with_llm(plain, "핵심 요약 1~2문장")
             summary_lines.extend(
                 [
                     "",

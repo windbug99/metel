@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from agent.autonomous import run_autonomous_loop
 from agent.executor import execute_agent_plan
 from agent.planner import build_agent_plan
 from agent.planner_llm import try_build_agent_plan_with_llm
 from agent.types import AgentRunResult
+from app.core.config import get_settings
 
 
 async def run_agent_analysis(user_text: str, connected_services: list[str], user_id: str) -> AgentRunResult:
@@ -43,7 +45,20 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             plan_source=plan_source,
         )
 
-    execution = await execute_agent_plan(user_id=user_id, plan=plan)
+    settings = get_settings()
+    execution = None
+    if settings.llm_autonomous_enabled and plan_source == "llm":
+        autonomous = await run_autonomous_loop(user_id=user_id, plan=plan)
+        if autonomous.success:
+            execution = autonomous
+            plan.notes.append("execution=autonomous")
+        else:
+            plan.notes.append("execution=autonomous_fallback")
+            plan.notes.append(f"autonomous_error={autonomous.artifacts.get('error_code', 'unknown')}")
+
+    if execution is None:
+        execution = await execute_agent_plan(user_id=user_id, plan=plan)
+
     summary = execution.summary
     return AgentRunResult(
         ok=execution.success,
