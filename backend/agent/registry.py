@@ -17,6 +17,7 @@ class ToolSpecValidationError(ValueError):
 @dataclass(frozen=True)
 class ToolDefinition:
     service: str
+    base_url: str
     tool_name: str
     description: str
     method: str
@@ -91,6 +92,7 @@ class ToolRegistry:
                 tools.append(
                     ToolDefinition(
                         service=service,
+                        base_url=spec["base_url"].strip(),
                         tool_name=item["tool_name"].strip(),
                         description=item["description"].strip(),
                         method=item["method"].strip(),

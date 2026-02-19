@@ -314,6 +314,7 @@ def _agent_error_guide(error_code: str | None, verification_reason: str | None =
         verification_hints = {
             "move_requires_update_page": "이동 요청이지만 실제 페이지 이동(update_page)이 수행되지 않았습니다.",
             "append_requires_append_block_children": "추가 요청이지만 실제 본문 추가(append_block_children)가 수행되지 않았습니다.",
+            "append_requires_multiple_targets": "여러 페이지 각각에 추가 요청이지만 일부 대상에만 추가되었습니다.",
             "rename_requires_update_page": "제목 변경 요청이지만 실제 페이지 업데이트가 수행되지 않았습니다.",
             "archive_requires_archive_tool": "삭제/아카이브 요청이지만 아카이브 도구 호출이 수행되지 않았습니다.",
             "lookup_requires_tool_call": "조회 요청이지만 실제 조회 도구 호출이 수행되지 않았습니다.",
@@ -340,6 +341,7 @@ def _autonomous_fallback_hint(reason: str | None) -> str:
         "verification_failed": "실행은 되었지만 요청 조건 충족 검증에 실패했습니다. 결과 조건을 더 구체화해주세요.",
         "move_requires_update_page": "이동 요청의 핵심 단계(update_page)가 실행되지 않았습니다. 원본/상위 페이지를 명확히 지정해주세요.",
         "append_requires_append_block_children": "추가 요청의 핵심 단계(append_block_children)가 실행되지 않았습니다. 대상 페이지 제목을 명시해주세요.",
+        "append_requires_multiple_targets": "각각 추가 요청으로 인식되었지만 일부 페이지만 갱신되었습니다. 대상 페이지 수를 명시해 다시 시도해주세요.",
         "rename_requires_update_page": "제목 변경의 핵심 단계(update_page)가 실행되지 않았습니다. 기존/새 제목을 따옴표로 명시해주세요.",
         "archive_requires_archive_tool": "삭제/아카이브 도구 호출이 누락되었습니다. 페이지 삭제 요청임을 명시해주세요.",
     }
@@ -630,7 +632,6 @@ async def telegram_webhook(
             verification_reason = None
             llm_provider = None
             llm_model = None
-            verification_reason = None
             for note in analysis.plan.notes:
                 if note.startswith("autonomous_error="):
                     autonomous_fallback_reason = note.split("=", 1)[1]
@@ -646,6 +647,10 @@ async def telegram_webhook(
                 execution_message = analysis.execution.user_message
                 execution_error_code = analysis.execution.artifacts.get("error_code")
                 verification_reason = analysis.execution.artifacts.get("verification_reason")
+                if not llm_provider:
+                    llm_provider = analysis.execution.artifacts.get("llm_provider")
+                if not llm_model:
+                    llm_model = analysis.execution.artifacts.get("llm_model")
                 if not verification_reason:
                     for step in analysis.execution.steps:
                         if step.name.endswith("_verify") and step.status == "error":

@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     google_api_key: str | None = None
     llm_planner_enabled: bool = False
+    llm_planner_rule_fallback_enabled: bool = True
     llm_planner_provider: str = "openai"
     llm_planner_model: str = "gpt-4o-mini"
     llm_planner_fallback_provider: str | None = None
@@ -35,6 +36,7 @@ class Settings(BaseSettings):
     llm_autonomous_limit_retry_once: bool = True
     llm_autonomous_rule_fallback_enabled: bool = True
     llm_autonomous_rule_fallback_mutation_enabled: bool = False
+    llm_autonomous_progressive_no_fallback_enabled: bool = True
     tool_specs_validate_on_startup: bool = True
 
     frontend_url: str = "http://localhost:3000"

@@ -265,6 +265,90 @@ def test_run_agent_analysis_allows_rule_fallback_for_lookup_intent(monkeypatch):
     assert any(item == "execution=autonomous_fallback" for item in result.plan.notes)
 
 
+def test_run_agent_analysis_progress_guard_blocks_rule_fallback(monkeypatch):
+    llm_plan = _sample_plan()
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        llm_autonomous_strict = False
+        llm_autonomous_limit_retry_once = False
+        llm_autonomous_rule_fallback_enabled = True
+        llm_autonomous_rule_fallback_mutation_enabled = True
+        llm_autonomous_progressive_no_fallback_enabled = True
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan, **kwargs):
+        return AgentExecutionResult(
+            success=False,
+            user_message="auto-partial-fail",
+            summary="auto-partial-fail",
+            artifacts={"error_code": "verification_failed"},
+            steps=[
+                AgentExecutionStep(
+                    name="turn_1_tool:notion_search",
+                    status="success",
+                    detail="ok",
+                )
+            ],
+        )
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        raise AssertionError("executor should not be called when progress guard is enabled")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("노션 최근 페이지 3개 조회해줘", ["notion"], "user-1"))
+    assert result.ok is False
+    assert any(note.startswith("execution=autonomous_progress_guard:verification_failed:1") for note in result.plan.notes)
+
+
+def test_run_agent_analysis_progress_guard_disabled_allows_rule_fallback(monkeypatch):
+    llm_plan = _sample_plan()
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        llm_autonomous_strict = False
+        llm_autonomous_limit_retry_once = False
+        llm_autonomous_rule_fallback_enabled = True
+        llm_autonomous_rule_fallback_mutation_enabled = True
+        llm_autonomous_progressive_no_fallback_enabled = False
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan, **kwargs):
+        return AgentExecutionResult(
+            success=False,
+            user_message="auto-partial-fail",
+            summary="auto-partial-fail",
+            artifacts={"error_code": "verification_failed"},
+            steps=[
+                AgentExecutionStep(
+                    name="turn_1_tool:notion_search",
+                    status="success",
+                    detail="ok",
+                )
+            ],
+        )
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("노션 최근 페이지 3개 조회해줘", ["notion"], "user-1"))
+    assert result.ok is True
+    assert any(item == "execution=autonomous_fallback" for item in result.plan.notes)
+
+
 def test_run_agent_analysis_validates_data_source_id_early(monkeypatch):
     called = {"llm": False, "exec": False}
 
@@ -347,6 +431,10 @@ def test_run_agent_analysis_autonomous_retry_then_success(monkeypatch):
                 artifacts={"error_code": "turn_limit"},
             )
         assert kwargs.get("max_turns_override") == 8
+        assert kwargs.get("max_tool_calls_override") == 12
+        assert kwargs.get("timeout_sec_override") == 60
+        assert kwargs.get("replan_limit_override") == 2
+        assert kwargs.get("max_candidates_override") == 20
         assert isinstance(kwargs.get("extra_guidance"), str)
         assert "turn 한도" in kwargs.get("extra_guidance")
         return AgentExecutionResult(
@@ -370,6 +458,8 @@ def test_run_agent_analysis_autonomous_retry_then_success(monkeypatch):
     assert calls["count"] == 2
     assert any(item == "autonomous_retry=1" for item in result.plan.notes)
     assert any(item == "execution=autonomous_retry" for item in result.plan.notes)
+    assert any(item.startswith("autonomous_retry_budget=") for item in result.plan.notes)
+    assert any(item == "autonomous_retry_tuning_rule=error:turn_limit" for item in result.plan.notes)
 
 
 def test_run_agent_analysis_autonomous_retry_includes_last_tool_error_guidance(monkeypatch):
@@ -453,7 +543,9 @@ def test_run_agent_analysis_retries_on_verification_failed(monkeypatch):
                 summary="verify-fail",
                 artifacts={"error_code": "verification_failed", "verification_reason": "append_requires_append_block_children"},
             )
-        assert "검증 실패 사유" in str(kwargs.get("extra_guidance", ""))
+        guidance = str(kwargs.get("extra_guidance", ""))
+        assert "검증 실패 사유" in guidance
+        assert "append_block_children" in guidance
         return AgentExecutionResult(
             success=True,
             user_message="retry-ok",
@@ -473,15 +565,111 @@ def test_run_agent_analysis_retries_on_verification_failed(monkeypatch):
     assert result.ok is True
     assert result.result_summary == "retry-ok"
     assert calls["count"] == 2
+    assert any(
+        item == "autonomous_retry_tuning_rule=verification:append_requires_append_block_children"
+        for item in result.plan.notes
+    )
 
 
-def test_run_agent_analysis_realigns_bad_llm_plan_to_rule(monkeypatch):
-    # Delete intent인데 llm plan이 delete/update tool을 빠뜨린 경우 자동 재계획(rule)로 전환
+def test_run_agent_analysis_retry_overrides_expand_for_mutation(monkeypatch):
+    llm_plan = _sample_plan()
+    calls = {"count": 0}
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        llm_autonomous_strict = False
+        llm_autonomous_limit_retry_once = True
+        llm_autonomous_max_turns = 6
+        llm_autonomous_max_tool_calls = 8
+        llm_autonomous_timeout_sec = 45
+        llm_autonomous_replan_limit = 1
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return AgentExecutionResult(
+                success=False,
+                user_message="limit",
+                summary="limit",
+                artifacts={"error_code": "turn_limit"},
+            )
+        assert kwargs.get("max_turns_override") == 9
+        assert kwargs.get("max_tool_calls_override") == 14
+        assert kwargs.get("timeout_sec_override") == 60
+        assert kwargs.get("replan_limit_override") == 2
+        assert kwargs.get("max_candidates_override") == 24
+        return AgentExecutionResult(
+            success=True,
+            user_message="auto-retry-ok",
+            summary="auto-retry-ok",
+            artifacts={"autonomous": "true"},
+        )
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        raise AssertionError("executor should not be called after retry success")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("노션 페이지 생성해줘", ["notion"], "user-1"))
+    assert result.ok is True
+    assert result.result_summary == "auto-retry-ok"
+    assert calls["count"] == 2
+
+
+def test_run_agent_analysis_enriches_bad_llm_plan_before_rule_fallback(monkeypatch):
+    # Delete intent인데 llm plan이 delete/update tool을 빠뜨린 경우 registry 기반 보강 후 LLM plan 유지
     bad_llm_plan = AgentPlan(
         user_text="일일 회의록 페이지 삭제해줘",
         requirements=[AgentRequirement(summary="페이지 삭제")],
         target_services=["notion"],
         selected_tools=["notion_search"],  # intentionally incomplete
+        workflow_steps=["1. 검색", "2. 삭제"],
+        notes=[],
+    )
+
+    class _Settings:
+        llm_autonomous_enabled = False
+
+    async def _fake_try_build(**kwargs):
+        return bad_llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        assert "notion_update_page" in plan.selected_tools
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
+
+    class _Tool:
+        def __init__(self, name: str):
+            self.tool_name = name
+
+    class _Registry:
+        def list_tools(self, service: str):
+            if service == "notion":
+                return [_Tool("notion_search"), _Tool("notion_update_page")]
+            return []
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.load_registry", lambda: _Registry())
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("일일 회의록 페이지 삭제해줘", ["notion"], "user-1"))
+    assert result.ok is True
+    assert result.plan_source == "llm"
+    assert any(item == "plan_enriched_from_llm" for item in result.plan.notes)
+
+
+def test_run_agent_analysis_realigns_to_rule_when_enrichment_still_fails(monkeypatch):
+    bad_llm_plan = AgentPlan(
+        user_text="일일 회의록 페이지 삭제해줘",
+        requirements=[AgentRequirement(summary="페이지 삭제")],
+        target_services=["notion"],
+        selected_tools=["notion_search"],
         workflow_steps=["1. 검색", "2. 삭제"],
         notes=[],
     )
@@ -509,6 +697,7 @@ def test_run_agent_analysis_realigns_bad_llm_plan_to_rule(monkeypatch):
 
     monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
     monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.load_registry", lambda: (_ for _ in ()).throw(RuntimeError("registry unavailable")))
     monkeypatch.setattr("agent.loop.build_agent_plan", _fake_build_plan)
     monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
 
@@ -516,3 +705,70 @@ def test_run_agent_analysis_realigns_bad_llm_plan_to_rule(monkeypatch):
     assert result.ok is True
     assert result.plan_source == "rule"
     assert any(item.startswith("plan_realign_from_llm:") for item in result.plan.notes)
+
+
+def test_run_agent_analysis_no_rule_fallback_when_llm_plan_missing(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        llm_planner_enabled = True
+        llm_planner_rule_fallback_enabled = False
+
+    async def _fake_try_build(**kwargs):
+        return None, "llm_unavailable"
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        raise AssertionError("executor should not be called when planner fallback is disabled")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("노션에서 최근 페이지 3개 조회해줘", ["notion"], "user-1"))
+    assert result.ok is False
+    assert result.stage == "planning"
+    assert result.plan_source == "llm"
+    assert result.execution is not None
+    assert result.execution.artifacts.get("error_code") == "llm_planner_failed"
+    assert any(note.startswith("llm_planner_failed_no_rule_fallback:") for note in result.plan.notes)
+
+
+def test_run_agent_analysis_skip_realign_when_rule_fallback_disabled(monkeypatch):
+    bad_llm_plan = AgentPlan(
+        user_text="일일 회의록 페이지 삭제해줘",
+        requirements=[AgentRequirement(summary="페이지 삭제")],
+        target_services=["notion"],
+        selected_tools=["notion_search"],
+        workflow_steps=["1. 검색", "2. 삭제"],
+        notes=[],
+    )
+
+    class _Settings:
+        llm_autonomous_enabled = False
+        llm_planner_enabled = True
+        llm_planner_rule_fallback_enabled = False
+
+    async def _fake_try_build(**kwargs):
+        return bad_llm_plan, None
+
+    class _Tool:
+        def __init__(self, name: str):
+            self.tool_name = name
+
+    class _Registry:
+        def list_tools(self, service: str):
+            # no delete/update tools -> still inconsistent after enrich
+            return [_Tool("notion_search")]
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        assert plan is bad_llm_plan
+        assert any(note.startswith("plan_realign_skipped:") for note in plan.notes)
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.load_registry", lambda: _Registry())
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("일일 회의록 페이지 삭제해줘", ["notion"], "user-1"))
+    assert result.ok is True
+    assert result.plan_source == "llm"

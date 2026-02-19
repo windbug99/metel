@@ -24,6 +24,17 @@ def test_autonomous_fallback_hint_known_reason():
     assert "turn 한도" in hint
 
 
+def test_agent_error_guide_verification_failed_multiple_targets():
+    guide = _agent_error_guide("verification_failed", "append_requires_multiple_targets")
+    assert "오류 가이드" in guide
+    assert "여러 페이지 각각" in guide
+
+
+def test_autonomous_fallback_hint_multiple_targets():
+    hint = _autonomous_fallback_hint("append_requires_multiple_targets")
+    assert "일부 페이지만" in hint
+
+
 def test_autonomous_fallback_hint_unknown_reason():
     hint = _autonomous_fallback_hint("unknown_reason")
     assert hint == ""

@@ -46,6 +46,13 @@ def _notion_headers(token: str) -> dict[str, str]:
     }
 
 
+def _parse_response_data(response: httpx.Response) -> dict[str, Any]:
+    try:
+        return {"ok": True, "data": response.json()}
+    except JSONDecodeError:
+        return {"ok": True, "data": {"raw_text": response.text}}
+
+
 def _extract_path_params(path: str) -> list[str]:
     return re.findall(r"{([a-zA-Z0-9_]+)}", path)
 
@@ -115,7 +122,7 @@ async def _execute_notion_http(user_id: str, tool: ToolDefinition, payload: dict
     token = _load_oauth_access_token(user_id=user_id, provider="notion")
     path = _build_path(tool.path, payload)
     body_or_query = _strip_path_params(tool.path, payload)
-    url = f"https://api.notion.com{path}"
+    url = f"{tool.base_url}{path}"
 
     headers = _notion_headers(token)
     method = tool.method.upper()
@@ -151,17 +158,14 @@ async def _execute_notion_http(user_id: str, tool: ToolDefinition, payload: dict
             f"|request_id={upstream_request_id}"
         )
         raise HTTPException(status_code=400, detail=f"{tool.tool_name}:{mapped}{extra}")
-    try:
-        return {"ok": True, "data": response.json()}
-    except JSONDecodeError:
-        return {"ok": True, "data": {"raw_text": response.text}}
+    return _parse_response_data(response)
 
 
 async def _execute_spotify_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
     token = _load_oauth_access_token(user_id=user_id, provider="spotify")
     path = _build_path(tool.path, payload)
     body_or_query = _strip_path_params(tool.path, payload)
-    url = f"https://api.spotify.com{path}"
+    url = f"{tool.base_url}{path}"
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -179,10 +183,44 @@ async def _execute_spotify_http(user_id: str, tool: ToolDefinition, payload: dic
     if response.status_code >= 400:
         mapped = tool.error_map.get(str(response.status_code), "TOOL_FAILED")
         raise HTTPException(status_code=400, detail=f"{tool.tool_name}:{mapped}")
-    try:
-        return {"ok": True, "data": response.json()}
-    except JSONDecodeError:
-        return {"ok": True, "data": {"raw_text": response.text}}
+    return _parse_response_data(response)
+
+
+def _build_default_headers_for_service(user_id: str, tool: ToolDefinition) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    if tool.service == "notion":
+        token = _load_oauth_access_token(user_id=user_id, provider="notion")
+        headers.update(_notion_headers(token))
+    elif tool.service == "spotify":
+        token = _load_oauth_access_token(user_id=user_id, provider="spotify")
+        headers["Authorization"] = f"Bearer {token}"
+    elif tool.required_scopes:
+        # Generic OAuth-style provider: when scopes are required, expect provider token.
+        token = _load_oauth_access_token(user_id=user_id, provider=tool.service)
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+async def _execute_generic_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
+    path = _build_path(tool.path, payload)
+    body_or_query = _strip_path_params(tool.path, payload)
+    url = f"{tool.base_url}{path}"
+    headers = _build_default_headers_for_service(user_id=user_id, tool=tool)
+    method = tool.method.upper()
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        if method == "GET":
+            response = await client.get(url, headers=headers, params=body_or_query)
+        elif method == "DELETE":
+            response = await client.delete(url, headers=headers)
+        else:
+            headers["Content-Type"] = "application/json"
+            response = await client.request(method, url, headers=headers, json=body_or_query)
+
+    if response.status_code >= 400:
+        mapped = tool.error_map.get(str(response.status_code), "TOOL_FAILED")
+        raise HTTPException(status_code=400, detail=f"{tool.tool_name}:{mapped}")
+    return _parse_response_data(response)
 
 
 async def execute_tool(user_id: str, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -193,4 +231,4 @@ async def execute_tool(user_id: str, tool_name: str, payload: dict[str, Any]) ->
         return await _execute_notion_http(user_id=user_id, tool=tool, payload=payload)
     if tool.service == "spotify":
         return await _execute_spotify_http(user_id=user_id, tool=tool, payload=payload)
-    raise HTTPException(status_code=400, detail=f"unsupported_service:{tool.service}")
+    return await _execute_generic_http(user_id=user_id, tool=tool, payload=payload)

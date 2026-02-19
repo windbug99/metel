@@ -6,6 +6,7 @@ from agent.autonomous import run_autonomous_loop
 from agent.executor import execute_agent_plan
 from agent.planner import build_agent_plan
 from agent.planner_llm import try_build_agent_plan_with_llm
+from agent.registry import load_registry
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentRunResult
 from app.core.config import get_settings
 
@@ -52,6 +53,54 @@ def _plan_consistency_reason(user_text: str, selected_tools: list[str]) -> str |
         return "missing_search_tool"
 
     return None
+
+
+def _required_tokens_for_consistency_error(reason: str) -> tuple[str, ...]:
+    mapping = {
+        "missing_delete_tool": ("delete_block", "update_page", "archive"),
+        "missing_data_source_tool": ("query_data_source", "retrieve_data_source"),
+        "missing_append_tool": ("append_block_children",),
+        "missing_create_tool": ("create_page",),
+        "missing_summary_read_tool": ("retrieve_block_children", "retrieve_page"),
+        "missing_search_tool": ("search",),
+    }
+    return mapping.get(reason, ())
+
+
+def _enrich_plan_tools_with_registry(
+    *,
+    user_text: str,
+    selected_tools: list[str],
+    target_services: list[str],
+) -> tuple[list[str], str | None]:
+    reason = _plan_consistency_reason(user_text, selected_tools)
+    if not reason:
+        return selected_tools, None
+
+    required_tokens = _required_tokens_for_consistency_error(reason)
+    if not required_tokens:
+        return selected_tools, reason
+
+    try:
+        registry = load_registry()
+    except Exception:
+        return selected_tools, reason
+
+    candidates: list[str] = []
+    for service in target_services:
+        for tool in registry.list_tools(service):
+            candidates.append(tool.tool_name)
+
+    enriched = list(selected_tools)
+    for token in required_tokens:
+        if any(token in name for name in enriched):
+            continue
+        match = next((name for name in candidates if token in name), None)
+        if match and match not in enriched:
+            enriched.append(match)
+
+    post_reason = _plan_consistency_reason(user_text, enriched)
+    return enriched, post_reason
 
 
 def _parse_data_source_query_state(user_text: str) -> tuple[bool, str]:
@@ -101,6 +150,67 @@ def _is_mutation_intent(user_text: str) -> bool:
     return any(keyword in text for keyword in mutation_keywords)
 
 
+def _is_multi_target_intent(user_text: str) -> bool:
+    text = (user_text or "").strip().lower()
+    quoted_count = len(re.findall(r'"[^"]+"|\'[^\']+\'', text))
+    if quoted_count >= 2:
+        return True
+    if "각각" in text and any(token in text for token in (",", "와", "그리고")):
+        return True
+    return False
+
+
+def _build_retry_overrides(
+    *,
+    settings,
+    user_text: str,
+    error_code: str,
+    verification_reason: str | None = None,
+) -> dict[str, int]:
+    base_turns = int(getattr(settings, "llm_autonomous_max_turns", 6))
+    base_tool_calls = int(getattr(settings, "llm_autonomous_max_tool_calls", 8))
+    base_timeout = int(getattr(settings, "llm_autonomous_timeout_sec", 45))
+    base_replan = int(getattr(settings, "llm_autonomous_replan_limit", 1))
+
+    is_mutation = _is_mutation_intent(user_text)
+    is_multi_target = _is_multi_target_intent(user_text)
+
+    turn_bonus = 2
+    tool_bonus = 2
+    timeout_bonus = 15
+    replan_bonus = 1
+
+    if is_mutation:
+        turn_bonus += 1
+        tool_bonus += 2
+    if is_multi_target:
+        turn_bonus += 1
+        tool_bonus += 3
+        timeout_bonus += 10
+
+    if error_code in {"tool_call_limit", "turn_limit"}:
+        tool_bonus += 2
+    if error_code in {"timeout"}:
+        timeout_bonus += 20
+    if error_code in {"replan_limit"}:
+        replan_bonus += 1
+    if error_code == "verification_failed":
+        # Verification 실패는 한 번 더 재검증 기회를 주기 위해 replan/tool 예산을 확대.
+        tool_bonus += 2
+        replan_bonus += 1
+        if verification_reason and "multiple_targets" in verification_reason:
+            tool_bonus += 2
+            turn_bonus += 1
+
+    return {
+        "max_turns_override": max(2, base_turns + turn_bonus),
+        "max_tool_calls_override": max(2, base_tool_calls + tool_bonus),
+        "timeout_sec_override": max(10, base_timeout + timeout_bonus),
+        "replan_limit_override": max(0, base_replan + replan_bonus),
+        "max_candidates_override": 24 if (is_mutation or is_multi_target) else 20,
+    }
+
+
 def _retry_guidance_for_error(error_code: str) -> str:
     guides = {
         "turn_limit": "이전 실행에서 turn 한도에 도달했습니다. 불필요한 조회를 줄이고 핵심 도구만 사용하세요.",
@@ -110,6 +220,50 @@ def _retry_guidance_for_error(error_code: str) -> str:
         "verification_failed": "이전 실행이 완료 검증에 실패했습니다. 요청의 필수 동작을 실제 도구 호출로 충족하세요.",
     }
     return guides.get(error_code, "이전 실패 원인을 반영해 같은 오류를 반복하지 마세요.")
+
+
+def _verification_guidance_for_reason(verification_reason: str | None) -> str:
+    reason = (verification_reason or "").strip()
+    if not reason:
+        return ""
+    guides = {
+        "append_requires_append_block_children": (
+            "추가 요청은 append_block_children 호출이 필수입니다. "
+            "대상 페이지를 먼저 식별(search/retrieve)하고 append를 수행하세요."
+        ),
+        "append_requires_multiple_targets": (
+            "복수 대상 각각 추가 요청입니다. "
+            "각 대상 페이지마다 append_block_children를 최소 1회씩 호출해야 합니다."
+        ),
+        "move_requires_update_page": (
+            "이동 요청은 update_page로 parent 갱신이 필요합니다. "
+            "원본/상위 페이지를 식별한 뒤 update_page를 실행하세요."
+        ),
+        "rename_requires_update_page": (
+            "제목 변경 요청은 update_page(properties.title)가 필요합니다. "
+            "페이지 식별 후 제목 변경 payload를 포함하세요."
+        ),
+        "archive_requires_archive_tool": (
+            "삭제/아카이브 요청은 update_page(archived 또는 in_trash) 또는 delete 계열 호출이 필요합니다."
+        ),
+        "lookup_requires_tool_call": (
+            "조회/요약 요청은 최소 1회 이상 조회 도구(search/retrieve) 호출이 필요합니다."
+        ),
+        "creation_requires_artifact_reference": (
+            "생성 요청은 새 리소스 id/url 근거가 필요합니다. "
+            "create/append 후 결과의 id/url을 최종 응답에 반영하세요."
+        ),
+        "mutation_requires_mutation_tool": "변경 요청은 mutation 도구(create/append/update/delete) 호출이 필요합니다.",
+        "empty_final_response": "final 응답 본문이 비어 있습니다. 작업 결과 요약을 포함해 응답하세요.",
+    }
+    return guides.get(reason, f"검증 실패 사유({reason})를 충족하도록 도구 호출/응답을 보강하세요.")
+
+
+def _retry_tuning_rule(error_code: str, verification_reason: str | None = None) -> str:
+    verification = (verification_reason or "").strip()
+    if error_code == "verification_failed" and verification:
+        return f"verification:{verification}"
+    return f"error:{error_code}"
 
 
 def _extract_last_tool_error_detail(steps: list[AgentExecutionStep]) -> str | None:
@@ -124,10 +278,23 @@ def _build_retry_guidance(autonomous: AgentExecutionResult, error_code: str) -> 
     verification_reason = str(autonomous.artifacts.get("verification_reason", "") or "").strip()
     if verification_reason:
         parts.append(f"검증 실패 사유: {verification_reason}")
+        detail_guide = _verification_guidance_for_reason(verification_reason)
+        if detail_guide:
+            parts.append(f"검증 보완 가이드: {detail_guide}")
     last_tool_error = _extract_last_tool_error_detail(autonomous.steps)
     if last_tool_error:
         parts.append(f"직전 도구 오류: {last_tool_error}")
     return "\n".join(parts)
+
+
+def _autonomous_successful_tool_calls(autonomous: AgentExecutionResult | None) -> int:
+    if autonomous is None:
+        return 0
+    count = 0
+    for step in autonomous.steps:
+        if "_tool:" in step.name and step.status == "success":
+            count += 1
+    return count
 
 
 async def run_agent_analysis(user_text: str, connected_services: list[str], user_id: str) -> AgentRunResult:
@@ -175,6 +342,9 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             plan_source="rule",
         )
 
+    settings = get_settings()
+    planner_rule_fallback_enabled = bool(getattr(settings, "llm_planner_rule_fallback_enabled", True))
+
     plan_source = "rule"
     llm_plan, llm_error = await try_build_agent_plan_with_llm(
         user_text=user_text,
@@ -183,13 +353,43 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     if llm_plan:
         plan = llm_plan
         plan_source = "llm"
-        consistency_error = _plan_consistency_reason(user_text, plan.selected_tools)
-        if consistency_error:
-            # Auto-replan to deterministic rule planner when LLM plan misses essential tools.
-            plan = build_agent_plan(user_text=user_text, connected_services=connected_services)
-            plan_source = "rule"
-            plan.notes.append(f"plan_realign_from_llm:{consistency_error}")
+        enriched_tools, post_enrich_error = _enrich_plan_tools_with_registry(
+            user_text=user_text,
+            selected_tools=plan.selected_tools,
+            target_services=plan.target_services,
+        )
+        if enriched_tools != plan.selected_tools:
+            plan.selected_tools = enriched_tools
+            plan.notes.append("plan_enriched_from_llm")
+        if post_enrich_error:
+            if planner_rule_fallback_enabled:
+                # If essential tool is still missing after enrichment, fall back to rule planner.
+                plan = build_agent_plan(user_text=user_text, connected_services=connected_services)
+                plan_source = "rule"
+                plan.notes.append(f"plan_realign_from_llm:{post_enrich_error}")
+            else:
+                plan.notes.append(f"plan_realign_skipped:{post_enrich_error}")
     else:
+        if bool(getattr(settings, "llm_planner_enabled", False)) and not planner_rule_fallback_enabled:
+            empty_plan = AgentRunResult(
+                ok=False,
+                stage="planning",
+                plan=build_agent_plan(user_text=user_text, connected_services=connected_services),
+                result_summary="LLM planner가 계획을 생성하지 못해 실행을 중단했습니다.",
+                execution=AgentExecutionResult(
+                    success=False,
+                    user_message=(
+                        "현재는 자율 LLM planner 우선 모드입니다.\n"
+                        "계획 생성에 실패해 실행을 중단했습니다. 잠시 후 다시 시도해주세요."
+                    ),
+                    summary="LLM planner planning 실패",
+                    artifacts={"error_code": "llm_planner_failed"},
+                    steps=[AgentExecutionStep(name="planning", status="error", detail=llm_error or "llm_plan_missing")],
+                ),
+                plan_source="llm",
+            )
+            empty_plan.plan.notes.append(f"llm_planner_failed_no_rule_fallback:{llm_error or 'llm_plan_missing'}")
+            return empty_plan
         plan = build_agent_plan(user_text=user_text, connected_services=connected_services)
         if llm_error:
             plan.notes.append(f"llm_planner_fallback:{llm_error}")
@@ -208,7 +408,6 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             plan_source=plan_source,
         )
 
-    settings = get_settings()
     execution = None
     autonomous_enabled = bool(getattr(settings, "llm_autonomous_enabled", False))
     autonomous_strict = bool(getattr(settings, "llm_autonomous_strict", False))
@@ -216,6 +415,9 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     autonomous_rule_fallback_enabled = bool(getattr(settings, "llm_autonomous_rule_fallback_enabled", True))
     autonomous_rule_fallback_mutation_enabled = bool(
         getattr(settings, "llm_autonomous_rule_fallback_mutation_enabled", False)
+    )
+    autonomous_progressive_no_fallback_enabled = bool(
+        getattr(settings, "llm_autonomous_progressive_no_fallback_enabled", True)
     )
     autonomous: AgentExecutionResult | None = None
 
@@ -238,13 +440,30 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             }
             if autonomous_retry_once and error_code in retryable_errors:
                 plan.notes.append("autonomous_retry=1")
+                verification_reason = str(autonomous.artifacts.get("verification_reason", "") or "").strip() or None
+                plan.notes.append(f"autonomous_retry_tuning_rule={_retry_tuning_rule(error_code, verification_reason)}")
+                retry_overrides = _build_retry_overrides(
+                    settings=settings,
+                    user_text=user_text,
+                    error_code=error_code,
+                    verification_reason=verification_reason,
+                )
+                plan.notes.append(
+                    "autonomous_retry_budget="
+                    f"turns:{retry_overrides['max_turns_override']},"
+                    f"tools:{retry_overrides['max_tool_calls_override']},"
+                    f"timeout:{retry_overrides['timeout_sec_override']},"
+                    f"replan:{retry_overrides['replan_limit_override']},"
+                    f"candidates:{retry_overrides['max_candidates_override']}"
+                )
                 retry = await run_autonomous_loop(
                     user_id=user_id,
                     plan=plan,
-                    max_turns_override=max(2, int(getattr(settings, "llm_autonomous_max_turns", 6)) + 2),
-                    max_tool_calls_override=max(2, int(getattr(settings, "llm_autonomous_max_tool_calls", 8)) + 2),
-                    timeout_sec_override=max(10, int(getattr(settings, "llm_autonomous_timeout_sec", 45)) + 15),
-                    replan_limit_override=max(0, int(getattr(settings, "llm_autonomous_replan_limit", 1)) + 1),
+                    max_turns_override=retry_overrides["max_turns_override"],
+                    max_tool_calls_override=retry_overrides["max_tool_calls_override"],
+                    timeout_sec_override=retry_overrides["timeout_sec_override"],
+                    replan_limit_override=retry_overrides["replan_limit_override"],
+                    max_candidates_override=retry_overrides["max_candidates_override"],
                     extra_guidance=_build_retry_guidance(autonomous, error_code),
                 )
                 if retry.success:
@@ -271,6 +490,20 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             ):
                 execution = autonomous
                 plan.notes.append("execution=autonomous_no_rule_fallback_mutation")
+
+            if execution is None and autonomous is not None and autonomous_progressive_no_fallback_enabled:
+                error_code = str(autonomous.artifacts.get("error_code", "unknown"))
+                progressive_errors = {
+                    "verification_failed",
+                    "turn_limit",
+                    "tool_call_limit",
+                    "timeout",
+                    "replan_limit",
+                }
+                successful_tools = _autonomous_successful_tool_calls(autonomous)
+                if successful_tools >= 1 and error_code in progressive_errors:
+                    execution = autonomous
+                    plan.notes.append(f"execution=autonomous_progress_guard:{error_code}:{successful_tools}")
 
             if execution is None:
                 plan.notes.append("execution=autonomous_fallback")

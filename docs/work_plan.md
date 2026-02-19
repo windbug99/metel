@@ -76,6 +76,10 @@
 - 자율 루프 수렴 개선(2026-02-19):
 - `autonomous.py`에서 요청 의도 기반 도구 우선순위 정렬 적용
 - `autonomous.py`에서 동일 mutation 도구 호출 반복 방지(같은 tool+payload 재실행 차단) 적용
+- 복수 대상 추가 요청(`각각`)에서 append 실행 횟수 검증 강화
+  - 예: `"A", "B" ... 각각 추가` 요청은 최소 2회 append 성공 후에만 완료 처리
+- LLM planner 산출물이 필수 도구를 누락한 경우 즉시 rule로 전환하지 않고,
+  registry 기반 tool 보강(`plan_enriched_from_llm`) 후 자율 실행을 우선 시도
   - 자율 루프 도구 후보를 최대 8개로 축소(Planner가 선택한 도구 우선 고정)
   - 자율 액션 프롬프트에 `workflow_steps` 주입 및 "필요 tool_call 완료 전 final 금지" 원칙 추가
 - 자율 실행 정책 강화(2026-02-19):
@@ -104,6 +108,23 @@
   - 관련 테스트: `test_run_agent_analysis_autonomous_retry_includes_last_tool_error_guidance`
   - 3차 고도화: `verification_failed`, `unsupported_action`도 자율 재시도 대상에 포함해 rule fallback 비율 감소
   - 관련 테스트: `test_run_agent_analysis_retries_on_verification_failed`
+  - 4차 고도화: 재시도 시 도구 후보 상한을 확장(`max_candidates_override=20`)해 1차에서 누락된 보조 도구를 포함하도록 개선
+  - 관련 테스트: `test_run_agent_analysis_autonomous_retry_then_success`에서 후보 확장 파라미터 검증
+  - 5차 고도화: 요청 의도(조회/변경/복수 대상) + 실패 원인(turn/tool/timeout/verification)에 따라
+    재시도 budget(`turn/tool/timeout/replan`)를 동적으로 확장
+  - 관련 테스트: `test_run_agent_analysis_retry_overrides_expand_for_mutation`
+  - 6차 고도화: `verification_reason`별 재시도 가이드 템플릿 적용
+    (예: `append_requires_multiple_targets` -> 대상별 append 호출 강제 가이드)
+  - `plan.notes`에 적용 튜닝 규칙 기록:
+    - `autonomous_retry_tuning_rule=error:<code>`
+    - `autonomous_retry_tuning_rule=verification:<reason>`
+  - 관련 테스트:
+    - `test_run_agent_analysis_retries_on_verification_failed`
+    - `test_run_agent_analysis_autonomous_retry_then_success`
+- 자율 실행 텔레메트리 강화(2026-02-19):
+  - `autonomous.py`에서 실제 액션 생성에 사용된 LLM `provider/model`을 artifacts로 기록
+  - `telegram.py` command log 저장 시 planner note가 없으면 execution artifacts의 `llm_provider/llm_model`을 사용
+  - 관련 테스트: `test_autonomous_records_llm_provider_and_model`
 
 ### rule 의존 축소 (2단계 진행 중)
 
@@ -114,9 +135,17 @@
 - `LLM_AUTONOMOUS_RULE_FALLBACK_MUTATION_ENABLED` 옵션 추가
   - `false`(기본): 생성/추가/이동/삭제/수정 같은 mutation 의도에서 자율 실패 시 rule fallback 차단
   - `true`: mutation 의도도 기존처럼 rule fallback 허용
-- 관련 테스트:
+  - 관련 테스트:
   - `test_run_agent_analysis_blocks_rule_fallback_for_mutation_intent`
   - `test_run_agent_analysis_allows_rule_fallback_for_lookup_intent`
+- `LLM_AUTONOMOUS_PROGRESSIVE_NO_FALLBACK_ENABLED` 옵션 추가
+  - `true`(기본): 자율 루프에서 이미 도구 성공 호출이 발생한 경우(`turn_*_tool:* success`),
+    `verification_failed/turn_limit/tool_call_limit/timeout/replan_limit` 에러에서는 rule fallback 대신
+    자율 결과를 유지(`execution=autonomous_progress_guard:*`)하여 rule 의존도를 낮춤
+  - `false`: 기존처럼 rule fallback 허용
+  - 관련 테스트:
+    - `test_run_agent_analysis_progress_guard_blocks_rule_fallback`
+    - `test_run_agent_analysis_progress_guard_disabled_allows_rule_fallback`
 
 ### 자율 품질 측정 운영 (1단계 구현 완료)
 
@@ -125,9 +154,19 @@
   - autonomous success rate >= 80%
   - fallback rate <= 20%
   - 최소 표본 20건
+- 추가 분석 지표:
+  - autonomous attempt rate
+  - autonomous success over attempts
+  - plan_source / execution_mode 분포
+  - fallback/verification 상위 사유 기반 tuning hints 자동 생성
+  - fallback/verification/error_code 상위 사유 기반 **env 정책 제안** 자동 생성
+    - 예: `LLM_AUTONOMOUS_MAX_TURNS`, `LLM_AUTONOMOUS_MAX_TOOL_CALLS`, `LLM_AUTONOMOUS_TIMEOUT_SEC`,
+      `LLM_AUTONOMOUS_REPLAN_LIMIT`, `LLM_PLANNER_RULE_FALLBACK_ENABLED` 등
 - 실행 예시:
   - `cd backend && . .venv/bin/activate && python scripts/eval_agent_quality.py --limit 30`
   - 리포트 파일 출력: `python scripts/eval_agent_quality.py --limit 30 --output ../docs/reports/agent_quality_latest.md`
+- JSON 출력: `python scripts/eval_agent_quality.py --limit 30 --output-json ../docs/reports/agent_quality_latest.json`
+  - 정책 제안 확인: 위 JSON의 `policy_recommendations` 필드 확인
 - 삭제/생성 품질 보강:
   - 삭제 의도 판별 정규식 개선(예: "삭제 테스트 페이지"를 삭제 요청으로 오인하지 않음)
   - 다중 제목 지정 요약 생성 지원(예: `"더 코어 3", "사이먼 블로그"` 지정 조회)
@@ -150,9 +189,13 @@
 - LLM 자율 에이전트 1차 착수:
   - `backend/agent/planner_llm.py` 추가 (OpenAI chat completions 기반 planner)
   - `loop`에서 `LLM planner -> 실패 시 rule planner fallback` 적용
+  - `LLM_PLANNER_RULE_FALLBACK_ENABLED` 옵션 추가
+    - `true`(기본): planner 실패 시 rule fallback 허용
+    - `false`: planner도 LLM 우선 모드(실패 시 planning 에러 반환)
+  - LLM plan 도구 누락 시 registry 기반 보강(`plan_enriched_from_llm`) 후 실행 우선
   - 실행 결과에 `plan_source`(`llm`/`rule`) 추가
   - 관련 env: `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `LLM_PLANNER_ENABLED`,
-    `LLM_PLANNER_PROVIDER`, `LLM_PLANNER_MODEL`,
+    `LLM_PLANNER_RULE_FALLBACK_ENABLED`, `LLM_PLANNER_PROVIDER`, `LLM_PLANNER_MODEL`,
     `LLM_PLANNER_FALLBACK_PROVIDER`, `LLM_PLANNER_FALLBACK_MODEL`
 
 ### 2.3 상태 체크리스트 (코드 기준)
@@ -624,7 +667,18 @@ Notion은 생산성 도구로서 다양한 API를 제공하며, OAuth 연동이 
 *   **진행 상태:** 부분 완료
     *   `ToolRegistry.load_from_dir(...)`를 추가해 스펙 디렉토리 단위 로딩 검증 가능.
     *   `backend/tests/test_registry_extensibility.py`에서 mock 서비스 스펙 1개만으로 로딩/도구 조회 성공을 검증.
-    *   남은 작업: 실제 실행 어댑터(HTTP runner)까지 포함한 E2E 수용 테스트 추가.
+    *   `backend/tests/test_operational_acceptance.py` 추가:
+      - spec-only 신규 서비스(mockdocs)로 `build_agent_plan` 서비스/도구 선택 검증
+      - `run_agent_analysis`에서 autonomous 경로까지 코어 라우터 수정 없이 실행 검증
+      - `execute_tool` generic HTTP adapter 경로까지 포함한 E2E 검증(스펙만으로 GET 호출 성공)
+    *   `backend/agent/tool_runner.py` generic adapter 적용
+      - `ToolDefinition.base_url` 기반으로 서비스별 URL 조합
+      - scope-required 서비스는 Bearer 토큰 자동 부착
+      - HTTP 오류 매핑(`error_map`) 검증 테스트 추가
+    *   `backend/tests/test_operational_acceptance_e2e_mock.py` 추가:
+      - `httpx.MockTransport` 기반으로 실제 HTTP 요청 경로(GET/POST/헤더/바디) 검증
+      - `error_map` 기반 인증 오류 매핑(401 -> AUTH_ERROR) 검증
+    *   남은 작업: CI에서 외부 mock 서버 컨테이너를 붙인 네트워크 통합 테스트로 확장.
 
 ## 4. 결론
 

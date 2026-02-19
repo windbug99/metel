@@ -25,6 +25,7 @@ def test_guide_retriever():
 def test_service_resolver_dynamic_keyword_from_tool_spec(monkeypatch):
     tool = ToolDefinition(
         service="mockdocs",
+        base_url="https://api.mockdocs.local",
         tool_name="mockdocs_list_items",
         description="MockDocs items list and document summary",
         method="GET",

@@ -253,3 +253,138 @@ def test_autonomous_blocks_duplicate_mutation_tool_call(monkeypatch):
     assert result.success is True
     assert len(calls) == 1
     assert any(step.detail == "duplicate_mutation_call_blocked" for step in result.steps)
+
+
+def test_autonomous_append_multiple_targets_requires_enough_calls(monkeypatch):
+    def _settings_multi():
+        return SimpleNamespace(
+            llm_autonomous_enabled=True,
+            llm_autonomous_max_turns=4,
+            llm_autonomous_max_tool_calls=4,
+            llm_autonomous_timeout_sec=30,
+            llm_autonomous_replan_limit=0,
+        )
+
+    sequence = iter(
+        [
+            (
+                {
+                    "action": "tool_call",
+                    "tool_name": "notion_append_block_children",
+                    "tool_input": {"block_id": "p1", "children": [{"object": "block"}]},
+                },
+                None,
+            ),
+            ({"action": "final", "final_response": "두 페이지에 추가 완료"}, None),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        return {"ok": True, "data": {"id": payload["block_id"]}}
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings_multi)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+
+    plan = _plan('노션에서 "더 코어 3", "사이먼 블로그" 페이지에 핵심 주제를 각각 추가해줘')
+    result = asyncio.run(run_autonomous_loop("user-1", plan))
+
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "verification_failed"
+    assert result.artifacts.get("verification_reason") == "append_requires_multiple_targets"
+
+
+def test_autonomous_append_multiple_targets_succeeds_with_enough_calls(monkeypatch):
+    def _settings_multi():
+        return SimpleNamespace(
+            llm_autonomous_enabled=True,
+            llm_autonomous_max_turns=6,
+            llm_autonomous_max_tool_calls=6,
+            llm_autonomous_timeout_sec=30,
+            llm_autonomous_replan_limit=0,
+        )
+
+    sequence = iter(
+        [
+            (
+                {
+                    "action": "tool_call",
+                    "tool_name": "notion_append_block_children",
+                    "tool_input": {"block_id": "p1", "children": [{"object": "block"}]},
+                },
+                None,
+            ),
+            (
+                {
+                    "action": "tool_call",
+                    "tool_name": "notion_append_block_children",
+                    "tool_input": {"block_id": "p2", "children": [{"object": "block"}]},
+                },
+                None,
+            ),
+            ({"action": "final", "final_response": "두 페이지에 추가 완료"}, None),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        return {"ok": True, "data": {"id": payload["block_id"]}}
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings_multi)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+
+    plan = _plan('노션에서 "더 코어 3", "사이먼 블로그" 페이지에 핵심 주제를 각각 추가해줘')
+    result = asyncio.run(run_autonomous_loop("user-1", plan))
+
+    assert result.success is True
+
+
+def test_autonomous_records_llm_provider_and_model(monkeypatch):
+    sequence = iter(
+        [
+            (
+                {
+                    "action": "tool_call",
+                    "tool_name": "notion_search",
+                    "tool_input": {"query": "metel"},
+                    "_provider": "openai",
+                    "_model": "gpt-4o-mini",
+                },
+                None,
+            ),
+            (
+                {
+                    "action": "final",
+                    "final_response": "조회 완료",
+                    "_provider": "openai",
+                    "_model": "gpt-4o-mini",
+                },
+                None,
+            ),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        return {"ok": True, "data": {"results": [{"id": "p1"}]}}
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+
+    result = asyncio.run(run_autonomous_loop("user-1", _plan("노션에서 최근 페이지 조회해줘")))
+
+    assert result.success is True
+    assert result.artifacts.get("llm_provider") == "openai"
+    assert result.artifacts.get("llm_model") == "gpt-4o-mini"

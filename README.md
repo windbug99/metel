@@ -1,180 +1,153 @@
-# metel.ai
+# metel
 
-Monorepo for metel prototype.
+[![Backend](https://img.shields.io/badge/backend-FastAPI-009688?logo=fastapi&logoColor=white)](#)
+[![Frontend](https://img.shields.io/badge/frontend-Next.js-000000?logo=nextdotjs&logoColor=white)](#)
+[![Database](https://img.shields.io/badge/database-Supabase-3FCF8E?logo=supabase&logoColor=white)](#)
+[![Deploy Backend](https://img.shields.io/badge/deploy-Railway-7B3FE4?logo=railway&logoColor=white)](#)
+[![Deploy Frontend](https://img.shields.io/badge/deploy-Vercel-000000?logo=vercel&logoColor=white)](#)
+[![Status](https://img.shields.io/badge/status-prototype-orange)](#)
 
-- `frontend`: Next.js app (for Vercel)
-- `backend`: FastAPI app (Notion OAuth, integrations)
-- `docs`: planning and architecture docs
+대화형 자율 AI 비서 프로토타입.  
+웹에서 한 번 연동하고, 이후에는 Telegram에서 자연어로 작업을 요청하면 LLM 에이전트가 계획/실행/결과 전달까지 수행합니다.
 
-## Frontend Local Setup
+## Status
 
-1. `frontend/.env.example`를 참고해 `frontend/.env.local` 생성
-2. 아래 값을 입력
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `NEXT_PUBLIC_API_BASE_URL` (백엔드 준비 후 입력)
-3. `cd frontend && npm install && npm run dev`
+- Stage: Prototype (active development)
+- Frontend: Next.js (Vercel)
+- Backend: FastAPI (Railway)
+- Data/Auth: Supabase
+- Current primary integration: Notion
+- Agent mode: LLM planner + autonomous loop + guarded fallback
 
-## Backend Local Setup
+## Why metel
 
-1. `backend/.env.example`를 참고해 `backend/.env` 생성
-2. 아래 값을 입력
-   - `SUPABASE_URL`
-   - `SUPABASE_SERVICE_ROLE_KEY`
-   - `NOTION_CLIENT_ID`
-   - `NOTION_CLIENT_SECRET`
-   - `NOTION_REDIRECT_URI` (예: `http://localhost:8000/api/oauth/notion/callback`)
-   - `NOTION_STATE_SECRET` (랜덤 문자열)
-   - `NOTION_TOKEN_ENCRYPTION_KEY` (Fernet key)
-   - `TELEGRAM_BOT_TOKEN` (BotFather 발급)
-   - `TELEGRAM_LINK_SECRET` (랜덤 문자열)
-   - `TELEGRAM_WEBHOOK_SECRET` (선택, 랜덤 문자열)
-   - `TELEGRAM_BOT_USERNAME` (선택, 예: `my_metel_bot`)
-   - `OPENAI_API_KEY` (선택, LLM planner 사용 시)
-   - `LLM_PLANNER_ENABLED` (기본 `false`, LLM planner 활성화 여부)
-   - `LLM_PLANNER_MODEL` (기본 `gpt-4o-mini`)
-   - `FRONTEND_URL` (예: `http://localhost:3000`)
-3. `cd backend && python3 -m venv .venv && source .venv/bin/activate`
-4. `pip install -r requirements.txt`
-5. `uvicorn main:app --reload --port 8000`
+기존 자동화 도구의 한계를 동시에 해결하는 것이 목표입니다.
 
-## Google OAuth Redirect URL
+- 단순 자동화(If-Then) 한계: 맥락 이해/복합 작업 불가
+- 설치형 에이전트 한계: 운영 부담, 보안 책임 전가
+- metel 방향: SaaS 기반 + 최소 권한 + 감사 로그 + 대화형 실행
 
-- `http://localhost:3000/auth/callback`
-- `https://<your-vercel-domain>/auth/callback`
+## Core Flow
 
-## Notion OAuth Redirect URL
+```text
+User (Telegram)
+  -> Request
+  -> LLM Planner (task requirements, target service, tool candidates)
+  -> Autonomous Loop (tool call / verify / replan)
+  -> Tool Runner (Notion API, ...)
+  -> Result + execution trace
+  -> User (Telegram)
+```
 
-- `http://localhost:8000/api/oauth/notion/callback`
-- `https://<your-backend-domain>/api/oauth/notion/callback`
+## Current Capabilities
 
-## Notion Test Endpoint
+- Notion OAuth 연동 및 상태 조회
+- Telegram 계정 연결/해제
+- 자연어 요청 기반 Notion 작업(조회/생성/수정/아카이브 일부)
+- 실행 로그 저장(`command_logs`) 및 텔레메트리(`plan_source`, `execution_mode`, `autonomous_fallback_reason`, `verification_reason`)
+- 자율 루프 보호 장치
+  - turn/tool/replan/timeout budget
+  - verification gate
+  - duplicate mutation call block
+  - optional rule fallback control
 
-- `GET /api/oauth/notion/pages?page_size=5`
-- `Authorization: Bearer <Supabase access token>` 헤더가 필요합니다.
-- Notion 연동 후 사용자 페이지 목록을 반환합니다.
+## Quick Start (Local)
 
-## Telegram Integration Setup
+### 1) Backend
 
-1. BotFather에서 봇 생성 후 `TELEGRAM_BOT_TOKEN` 확보
-2. 백엔드 공개 URL 기준으로 webhook 등록
-   - `POST https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook`
-   - body 예시:
-     - `url=https://<your-backend-domain>/api/telegram/webhook`
-     - `secret_token=<TELEGRAM_WEBHOOK_SECRET>` (설정한 경우)
-3. 대시보드에서 `Telegram 연결하기` 클릭
-4. 열린 `t.me` 링크에서 `/start ...` 실행 후 연결 상태 확인
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+uvicorn main:app --reload --port 8000
+```
 
-## LLM Planner (Optional)
+### 2) Frontend
 
-기본값은 규칙 기반 planner입니다. LLM planner를 켜면 요청 분석/서비스·tool 선택을 LLM이 우선 수행하고, 실패 시 규칙 기반으로 fallback 됩니다.
+```bash
+cd frontend
+npm install
+cp .env.example .env.local
+npm run dev
+```
 
-필수 설정:
-- `OPENAI_API_KEY` (OpenAI 사용 시)
-- `LLM_PLANNER_ENABLED=true`
+### 3) Check
 
-선택 설정:
-- `LLM_PLANNER_PROVIDER` (기본 `openai`)
-- `LLM_PLANNER_MODEL` (기본 `gpt-4o-mini`)
-- `LLM_PLANNER_FALLBACK_PROVIDER` (예: `gemini`)
-- `LLM_PLANNER_FALLBACK_MODEL` (예: `gemini-2.5-flash-lite`)
-- `GOOGLE_API_KEY` (Gemini 사용 시)
+- Frontend: `http://localhost:3000`
+- Backend health: `http://localhost:8000/api/health`
 
-## Supabase SQL
+## Environment Variables
 
-Supabase SQL Editor에서 `docs/sql/001_create_users_table.sql` 실행:
+필수 키는 각 `.env.example`을 기준으로 설정합니다.
 
-- `users` 프로필 테이블 생성
-- RLS 및 본인 데이터 접근 정책 생성
+- Backend: `backend/.env.example`
+- Frontend: `frontend/.env.example`
 
-추가로 `docs/sql/002_create_oauth_tokens_table.sql` 실행:
+LLM planner/autonomous 관련 주요 변수:
 
-- `oauth_tokens` 연동 토큰 저장 테이블 생성
+- `LLM_PLANNER_ENABLED`
+- `LLM_PLANNER_PROVIDER`
+- `LLM_PLANNER_MODEL`
+- `LLM_PLANNER_FALLBACK_PROVIDER`
+- `LLM_PLANNER_FALLBACK_MODEL`
+- `LLM_AUTONOMOUS_ENABLED`
+- `LLM_AUTONOMOUS_RULE_FALLBACK_ENABLED`
+- `LLM_AUTONOMOUS_RULE_FALLBACK_MUTATION_ENABLED`
+- `TOOL_SPECS_VALIDATE_ON_STARTUP`
 
-추가로 `docs/sql/003_add_telegram_columns.sql` 실행:
+## Testing
 
-- `users` 테이블에 텔레그램 연결 컬럼 추가
+```bash
+cd backend
+source .venv/bin/activate
+python -m pytest -q
+```
 
-추가로 `docs/sql/004_create_command_logs_table.sql` 실행:
+Tool spec 검증:
 
-- 텔레그램 명령 감사 로그 테이블 생성
+```bash
+cd backend
+source .venv/bin/activate
+python scripts/check_tool_specs.py --json
+```
 
-추가로 `docs/sql/005_add_command_logs_telemetry_columns.sql` 실행:
+## Repository Structure
 
-- 에이전트 실행 텔레메트리 컬럼 추가(`plan_source`, `execution_mode`, `autonomous_fallback_reason`, `llm_provider`, `llm_model`)
+```text
+frontend/                  Next.js dashboard
+backend/                   FastAPI + agent runtime
+backend/agent/             planner / autonomous / registry / tool_runner
+backend/agent/tool_specs/  service tool specs (json)
+backend/tests/             unit + integration tests
+docs/                      plan, architecture, setup, SQL migrations
+docs/sql/                  schema migration scripts
+```
 
-## Production Env Checklist
+## Roadmap (High Level)
 
-### Vercel (frontend)
+- [x] Notion + Telegram 기반 end-to-end 프로토타입
+- [x] LLM planner + autonomous loop 기본 동작
+- [x] 실행 로그/텔레메트리/검증 사유 추적
+- [ ] rule fallback 비중 축소(autonomous success rate 지속 향상)
+- [ ] Notion API coverage 확대 및 멀티서비스 확장(Spotify/Google/Slack)
+- [ ] workflow mining -> skill candidate 자동화
+- [ ] production hardening (rate limit, retries, ops playbook)
 
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `NEXT_PUBLIC_API_BASE_URL` (예: `https://metel-production.up.railway.app`)
+## Docs
 
-### Railway (backend)
+- `docs/work_plan.md` - 구현 우선순위/진행 상태
+- `docs/service_plan.md` - 제품 기획/아키텍처
+- `docs/openclaw_analysis.md` - 비교 분석
+- `docs/setup_guild.md` - 환경 구성 가이드
 
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `NOTION_CLIENT_ID`
-- `NOTION_CLIENT_SECRET`
-- `NOTION_REDIRECT_URI` (예: `https://metel-production.up.railway.app/api/oauth/notion/callback`)
-- `NOTION_STATE_SECRET`
-- `NOTION_TOKEN_ENCRYPTION_KEY`
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_LINK_SECRET`
-- `TELEGRAM_WEBHOOK_SECRET` (선택)
-- `TELEGRAM_BOT_USERNAME` (선택)
-- `FRONTEND_URL` (예: `https://metel-frontend.vercel.app`)
-- `ALLOWED_ORIGINS` (예: `https://metel-frontend.vercel.app,http://localhost:3000`)
+## Inspiration (README structure)
 
-## Deploy Verification
+- FastAPI: https://github.com/fastapi/fastapi
+- Supabase: https://github.com/supabase/supabase
+- LangChain: https://github.com/langchain-ai/langchain
 
-1. Backend health
-   - `GET https://<railway-domain>/api/health` => `{"status":"ok"}`
-2. Frontend dashboard open
-   - 로그인 후 Notion/Telegram 섹션이 네트워크 오류 없이 로드
-3. Notion flow
-   - 대시보드 `Notion 연결하기` -> 연결 성공 -> 상태 `연결됨`
-4. Telegram flow
-   - 대시보드 `Telegram 연결하기` -> Telegram `/start ...` -> 상태 `연결됨`
-5. Telegram commands
-   - `/status`
-   - `/notion_pages`
-   - `/notion_create 테스트 페이지`
-6. Command logs
-   - 대시보드 `명령 로그` 최근 20건에 성공/실패 기록 표시
+---
 
-## Notion Live Integration Tests
-
-실제 Notion API를 대상으로 통합 테스트를 실행할 수 있습니다.
-
-1. 가상환경 활성화
-   - `cd backend && source .venv/bin/activate`
-2. 필수 환경변수 설정
-   - `RUN_NOTION_LIVE_TESTS=true`
-   - `NOTION_LIVE_TOKEN=<Internal Integration Token 또는 유효한 OAuth access token>`
-   - `NOTION_LIVE_PAGE_ID=<접근 가능한 page/block id>`
-   - `NOTION_LIVE_DATA_SOURCE_ID=<접근 가능한 data source id>`
-3. 읽기 테스트 실행
-   - `python -m pytest -q tests/integration/test_notion_live.py -k "search_pages or retrieve_block_children or query_data_source"`
-4. 쓰기 테스트(주의: 실제 변경 발생) 실행
-   - `RUN_NOTION_LIVE_WRITE_TESTS=true`
-   - `NOTION_LIVE_BASE_TITLE="Metel Live Test"` (제목 변경 테스트용)
-   - `python -m pytest -q tests/integration/test_notion_live.py -k "update_page_title_roundtrip or append_block_children"`
-
-참고:
-- 테스트 토큰은 먼저 검증됩니다. `401 unauthorized`가 나오면 토큰이 잘못된 것입니다.
-- Integration 토큰을 쓸 경우 테스트할 페이지/데이터소스를 해당 Integration에 연결(Connections)해야 합니다.
-
-## Troubleshooting
-
-- CORS 오류 (`No 'Access-Control-Allow-Origin' header`)
-  - Railway `ALLOWED_ORIGINS`에 현재 Vercel 도메인 포함
-  - 저장 후 Railway 재배포
-- Telegram webhook 무반응
-  - `getWebhookInfo` 확인
-  - `url`이 backend webhook 경로인지 확인
-  - `secret_token`과 `TELEGRAM_WEBHOOK_SECRET` 일치 확인
-- Telegram `/start` 연결 실패
-  - 대시보드에서 받은 최신 링크 사용 (만료 30분)
-  - 앱에서 반응 없으면 `/start <payload>` 직접 전송
+Promethium internal prototype.

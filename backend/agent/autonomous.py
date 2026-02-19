@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
@@ -152,8 +153,13 @@ def _verify_completion(plan: AgentPlan, history: list[dict[str, Any]], final_res
         return False, "lookup_requires_tool_call"
     if _plan_needs_move(plan) and not _has_successful_tool(history, "update_page"):
         return False, "move_requires_update_page"
-    if _plan_needs_append(plan) and not _has_successful_tool(history, "append_block_children"):
-        return False, "append_requires_append_block_children"
+    if _plan_needs_append(plan):
+        append_success_count = _count_successful_tool(history, "append_block_children")
+        if append_success_count == 0:
+            return False, "append_requires_append_block_children"
+        target_count = _estimate_append_target_count(plan.user_text)
+        if target_count >= 2 and append_success_count < target_count:
+            return False, "append_requires_multiple_targets"
     if _plan_needs_rename(plan) and not _has_successful_tool(history, "update_page"):
         return False, "rename_requires_update_page"
     if _plan_needs_archive(plan) and not _has_successful_tool(history, "update_page", "delete_block", "archive"):
@@ -178,6 +184,17 @@ def _has_successful_tool(history: list[dict[str, Any]], *tokens: str) -> bool:
         if any(token in name for token in tokens):
             return True
     return False
+
+
+def _count_successful_tool(history: list[dict[str, Any]], *tokens: str) -> int:
+    count = 0
+    for item in history:
+        if item.get("action") != "tool_call" or item.get("status") != "success":
+            continue
+        name = str(item.get("tool_name", ""))
+        if any(token in name for token in tokens):
+            count += 1
+    return count
 
 
 def _is_mutation_tool_name(tool_name: str) -> bool:
@@ -221,6 +238,55 @@ def _plan_needs_move(plan: AgentPlan) -> bool:
 def _plan_needs_append(plan: AgentPlan) -> bool:
     text = plan.user_text
     return "추가" in text and any(token in text for token in ("페이지에", "문서에"))
+
+
+def _extract_quoted_targets(text: str) -> list[str]:
+    results: list[str] = []
+    for match in re.finditer(r'"([^"]+)"|\'([^\']+)\'', text):
+        value = match.group(1) or match.group(2)
+        if value:
+            cleaned = value.strip()
+            if cleaned:
+                results.append(cleaned)
+    return results
+
+
+def _estimate_append_target_count(text: str) -> int:
+    quoted = _extract_quoted_targets(text)
+    if len(quoted) >= 2:
+        return len(quoted)
+    normalized = text.lower()
+    if "각각" in normalized and any(token in normalized for token in (",", "와", "그리고")):
+        return 2
+    return 1
+
+
+def _intent_support_tools(plan: AgentPlan, service_tools: list[Any]) -> list[str]:
+    support: list[str] = []
+
+    def _pick(*tokens: str) -> list[str]:
+        matched: list[str] = []
+        for tool in service_tools:
+            name = str(tool.tool_name)
+            if any(token in name for token in tokens):
+                matched.append(name)
+        return matched
+
+    if _plan_needs_lookup(plan):
+        support.extend(_pick("search", "retrieve_page", "retrieve_block_children"))
+    if _plan_needs_append(plan):
+        support.extend(_pick("search", "retrieve_page", "retrieve_block_children", "append_block_children"))
+    if _plan_needs_move(plan):
+        support.extend(_pick("search", "retrieve_page", "update_page", "create_page", "append_block_children", "delete"))
+    if _plan_needs_archive(plan):
+        support.extend(_pick("search", "update_page", "delete"))
+    if _plan_needs_rename(plan):
+        support.extend(_pick("search", "update_page"))
+
+    if _plan_needs_creation(plan):
+        support.extend(_pick("create", "append", "update", "delete", "archive"))
+
+    return _dedupe_keep_order(support)
 
 
 def _plan_needs_rename(plan: AgentPlan) -> bool:
@@ -315,7 +381,8 @@ async def _choose_next_action(
     system_prompt = (
         "당신은 metel의 실행 에이전트입니다. 반드시 JSON object만 출력하세요. "
         "도구 호출은 허용된 tool_name만 사용하고, tool_input은 JSON object로 작성하세요. "
-        "핵심 원칙: 작업이 끝나기 전에는 final을 선택하지 말고 필요한 tool_call을 우선 수행하세요."
+        "핵심 원칙: 작업이 끝나기 전에는 final을 선택하지 말고 필요한 tool_call을 우선 수행하세요. "
+        "이미 성공한 mutation 도구(create/append/update/delete)를 동일 입력으로 반복 호출하지 마세요."
     )
     user_prompt = (
         f"사용자 요청: {plan.user_text}\n"
@@ -367,6 +434,7 @@ async def run_autonomous_loop(
     max_tool_calls_override: int | None = None,
     timeout_sec_override: int | None = None,
     replan_limit_override: int | None = None,
+    max_candidates_override: int | None = None,
     extra_guidance: str | None = None,
 ) -> AgentExecutionResult:
     settings = get_settings()
@@ -394,13 +462,18 @@ async def run_autonomous_loop(
                 for tool in service_tools
                 if any(token in tool.tool_name for token in ("create", "append", "update", "delete", "archive"))
             ]
-        allowed_tools = _dedupe_keep_order(selected_known + mutation_fallback)
+        support_tools = _intent_support_tools(plan, service_tools)
+        allowed_tools = _dedupe_keep_order(selected_known + support_tools + mutation_fallback)
     else:
-        allowed_tools = _dedupe_keep_order([tool.tool_name for tool in service_tools])
+        support_tools = _intent_support_tools(plan, service_tools)
+        allowed_tools = _dedupe_keep_order(support_tools + [tool.tool_name for tool in service_tools])
     allowed_tools = _rank_tools_by_intent(allowed_tools, plan)
 
     # Reduce tool fan-out to improve autonomous convergence (while preserving planner-selected tools).
-    max_candidates = 8
+    max_candidates = max_candidates_override if max_candidates_override is not None else 8
+    if max_candidates_override is None and _estimate_append_target_count(plan.user_text) >= 2:
+        max_candidates = 12
+    max_candidates = max(2, int(max_candidates))
     if len(allowed_tools) > max_candidates:
         pinned = [name for name in plan.selected_tools if name in allowed_tools]
         compact = _dedupe_keep_order(pinned + allowed_tools)
@@ -428,6 +501,8 @@ async def run_autonomous_loop(
     tool_calls = 0
     replan_count = 0
     invalid_action_count = 0
+    llm_provider: str | None = None
+    llm_model: str | None = None
     started = time.monotonic()
 
     for turn in range(1, max_turns + 1):
@@ -469,6 +544,12 @@ async def run_autonomous_loop(
 
         action = _normalize_action(action_payload)
         reason = str(action_payload.get("reason", "")).strip()
+        payload_provider = str(action_payload.get("_provider", "")).strip()
+        payload_model = str(action_payload.get("_model", "")).strip()
+        if payload_provider:
+            llm_provider = payload_provider
+        if payload_model:
+            llm_model = payload_model
         steps.append(AgentExecutionStep(name=f"turn_{turn}_action", status="success", detail=f"{action}:{reason}"))
 
         if action == "final":
@@ -491,6 +572,8 @@ async def run_autonomous_loop(
                         "error_code": "verification_failed",
                         "verification_reason": verify_reason,
                         "autonomous": "true",
+                        "llm_provider": llm_provider or "",
+                        "llm_model": llm_model or "",
                     },
                     steps=steps,
                 )
@@ -503,6 +586,8 @@ async def run_autonomous_loop(
                     "autonomous": "true",
                     "replan_count": str(replan_count),
                     "tool_calls": str(tool_calls),
+                    "llm_provider": llm_provider or "",
+                    "llm_model": llm_model or "",
                 },
                 steps=steps,
             )
@@ -514,9 +599,9 @@ async def run_autonomous_loop(
                     success=False,
                     summary="재계획 제한 초과",
                     user_message="요청 처리 중 재계획 한도를 초과했습니다. 요청을 더 구체적으로 입력해주세요.",
-                    artifacts={"error_code": "replan_limit", "autonomous": "true"},
-                    steps=steps,
-                )
+                artifacts={"error_code": "replan_limit", "autonomous": "true"},
+                steps=steps,
+            )
             suggested = action_payload.get("updated_selected_tools")
             if isinstance(suggested, list):
                 normalized = [str(item).strip() for item in suggested if isinstance(item, str)]
@@ -625,6 +710,11 @@ async def run_autonomous_loop(
         success=False,
         summary="자율 루프 turn 제한 도달",
         user_message="요청 처리 단계를 완료하지 못했습니다. 요청을 더 구체적으로 입력하거나 다시 시도해주세요.",
-        artifacts={"error_code": "turn_limit", "autonomous": "true"},
+        artifacts={
+            "error_code": "turn_limit",
+            "autonomous": "true",
+            "llm_provider": llm_provider or "",
+            "llm_model": llm_model or "",
+        },
         steps=steps,
     )
