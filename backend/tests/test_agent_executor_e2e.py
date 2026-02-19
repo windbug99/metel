@@ -196,18 +196,13 @@ def test_execute_notion_archive_flow_retries_with_delete_block(monkeypatch):
 
     monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
 
-    plan = _plan(
-        "일일 회의록 테스트 2 페이지 삭제해줘",
-        ["notion_delete_block"],
-    )
+    plan = _plan("일일 회의록 테스트 2 페이지 삭제해줘", ["notion_delete_block"])
     result = asyncio.run(execute_agent_plan("user-1", plan))
 
     assert result.success is True
     assert "아카이브" in result.summary
     assert [item[0] for item in calls] == [
         "notion_search",
-        "notion_update_page",
-        "notion_update_page",
         "notion_delete_block",
     ]
 

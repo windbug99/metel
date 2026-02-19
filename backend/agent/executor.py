@@ -463,6 +463,13 @@ def _pick_tool(plan: AgentPlan, keyword: str, default_tool: str) -> str:
     return default_tool
 
 
+def _pick_tool_or_none(plan: AgentPlan, keyword: str) -> str | None:
+    for tool in plan.selected_tools:
+        if keyword in tool:
+            return tool
+    return None
+
+
 def _is_valid_notion_id(value: str | None) -> bool:
     if not value:
         return False
@@ -888,45 +895,55 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
                 artifacts={"error_code": "validation_error"},
                 steps=steps + [AgentExecutionStep(name="select_page", status="error", detail="invalid_page_id")],
             )
-        try:
-            await execute_tool(
-                user_id=user_id,
-                tool_name=_pick_tool(plan, "update_page", "notion_update_page"),
-                payload={"page_id": selected_page_id, "archived": True},
-            )
-        except HTTPException as exc:
-            if "notion_update_page:BAD_REQUEST" not in str(exc.detail):
-                raise
+        selected_update_tool = _pick_tool_or_none(plan, "update_page")
+        selected_delete_tool = _pick_tool_or_none(plan, "delete_block")
+        update_tool = selected_update_tool or "notion_update_page"
+        delete_tool = selected_delete_tool or "notion_delete_block"
+
+        # If planner explicitly selected delete_block only, prefer that first.
+        attempts: list[tuple[str, str, dict]] = []
+        if selected_delete_tool and not selected_update_tool:
+            attempts.append(("delete_block_primary", delete_tool, {"block_id": selected_page_id}))
+            attempts.append(("update_archived_fallback", update_tool, {"page_id": selected_page_id, "archived": True}))
+            attempts.append(("update_in_trash_fallback", update_tool, {"page_id": selected_page_id, "in_trash": True}))
+        else:
+            attempts.append(("update_archived_primary", update_tool, {"page_id": selected_page_id, "archived": True}))
+            attempts.append(("update_in_trash_fallback", update_tool, {"page_id": selected_page_id, "in_trash": True}))
+            attempts.append(("delete_block_fallback", delete_tool, {"block_id": selected_page_id}))
+
+        archive_done = False
+        last_error_detail = ""
+        for attempt_name, tool_name, payload in attempts:
             try:
-                await execute_tool(
-                    user_id=user_id,
-                    tool_name=_pick_tool(plan, "update_page", "notion_update_page"),
-                    payload={"page_id": selected_page_id, "in_trash": True},
+                await execute_tool(user_id=user_id, tool_name=tool_name, payload=payload)
+                steps.append(AgentExecutionStep(name="archive_retry", status="success", detail=attempt_name))
+                archive_done = True
+                break
+            except HTTPException as exc:
+                last_error_detail = str(exc.detail)
+                steps.append(AgentExecutionStep(name="archive_retry", status="error", detail=f"{attempt_name}:{last_error_detail}"))
+
+        if not archive_done:
+            # If page is already archived, treat as success for idempotent delete UX.
+            retrieve = await execute_tool(
+                user_id=user_id,
+                tool_name=_pick_tool(plan, "retrieve_page", "notion_retrieve_page"),
+                payload={"page_id": selected_page_id},
+            )
+            page_data = retrieve.get("data") or {}
+            if page_data.get("archived") is True or page_data.get("in_trash") is True:
+                steps.append(AgentExecutionStep(name="archive_retry", status="success", detail="already_archived"))
+            else:
+                return AgentExecutionResult(
+                    success=False,
+                    summary="페이지 삭제(아카이브) 실행에 실패했습니다.",
+                    user_message=(
+                        "페이지 삭제(아카이브)에 실패했습니다. Notion 페이지 권한/상태를 확인해주세요.\n"
+                        f"- 마지막 오류: {last_error_detail or 'unknown'}"
+                    ),
+                    artifacts={"error_code": "upstream_error"},
+                    steps=steps,
                 )
-                steps.append(AgentExecutionStep(name="archive_retry", status="success", detail="fallback=in_trash"))
-            except HTTPException as retry_exc:
-                try:
-                    # Some workspaces accept archive via block delete path.
-                    await execute_tool(
-                        user_id=user_id,
-                        tool_name=_pick_tool(plan, "delete_block", "notion_delete_block"),
-                        payload={"block_id": selected_page_id},
-                    )
-                    steps.append(
-                        AgentExecutionStep(name="archive_retry", status="success", detail="fallback=delete_block")
-                    )
-                except HTTPException:
-                    # If page is already archived, treat as success for idempotent delete UX.
-                    retrieve = await execute_tool(
-                        user_id=user_id,
-                        tool_name=_pick_tool(plan, "retrieve_page", "notion_retrieve_page"),
-                        payload={"page_id": selected_page_id},
-                    )
-                    page_data = retrieve.get("data") or {}
-                    if page_data.get("archived") is True or page_data.get("in_trash") is True:
-                        steps.append(AgentExecutionStep(name="archive_retry", status="success", detail="already_archived"))
-                    else:
-                        raise retry_exc
         steps.append(AgentExecutionStep(name="archive_page", status="success", detail=f"페이지 아카이브: {selected_page['title']}"))
         return AgentExecutionResult(
             success=True,
