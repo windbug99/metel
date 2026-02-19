@@ -294,7 +294,7 @@ def _get_connected_services_for_user(user_id: str) -> list[str]:
     return list(dict.fromkeys(services))
 
 
-def _agent_error_guide(error_code: str | None) -> str:
+def _agent_error_guide(error_code: str | None, verification_reason: str | None = None) -> str:
     if not error_code:
         return ""
 
@@ -307,11 +307,43 @@ def _agent_error_guide(error_code: str | None) -> str:
         "not_found": "요청한 페이지 또는 데이터를 찾지 못했습니다. 제목/ID를 다시 확인해주세요.",
         "upstream_error": "Notion 응답 처리에 실패했습니다. 잠시 후 다시 시도해주세요.",
         "execution_error": "실행 중 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+        "verification_failed": "자율 실행 결과가 요청 조건을 충족하지 못했습니다. 더 구체적으로 다시 요청해주세요.",
     }
     hint = guides.get(error_code)
+    if error_code == "verification_failed" and verification_reason:
+        verification_hints = {
+            "move_requires_update_page": "이동 요청이지만 실제 페이지 이동(update_page)이 수행되지 않았습니다.",
+            "append_requires_append_block_children": "추가 요청이지만 실제 본문 추가(append_block_children)가 수행되지 않았습니다.",
+            "rename_requires_update_page": "제목 변경 요청이지만 실제 페이지 업데이트가 수행되지 않았습니다.",
+            "archive_requires_archive_tool": "삭제/아카이브 요청이지만 아카이브 도구 호출이 수행되지 않았습니다.",
+            "lookup_requires_tool_call": "조회 요청이지만 실제 조회 도구 호출이 수행되지 않았습니다.",
+            "creation_requires_artifact_reference": "생성 요청이지만 생성 결과(id/url) 확인이 되지 않았습니다.",
+            "mutation_requires_mutation_tool": "변경 요청이지만 변경 도구 호출이 수행되지 않았습니다.",
+            "empty_final_response": "최종 응답이 비어 있습니다.",
+        }
+        detail_hint = verification_hints.get(verification_reason)
+        if detail_hint:
+            hint = f"{hint}\n  세부: {detail_hint}"
     if not hint:
         return ""
     return f"\n\n[오류 가이드]\n- 코드: {error_code}\n- 안내: {hint}"
+
+
+def _autonomous_fallback_hint(reason: str | None) -> str:
+    if not reason:
+        return ""
+    guides = {
+        "turn_limit": "자율 루프 turn 한도에 도달했습니다. 요청 범위를 더 좁혀서 다시 시도해주세요.",
+        "tool_call_limit": "자율 루프 도구 호출 한도에 도달했습니다. 대상 페이지/개수를 명시해보세요.",
+        "timeout": "자율 실행 시간 제한에 도달했습니다. 더 짧은 요청으로 재시도해주세요.",
+        "replan_limit": "재계획 한도를 초과했습니다. 요청을 두 단계로 나눠서 시도해주세요.",
+        "verification_failed": "실행은 되었지만 요청 조건 충족 검증에 실패했습니다. 결과 조건을 더 구체화해주세요.",
+        "move_requires_update_page": "이동 요청의 핵심 단계(update_page)가 실행되지 않았습니다. 원본/상위 페이지를 명확히 지정해주세요.",
+        "append_requires_append_block_children": "추가 요청의 핵심 단계(append_block_children)가 실행되지 않았습니다. 대상 페이지 제목을 명시해주세요.",
+        "rename_requires_update_page": "제목 변경의 핵심 단계(update_page)가 실행되지 않았습니다. 기존/새 제목을 따옴표로 명시해주세요.",
+        "archive_requires_archive_tool": "삭제/아카이브 도구 호출이 누락되었습니다. 페이지 삭제 요청임을 명시해주세요.",
+    }
+    return guides.get(reason, "")
 
 
 def _map_natural_text_to_command(text: str) -> tuple[str, str]:
@@ -651,6 +683,7 @@ async def telegram_webhook(
             execution_error_code = None
             execution_mode = "rule"
             autonomous_fallback_reason = None
+            verification_reason = None
             llm_provider = None
             llm_model = None
             for note in analysis.plan.notes:
@@ -667,13 +700,26 @@ async def telegram_webhook(
                 )
                 execution_message = analysis.execution.user_message
                 execution_error_code = analysis.execution.artifacts.get("error_code")
+                verification_reason = analysis.execution.artifacts.get("verification_reason")
+                if not verification_reason:
+                    for step in analysis.execution.steps:
+                        if step.name.endswith("_verify") and step.status == "error":
+                            verification_reason = step.detail
+                            break
                 if analysis.execution.artifacts.get("autonomous") == "true":
                     execution_mode = "autonomous"
+                if execution_error_code == "verification_failed" and verification_reason:
+                    autonomous_fallback_reason = verification_reason
+                if not autonomous_fallback_reason and execution_error_code:
+                    autonomous_fallback_reason = execution_error_code
                 if execution_error_code:
-                    execution_message += _agent_error_guide(execution_error_code)
+                    execution_message += _agent_error_guide(execution_error_code, verification_reason)
             mode_extra = ""
             if execution_mode == "rule" and autonomous_fallback_reason:
+                hint = _autonomous_fallback_hint(autonomous_fallback_reason)
                 mode_extra = f"\n- autonomous_fallback_reason: {autonomous_fallback_reason}"
+                if hint:
+                    mode_extra += f"\n- fallback_hint: {hint}"
 
             _record_command_log(
                 user_id=user_id,

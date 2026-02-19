@@ -77,6 +77,10 @@
   - `autonomous.py`에서 요청 의도 기반 도구 우선순위 정렬 적용
   - 자율 루프 도구 후보를 최대 8개로 축소(Planner가 선택한 도구 우선 고정)
   - 자율 액션 프롬프트에 `workflow_steps` 주입 및 "필요 tool_call 완료 전 final 금지" 원칙 추가
+- 자율 실행 정책 강화(2026-02-19):
+  - `loop.py`에서 **plan_source와 무관하게** `LLM_AUTONOMOUS_ENABLED=true`이면 자율 루프를 우선 실행
+  - 즉, `rule planner`로 계획이 만들어진 경우에도 자율 실행을 먼저 시도하고 실패 시에만 rule executor로 fallback
+  - 관련 단위 테스트 추가: `test_run_agent_analysis_prefers_autonomous_even_with_rule_plan`
 - Planner-Execution 정합성 보강(2026-02-19):
   - `loop.py`에서 LLM planner 결과의 필수 도구 누락을 사전 검증
   - 삭제/데이터소스/추가/생성/요약/조회 의도별 최소 도구 조건 검사
@@ -85,6 +89,10 @@
   - 대시보드 명령 로그 영역에 Agent 실행 지표 카드 추가
   - `execution_mode(auto/rule)`, `plan_source(llm/rule)`, `success/error`, `fallback 상위 사유`를 시각화
   - fallback 원인(top 3) 기반으로 다음 프롬프트/도구 정책 튜닝 근거 확보
+- 텔레그램 오류/폴백 가이드 강화(2026-02-19):
+  - `verification_failed`에 대해 세부 원인(`move_requires_update_page` 등)을 사용자 메시지에 노출
+  - `autonomous_fallback_reason`별 `fallback_hint`를 응답에 추가해 재시도 방법 안내
+  - command log에는 세부 사유를 `autonomous_fallback_reason` 필드로 일관 기록
 - 삭제/생성 품질 보강:
   - 삭제 의도 판별 정규식 개선(예: "삭제 테스트 페이지"를 삭제 요청으로 오인하지 않음)
   - 다중 제목 지정 요약 생성 지원(예: `"더 코어 3", "사이먼 블로그"` 지정 조회)

@@ -160,7 +160,7 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     autonomous_strict = bool(getattr(settings, "llm_autonomous_strict", False))
     autonomous_retry_once = bool(getattr(settings, "llm_autonomous_limit_retry_once", True))
 
-    if autonomous_enabled and plan_source == "llm":
+    if autonomous_enabled:
         autonomous = await run_autonomous_loop(user_id=user_id, plan=plan)
         if autonomous.success:
             execution = autonomous

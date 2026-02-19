@@ -150,6 +150,14 @@ def _verify_completion(plan: AgentPlan, history: list[dict[str, Any]], final_res
     ]
     if _plan_needs_lookup(plan) and not tool_success_names:
         return False, "lookup_requires_tool_call"
+    if _plan_needs_move(plan) and not _has_successful_tool(history, "update_page"):
+        return False, "move_requires_update_page"
+    if _plan_needs_append(plan) and not _has_successful_tool(history, "append_block_children"):
+        return False, "append_requires_append_block_children"
+    if _plan_needs_rename(plan) and not _has_successful_tool(history, "update_page"):
+        return False, "rename_requires_update_page"
+    if _plan_needs_archive(plan) and not _has_successful_tool(history, "update_page", "delete_block", "archive"):
+        return False, "archive_requires_archive_tool"
     if _plan_needs_creation(plan) and not any(
         any(token in name for token in ("create", "append", "update", "delete", "archive"))
         for name in tool_success_names
@@ -160,6 +168,38 @@ def _verify_completion(plan: AgentPlan, history: list[dict[str, Any]], final_res
     if not final_response.strip():
         return False, "empty_final_response"
     return True, "ok"
+
+
+def _has_successful_tool(history: list[dict[str, Any]], *tokens: str) -> bool:
+    for item in history:
+        if item.get("action") != "tool_call" or item.get("status") != "success":
+            continue
+        name = str(item.get("tool_name", ""))
+        if any(token in name for token in tokens):
+            return True
+    return False
+
+
+def _plan_needs_move(plan: AgentPlan) -> bool:
+    text = plan.user_text
+    return any(token in text for token in ("이동", "옮겨", "옮기", "이동시키")) and any(
+        token in text for token in ("하위", "아래", "밑")
+    )
+
+
+def _plan_needs_append(plan: AgentPlan) -> bool:
+    text = plan.user_text
+    return "추가" in text and any(token in text for token in ("페이지에", "문서에"))
+
+
+def _plan_needs_rename(plan: AgentPlan) -> bool:
+    text = plan.user_text
+    return "제목" in text and any(token in text for token in ("변경", "수정", "바꿔", "바꾸", "rename"))
+
+
+def _plan_needs_archive(plan: AgentPlan) -> bool:
+    text = plan.user_text.lower()
+    return any(token in text for token in ("삭제", "지워", "아카이브", "archive"))
 
 
 async def _request_autonomous_action(
@@ -411,7 +451,11 @@ async def run_autonomous_loop(
                     success=False,
                     summary="자율 루프 완료 검증 실패",
                     user_message="요청 처리 결과를 검증하지 못했습니다. 요청을 조금 더 구체적으로 입력해주세요.",
-                    artifacts={"error_code": "verification_failed", "autonomous": "true"},
+                    artifacts={
+                        "error_code": "verification_failed",
+                        "verification_reason": verify_reason,
+                        "autonomous": "true",
+                    },
                     steps=steps,
                 )
             steps.append(AgentExecutionStep(name=f"turn_{turn}_verify", status="success", detail="completion_verified"))

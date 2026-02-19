@@ -94,6 +94,43 @@ def test_run_agent_analysis_prefers_autonomous_when_enabled(monkeypatch):
     assert any(item == "execution=autonomous" for item in result.plan.notes)
 
 
+def test_run_agent_analysis_prefers_autonomous_even_with_rule_plan(monkeypatch):
+    rule_plan = _sample_plan()
+
+    class _Settings:
+        llm_autonomous_enabled = True
+
+    async def _fake_try_build(**kwargs):
+        return None, "llm_planner_disabled"
+
+    def _fake_build_plan(user_text: str, connected_services: list[str]):
+        return rule_plan
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan):
+        assert plan is rule_plan
+        return AgentExecutionResult(
+            success=True,
+            user_message="auto-ok",
+            summary="auto-done",
+            artifacts={"autonomous": "true"},
+        )
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        raise AssertionError("executor should not be called when autonomous succeeds")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.build_agent_plan", _fake_build_plan)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("text", ["notion"], "user-1"))
+    assert result.ok is True
+    assert result.plan_source == "rule"
+    assert result.result_summary == "auto-done"
+    assert any(item == "execution=autonomous" for item in result.plan.notes)
+
+
 def test_run_agent_analysis_autonomous_fallback_to_executor(monkeypatch):
     llm_plan = _sample_plan()
 

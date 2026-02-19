@@ -135,3 +135,60 @@ def test_autonomous_creation_passes_with_artifact_reference(monkeypatch):
 
     assert result.success is True
     assert result.artifacts.get("autonomous") == "true"
+
+
+def test_autonomous_move_requires_update_page_tool(monkeypatch):
+    sequence = iter(
+        [
+            ({"action": "tool_call", "tool_name": "notion_search", "tool_input": {"query": "0219"}}, None),
+            ({"action": "final", "final_response": "페이지 이동을 완료했습니다."}, None),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        assert tool_name == "notion_search"
+        return {"ok": True, "data": {"results": [{"id": "p1"}]}}
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+
+    result = asyncio.run(run_autonomous_loop("user-1", _plan("0219 페이지를 Metel test page 하위로 이동시켜줘")))
+
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "verification_failed"
+    assert any(step.name.endswith("_verify") and step.detail == "move_requires_update_page" for step in result.steps)
+
+
+def test_autonomous_append_requires_append_block_children_tool(monkeypatch):
+    sequence = iter(
+        [
+            ({"action": "tool_call", "tool_name": "notion_search", "tool_input": {"query": "0219"}}, None),
+            ({"action": "final", "final_response": "페이지에 내용을 추가했습니다."}, None),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        assert tool_name == "notion_search"
+        return {"ok": True, "data": {"results": [{"id": "p1"}]}}
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+
+    result = asyncio.run(run_autonomous_loop("user-1", _plan("0219 페이지에 액션 아이템 추가해줘")))
+
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "verification_failed"
+    assert any(
+        step.name.endswith("_verify") and step.detail == "append_requires_append_block_children"
+        for step in result.steps
+    )
