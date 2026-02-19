@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from html import unescape
 from datetime import datetime, timezone
 
 import httpx
@@ -311,18 +312,49 @@ def _extract_requested_page_titles(user_text: str) -> list[str]:
 
 
 def _extract_append_target_and_content(user_text: str) -> tuple[str | None, str | None]:
-    pattern = r"(?i)(?:노션에서\s*)?(?P<title>.+?)\s*(?:페이지)?에\s*(?P<content>.+?)\s*(?:을|를)?\s*추가(?:해줘|해|해줘요)?$"
-    match = re.search(pattern, user_text.strip())
-    if not match:
-        return None, None
-    title = match.group("title").strip(" \"'`")
-    title = re.sub(r"^(노션|notion)\s*", "", title, flags=re.IGNORECASE).strip()
-    content = match.group("content").strip(" \"'`")
-    if content.endswith(("을", "를")) and len(content) > 1:
-        content = content[:-1].strip()
-    if not title or not content:
-        return None, None
-    return title, content
+    text = re.sub(r"\s+", " ", (user_text or "").strip())
+    text_for_parse = re.sub(r"https?://\S+", "", text).strip()
+    match = re.search(
+        r'(?is)(?:노션에서\s*)?(?P<title>.+?)\s*(?:페이지)?에\s*(?P<content>.+?)\s*(?:을|를)?\s*추가(?:해줘|해|해줘요|해주세요|하세요)?$',
+        text_for_parse,
+    )
+    if match:
+        title = re.sub(r"^(노션|notion)\s*", "", match.group("title").strip(" \"'`"), flags=re.IGNORECASE).strip()
+        content = match.group("content").strip(" \"'`")
+        if content.endswith(("을", "를")) and len(content) > 1:
+            content = content[:-1].strip()
+        if title and content:
+            return title, content
+
+    # content-first form:
+    # "다음 기사 내용을 180자로 요약해서 0219 페이지에 추가해줘"
+    match = re.search(
+        r'(?is)(?:노션에서\s*)?(?P<content>.+?)\s*(?P<title>[^ ]+)\s*(?:페이지)?에\s*(?:을|를)?\s*추가(?:해줘|해|해줘요|해주세요|하세요)?$',
+        text_for_parse,
+    )
+    if match:
+        title = re.sub(r"^(노션|notion)\s*", "", match.group("title").strip(" \"'`"), flags=re.IGNORECASE).strip()
+        content = match.group("content").strip(" \"'`")
+        if title and content:
+            return title, content
+    return None, None
+
+
+def _extract_move_request(user_text: str) -> tuple[str | None, str | None]:
+    text = re.sub(r"\s+", " ", (user_text or "").strip())
+    patterns = [
+        r'(?is)(?:노션에서\s*)?(?P<source>.+?)\s*(?:페이지)?를\s*(?P<parent>.+?)\s*(?:페이지)?\s*(?:하위|아래|밑)\s*로\s*(?:이동|옮겨|옮기)(?:해줘|해주세요|하세요)?',
+        r'(?is)(?:노션에서\s*)?(?P<source>.+?)\s*(?:페이지)?를\s*(?P<parent>.+?)\s*(?:페이지)?\s*(?:하위|아래|밑)에\s*(?:이동|옮겨|옮기)(?:해줘|해주세요|하세요)?',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        source = re.sub(r"^(노션|notion)\s*", "", match.group("source").strip(" \"'`"), flags=re.IGNORECASE).strip()
+        parent = re.sub(r"^(노션|notion)\s*", "", match.group("parent").strip(" \"'`"), flags=re.IGNORECASE).strip()
+        if source and parent:
+            return source, parent
+    return None, None
 
 
 def _extract_page_rename_request(user_text: str) -> tuple[str | None, str | None]:
@@ -398,6 +430,37 @@ def _requires_page_content_read(plan: AgentPlan) -> bool:
 def _requires_append_to_page(plan: AgentPlan) -> bool:
     text = plan.user_text
     return "추가" in text and any(token in text for token in ("페이지에", "에 "))
+
+
+def _requires_move_page(plan: AgentPlan) -> bool:
+    text = plan.user_text
+    if not any(token in text for token in ("페이지", "문서")):
+        return False
+    return any(token in text for token in ("하위로 이동", "아래로 이동", "밑으로 이동", "옮겨", "이동시키"))
+
+
+def _extract_summary_char_limit(user_text: str) -> int | None:
+    match = re.search(r"(\d{2,4})\s*자", user_text)
+    if not match:
+        return None
+    return max(50, min(1000, int(match.group(1))))
+
+
+async def _fetch_url_plain_text(url: str) -> str | None:
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            response = await client.get(url, headers={"User-Agent": "metel-bot/1.0"})
+        if response.status_code >= 400:
+            return None
+        html = response.text
+        html = re.sub(r"(?is)<script.*?>.*?</script>", " ", html)
+        html = re.sub(r"(?is)<style.*?>.*?</style>", " ", html)
+        text = re.sub(r"(?is)<[^>]+>", " ", html)
+        text = unescape(text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:12000] if text else None
+    except Exception:
+        return None
 
 
 def _requires_page_title_update(plan: AgentPlan) -> bool:
@@ -765,6 +828,122 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             steps=steps,
         )
 
+    if _requires_move_page(plan):
+        source_title, parent_title = _extract_move_request(plan.user_text)
+        if not source_title or not parent_title:
+            return AgentExecutionResult(
+                success=False,
+                summary="이동 요청 파싱에 실패했습니다.",
+                user_message=(
+                    "이동할 원본/상위 페이지 제목을 이해하지 못했습니다.\n"
+                    "예: '0219 페이지를 Metel test page 페이지 하위로 이동시키세요'"
+                ),
+                artifacts={"error_code": "validation_error"},
+                steps=steps + [AgentExecutionStep(name="parse_move", status="error", detail="title_missing")],
+            )
+
+        def _select_best(pages: list[dict], target: str) -> dict | None:
+            if not pages:
+                return None
+            normalized_target = _normalize_title(target)
+            return next(
+                (page for page in pages if _normalize_title(page["title"]) == normalized_target),
+                None,
+            ) or next(
+                (page for page in pages if normalized_target in _normalize_title(page["title"])),
+                pages[0],
+            )
+
+        source_search = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "search", "notion_search"),
+            payload={
+                "query": source_title,
+                "page_size": 10,
+                "filter": {"property": "object", "value": "page"},
+                "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+            },
+        )
+        source_pages = [
+            {"id": page.get("id"), "title": _extract_page_title(page), "url": page.get("url")}
+            for page in (source_search.get("data") or {}).get("results", [])
+        ]
+        steps.append(
+            AgentExecutionStep(
+                name="search_source_page",
+                status="success",
+                detail=f"원본 페이지 조회 '{source_title}' 결과 {len(source_pages)}건",
+            )
+        )
+        source_page = _select_best(source_pages, source_title)
+        if not source_page:
+            return AgentExecutionResult(
+                success=False,
+                summary="이동 원본 페이지를 찾지 못했습니다.",
+                user_message=f"'{source_title}' 페이지를 찾지 못했습니다.",
+                artifacts={"error_code": "not_found"},
+                steps=steps,
+            )
+
+        parent_search = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "search", "notion_search"),
+            payload={
+                "query": parent_title,
+                "page_size": 10,
+                "filter": {"property": "object", "value": "page"},
+                "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+            },
+        )
+        parent_pages = [
+            {"id": page.get("id"), "title": _extract_page_title(page), "url": page.get("url")}
+            for page in (parent_search.get("data") or {}).get("results", [])
+        ]
+        steps.append(
+            AgentExecutionStep(
+                name="search_parent_page",
+                status="success",
+                detail=f"상위 페이지 조회 '{parent_title}' 결과 {len(parent_pages)}건",
+            )
+        )
+        parent_page = _select_best(parent_pages, parent_title)
+        if not parent_page:
+            return AgentExecutionResult(
+                success=False,
+                summary="이동 대상 상위 페이지를 찾지 못했습니다.",
+                user_message=f"'{parent_title}' 상위 페이지를 찾지 못했습니다.",
+                artifacts={"error_code": "not_found"},
+                steps=steps,
+            )
+
+        await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "update_page", "notion_update_page"),
+            payload={
+                "page_id": source_page["id"],
+                "parent": {"page_id": parent_page["id"]},
+            },
+        )
+        steps.append(
+            AgentExecutionStep(
+                name="move_page",
+                status="success",
+                detail=f"{source_page['title']} -> {parent_page['title']}",
+            )
+        )
+        return AgentExecutionResult(
+            success=True,
+            summary="페이지 이동을 완료했습니다.",
+            user_message=(
+                "요청하신 페이지를 하위로 이동했습니다.\n"
+                f"- 원본 페이지: {source_page['title']}\n"
+                f"- 상위 페이지: {parent_page['title']}\n"
+                f"- 원본 링크: {source_page['url']}\n"
+                f"- 상위 링크: {parent_page['url']}"
+            ),
+            steps=steps,
+        )
+
     if _requires_append_to_page(plan):
         target_title, append_content = _extract_append_target_and_content(plan.user_text)
         if not target_title:
@@ -787,6 +966,32 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
                 ),
                 steps=steps + [AgentExecutionStep(name="extract_content", status="error", detail="content_missing")],
             )
+
+        # If user includes external URL + summary intent, summarize URL text first then append.
+        urls = re.findall(r"https?://\S+", plan.user_text)
+        if urls and "요약" in plan.user_text:
+            source_text = await _fetch_url_plain_text(urls[0])
+            if source_text:
+                summary_text, summarize_mode = await _summarize_text_with_llm(source_text, plan.user_text)
+                char_limit = _extract_summary_char_limit(plan.user_text)
+                if char_limit:
+                    summary_text = re.sub(r"\s+", " ", summary_text).strip()[:char_limit].rstrip()
+                append_content = summary_text
+                steps.append(
+                    AgentExecutionStep(
+                        name="summarize_external",
+                        status="success",
+                        detail=f"url={urls[0]} mode={summarize_mode}",
+                    )
+                )
+            else:
+                steps.append(
+                    AgentExecutionStep(
+                        name="summarize_external",
+                        status="error",
+                        detail="url_fetch_failed",
+                    )
+                )
 
         search_result = await execute_tool(
             user_id=user_id,

@@ -556,3 +556,108 @@ def test_execute_notion_create_child_page_under_parent(monkeypatch):
     assert "페이지 생성" in result.summary
     assert "나의 일기" in result.user_message
     assert [item[0] for item in calls] == ["notion_search", "notion_create_page"]
+
+
+def test_execute_notion_move_page_under_parent(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "notion_search":
+            if payload.get("query") == "0219":
+                return {
+                    "ok": True,
+                    "data": {
+                        "results": [
+                            {
+                                "id": "30c50e84a3bf81d695aac8c93e049f66",
+                                "url": "https://notion.so/0219",
+                                "properties": {"title": {"type": "title", "title": [{"plain_text": "0219"}]}},
+                            }
+                        ]
+                    },
+                }
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {
+                            "id": "30b50e84a3bf80b383f2df0f6ed47067",
+                            "url": "https://notion.so/metel-test-page",
+                            "properties": {"title": {"type": "title", "title": [{"plain_text": "Metel test page"}]}},
+                        }
+                    ]
+                },
+            }
+        if tool_name == "notion_update_page":
+            assert payload.get("page_id") == "30c50e84a3bf81d695aac8c93e049f66"
+            assert payload.get("parent", {}).get("page_id") == "30b50e84a3bf80b383f2df0f6ed47067"
+            return {"ok": True, "data": {"id": payload["page_id"]}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = _plan(
+        "0219 페이지를 Metel test page 페이지 하위로 이동시키세요",
+        ["notion_search", "notion_update_page"],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+
+    assert result.success is True
+    assert "페이지 이동" in result.summary
+    assert [item[0] for item in calls] == ["notion_search", "notion_search", "notion_update_page"]
+
+
+def test_execute_notion_append_with_url_summary(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "notion_search":
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {
+                            "id": "30c50e84a3bf81d695aac8c93e049f66",
+                            "url": "https://notion.so/0219",
+                            "properties": {"title": {"type": "title", "title": [{"plain_text": "0219"}]}},
+                        }
+                    ]
+                },
+            }
+        if tool_name == "notion_retrieve_page":
+            return {"ok": True, "data": {"id": "30c50e84a3bf81d695aac8c93e049f66"}}
+        if tool_name == "notion_append_block_children":
+            children = payload.get("children") or []
+            assert children
+            text = (
+                children[0]
+                .get("paragraph", {})
+                .get("rich_text", [{}])[0]
+                .get("text", {})
+                .get("content", "")
+            )
+            assert text.startswith("요약문")
+            assert len(text) <= 180
+            return {"ok": True, "data": {"results": []}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    async def _fake_fetch_url_text(url: str):
+        return "기사 원문입니다. " * 100
+
+    async def _fake_summarize_text_with_llm(text: str, user_text: str):
+        return ("요약문 " + ("A" * 400), "llm:openai:gpt-4o-mini")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._fetch_url_plain_text", _fake_fetch_url_text)
+    monkeypatch.setattr("agent.executor._summarize_text_with_llm", _fake_summarize_text_with_llm)
+
+    plan = _plan(
+        "다음 기사 내용을 180자로 요약해서 0219 페이지에 추가해줘 https://example.com/news",
+        ["notion_search", "notion_retrieve_page", "notion_append_block_children"],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+
+    assert result.success is True
+    assert "내용을 추가" in result.summary
