@@ -35,9 +35,13 @@ type TelegramConnectInfo = {
   expiresInSeconds: number;
 } | null;
 
-type OAuthProviderRow = {
-  provider: string | null;
-};
+type AppleMusicStatus = {
+  connected: boolean;
+  integration?: {
+    workspace_id: string | null;
+    updated_at: string | null;
+  } | null;
+} | null;
 
 type CommandLog = {
   id: number;
@@ -80,10 +84,10 @@ export default function DashboardPage() {
   const [telegramConnecting, setTelegramConnecting] = useState(false);
   const [telegramConnectInfo, setTelegramConnectInfo] = useState<TelegramConnectInfo>(null);
   const [telegramPolling, setTelegramPolling] = useState(false);
-  const [spotifyConnected, setSpotifyConnected] = useState(false);
-  const [spotifyStatusError, setSpotifyStatusError] = useState<string | null>(null);
-  const [spotifyConnecting, setSpotifyConnecting] = useState(false);
-  const [spotifyDisconnecting, setSpotifyDisconnecting] = useState(false);
+  const [appleMusicStatus, setAppleMusicStatus] = useState<AppleMusicStatus>(null);
+  const [appleMusicStatusError, setAppleMusicStatusError] = useState<string | null>(null);
+  const [appleMusicConnecting, setAppleMusicConnecting] = useState(false);
+  const [appleMusicDisconnecting, setAppleMusicDisconnecting] = useState(false);
   const [commandLogs, setCommandLogs] = useState<CommandLog[]>([]);
   const [commandLogsLoading, setCommandLogsLoading] = useState(false);
   const [commandLogsError, setCommandLogsError] = useState<string | null>(null);
@@ -164,6 +168,25 @@ export default function DashboardPage() {
     }
   }, [apiBaseUrl, getAuthHeaders]);
 
+  const fetchAppleMusicStatus = useCallback(async () => {
+    if (!apiBaseUrl) {
+      return;
+    }
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/oauth/apple-music/status`, { headers });
+      if (response.ok) {
+        const data: AppleMusicStatus = await response.json();
+        setAppleMusicStatus(data);
+        setAppleMusicStatusError(null);
+      } else {
+        setAppleMusicStatusError("Failed to fetch Apple Music status.");
+      }
+    } catch {
+      setAppleMusicStatusError("Network error while fetching Apple Music status.");
+    }
+  }, [apiBaseUrl, getAuthHeaders]);
+
   const startTelegramStatusPolling = useCallback(() => {
     if (telegramPollIntervalRef.current) {
       window.clearInterval(telegramPollIntervalRef.current);
@@ -207,26 +230,6 @@ export default function DashboardPage() {
       setCommandLogsError("Network error while fetching command logs.");
     } finally {
       setCommandLogsLoading(false);
-    }
-  }, []);
-
-  const fetchOAuthProviders = useCallback(async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("oauth_tokens")
-        .select("provider")
-        .eq("user_id", userId);
-      if (error) {
-        setSpotifyStatusError("Failed to fetch Spotify status.");
-        return;
-      }
-      const providers = new Set(
-        (data as OAuthProviderRow[] | null)?.map((row) => (row.provider || "").toLowerCase()) ?? []
-      );
-      setSpotifyConnected(providers.has("spotify"));
-      setSpotifyStatusError(null);
-    } catch {
-      setSpotifyStatusError("Network error while fetching Spotify status.");
     }
   }, []);
 
@@ -357,7 +360,7 @@ export default function DashboardPage() {
 
         await fetchNotionStatus();
         await fetchTelegramStatus();
-        await fetchOAuthProviders(user.id);
+        await fetchAppleMusicStatus();
         await fetchCommandLogs();
 
         if (!mounted) {
@@ -377,7 +380,7 @@ export default function DashboardPage() {
     return () => {
       mounted = false;
     };
-  }, [router, fetchNotionStatus, fetchTelegramStatus, fetchOAuthProviders, fetchCommandLogs]);
+  }, [router, fetchNotionStatus, fetchTelegramStatus, fetchAppleMusicStatus, fetchCommandLogs]);
 
   const handleDisconnectNotion = async () => {
     if (!apiBaseUrl || !profile?.id || disconnecting) {
@@ -500,64 +503,109 @@ export default function DashboardPage() {
     }
   };
 
-  const handleConnectSpotify = async () => {
-    if (!apiBaseUrl || !profile?.id || spotifyConnecting) {
+  const ensureMusicKitScriptLoaded = async (): Promise<void> => {
+    if ((window as { MusicKit?: unknown }).MusicKit) {
       return;
     }
-    setSpotifyConnecting(true);
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://js-cdn.music.apple.com/musickit/v3/musickit.js";
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("Failed to load MusicKit script."));
+      document.head.appendChild(script);
+    });
+  };
+
+  const authorizeAppleMusic = async (developerToken: string, appName: string): Promise<string> => {
+    await ensureMusicKitScriptLoaded();
+    const mkWindow = window as {
+      MusicKit?: {
+        configure: (config: { developerToken: string; app: { name: string; build: string } }) => void;
+        getInstance: () => { authorize: () => Promise<string> };
+      };
+    };
+    if (!mkWindow.MusicKit) {
+      throw new Error("MusicKit SDK not available.");
+    }
+    mkWindow.MusicKit.configure({
+      developerToken,
+      app: {
+        name: appName || "metel",
+        build: "1.0.0",
+      },
+    });
+    const instance = mkWindow.MusicKit.getInstance();
+    return await instance.authorize();
+  };
+
+  const handleConnectAppleMusic = async () => {
+    if (!apiBaseUrl || !profile?.id || appleMusicConnecting) {
+      return;
+    }
+    setAppleMusicConnecting(true);
     try {
       const headers = await getAuthHeaders();
-      const response = await fetch(`${apiBaseUrl}/api/oauth/spotify/start`, {
+      const startResponse = await fetch(`${apiBaseUrl}/api/oauth/apple-music/start`, {
         method: "POST",
         headers,
       });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload?.auth_url) {
-        setSpotifyStatusError("Spotify OAuth flow is not configured yet.");
+      const startPayload = await startResponse.json().catch(() => null);
+      if (!startResponse.ok || !startPayload?.developer_token) {
+        setAppleMusicStatusError("Apple Music 연결 시작에 실패했습니다.");
         return;
       }
-      window.location.href = payload.auth_url;
+      const musicUserToken = await authorizeAppleMusic(
+        String(startPayload.developer_token),
+        String(startPayload.app_name || "metel")
+      );
+      if (!musicUserToken) {
+        setAppleMusicStatusError("Apple Music 사용자 토큰을 가져오지 못했습니다.");
+        return;
+      }
+      const connectResponse = await fetch(`${apiBaseUrl}/api/oauth/apple-music/connect`, {
+        method: "POST",
+        headers: {
+          ...headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ music_user_token: musicUserToken }),
+      });
+      const connectPayload = await connectResponse.json().catch(() => null);
+      if (!connectResponse.ok || !connectPayload?.connected) {
+        setAppleMusicStatusError("Apple Music 계정 연동에 실패했습니다.");
+        return;
+      }
+      await fetchAppleMusicStatus();
+      setAppleMusicStatusError(null);
     } catch {
-      setSpotifyStatusError("Network error while starting Spotify connection.");
+      setAppleMusicStatusError("Apple Music 연결 중 오류가 발생했습니다.");
     } finally {
-      setSpotifyConnecting(false);
+      setAppleMusicConnecting(false);
     }
   };
 
-  const handleDisconnectSpotify = async () => {
-    if (!profile?.id || spotifyDisconnecting) {
+  const handleDisconnectAppleMusic = async () => {
+    if (!apiBaseUrl || !profile?.id || appleMusicDisconnecting) {
       return;
     }
-    setSpotifyDisconnecting(true);
+    setAppleMusicDisconnecting(true);
     try {
-      if (apiBaseUrl) {
-        const headers = await getAuthHeaders();
-        const response = await fetch(`${apiBaseUrl}/api/oauth/spotify/disconnect`, {
-          method: "DELETE",
-          headers,
-        });
-        if (response.ok) {
-          setSpotifyConnected(false);
-          setSpotifyStatusError(null);
-          return;
-        }
-      }
-
-      const { error } = await supabase
-        .from("oauth_tokens")
-        .delete()
-        .eq("user_id", profile.id)
-        .eq("provider", "spotify");
-      if (error) {
-        setSpotifyStatusError("Failed to disconnect Spotify.");
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/oauth/apple-music/disconnect`, {
+        method: "DELETE",
+        headers,
+      });
+      if (!response.ok) {
+        setAppleMusicStatusError("Failed to disconnect Apple Music.");
         return;
       }
-      setSpotifyConnected(false);
-      setSpotifyStatusError(null);
+      setAppleMusicStatus({ connected: false, integration: null });
+      setAppleMusicStatusError(null);
     } catch {
-      setSpotifyStatusError("Network error while disconnecting Spotify.");
+      setAppleMusicStatusError("Network error while disconnecting Apple Music.");
     } finally {
-      setSpotifyDisconnecting(false);
+      setAppleMusicDisconnecting(false);
     }
   };
 
@@ -742,35 +790,55 @@ export default function DashboardPage() {
             </button>
           </article>
 
-          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4 opacity-60">
+            <div className="flex items-center justify-between">
+              <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
+                <ServiceLogo src="/logos/apple-music.svg" alt="Apple Music" />
+                Apple Music
+              </p>
+              <p className="text-xs text-gray-600">Disabled</p>
+            </div>
+            <p className="mt-2 text-sm text-gray-700">
+              Apple Music integration is disabled (developer membership requirement).
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                if (appleMusicStatus?.connected) {
+                  void handleDisconnectAppleMusic();
+                  return;
+                }
+                void handleConnectAppleMusic();
+              }}
+              disabled
+              className="mt-3 inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+            >
+              Connect
+            </button>
+          </article>
+
+          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4 opacity-60">
             <div className="flex items-center justify-between">
               <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
                 <ServiceLogo src="/logos/spotify.svg" alt="Spotify" />
                 Spotify
               </p>
-              <p className="text-xs text-gray-600">{spotifyConnected ? "Connected" : "Not connected"}</p>
+              <p className="text-xs text-gray-600">Disabled</p>
             </div>
-            <p className="mt-2 text-sm text-gray-700">Music integration for playlist and track actions.</p>
+            <p className="mt-2 text-sm text-gray-700">
+              Spotify integration is disabled due to current API limit.
+            </p>
             <button
               type="button"
-              onClick={() => {
-                if (spotifyConnected) {
-                  void handleDisconnectSpotify();
-                  return;
-                }
-                void handleConnectSpotify();
-              }}
-              disabled={!profile?.id || spotifyConnecting || spotifyDisconnecting}
+              disabled
               className="mt-3 inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
             >
-              {spotifyConnected
-                ? (spotifyDisconnecting ? "Disconnecting..." : "Disconnect")
-                : (spotifyConnecting ? "Connecting..." : "Connect")}
+              Connect
             </button>
           </article>
         </div>
         {notionStatusError ? <p className="mt-3 text-sm text-amber-700">{notionStatusError}</p> : null}
-        {spotifyStatusError ? <p className="mt-3 text-sm text-amber-700">{spotifyStatusError}</p> : null}
+        {appleMusicStatusError ? <p className="mt-3 text-sm text-amber-700">{appleMusicStatusError}</p> : null}
         {!apiBaseUrl || !profile?.id ? (
           <p className="mt-3 text-sm text-amber-700">
             Set NEXT_PUBLIC_API_BASE_URL to enable service connection.

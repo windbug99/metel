@@ -1,0 +1,146 @@
+{
+  "service": "apple_music",
+  "version": "music-api-v1",
+  "base_url": "https://api.music.apple.com",
+  "auth": {
+    "type": "oauth2",
+    "required_scopes": []
+  },
+  "limits": {
+    "timeout_ms": 12000,
+    "max_calls_per_run": 8
+  },
+  "tools": [
+    {
+      "tool_name": "apple_music_get_storefront",
+      "description": "Get current Apple Music user storefront",
+      "method": "GET",
+      "path": "/v1/me/storefront",
+      "adapter_function": "apple_music_get_storefront",
+      "required_scopes": [],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "apple_music_get_recently_played",
+      "description": "Get the user's recently played tracks on Apple Music",
+      "method": "GET",
+      "path": "/v1/me/recent/played/tracks",
+      "adapter_function": "apple_music_get_recently_played",
+      "required_scopes": [],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer", "minimum": 1, "maximum": 10 }
+        }
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "apple_music_get_library_playlists",
+      "description": "List Apple Music library playlists for the current user",
+      "method": "GET",
+      "path": "/v1/me/library/playlists",
+      "adapter_function": "apple_music_get_library_playlists",
+      "required_scopes": [],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "offset": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "apple_music_search_catalog",
+      "description": "Search songs, artists, playlists in Apple Music catalog by storefront",
+      "method": "GET",
+      "path": "/v1/catalog/{storefront}/search",
+      "adapter_function": "apple_music_search_catalog",
+      "required_scopes": [],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "storefront": { "type": "string" },
+          "term": { "type": "string" },
+          "types": { "type": "string" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 25 }
+        },
+        "required": ["storefront", "term", "types"]
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "404": "NOT_FOUND",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "apple_music_get_catalog_song",
+      "description": "Get a catalog song by storefront and song id",
+      "method": "GET",
+      "path": "/v1/catalog/{storefront}/songs/{song_id}",
+      "adapter_function": "apple_music_get_catalog_song",
+      "required_scopes": [],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "storefront": { "type": "string" },
+          "song_id": { "type": "string" }
+        },
+        "required": ["storefront", "song_id"]
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "404": "NOT_FOUND",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "apple_music_get_catalog_artist",
+      "description": "Get a catalog artist by storefront and artist id",
+      "method": "GET",
+      "path": "/v1/catalog/{storefront}/artists/{artist_id}",
+      "adapter_function": "apple_music_get_catalog_artist",
+      "required_scopes": [],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "storefront": { "type": "string" },
+          "artist_id": { "type": "string" }
+        },
+        "required": ["storefront", "artist_id"]
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "404": "NOT_FOUND",
+        "429": "RATE_LIMITED"
+      }
+    }
+  ]
+}
+

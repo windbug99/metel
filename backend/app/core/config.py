@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     spotify_client_secret: str | None = None
     spotify_redirect_uri: str | None = None
     spotify_state_secret: str | None = None
+    apple_music_team_id: str | None = None
+    apple_music_key_id: str | None = None
+    apple_music_private_key: str | None = None
+    apple_music_app_name: str = "metel"
 
     telegram_bot_token: str | None = None
     telegram_link_secret: str | None = None
