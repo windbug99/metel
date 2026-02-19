@@ -92,7 +92,11 @@
 - 텔레그램 오류/폴백 가이드 강화(2026-02-19):
   - `verification_failed`에 대해 세부 원인(`move_requires_update_page` 등)을 사용자 메시지에 노출
   - `autonomous_fallback_reason`별 `fallback_hint`를 응답에 추가해 재시도 방법 안내
-  - command log에는 세부 사유를 `autonomous_fallback_reason` 필드로 일관 기록
+  - command log에는 세부 사유를 `autonomous_fallback_reason`/`verification_reason` 필드로 일관 기록
+- 자율 재시도 프롬프트 강화(2026-02-19):
+  - `loop.py`에서 자율 1차 실패 원인(`turn_limit` 등)에 따라 재시도 가이드를 생성
+  - 재시도 호출(`run_autonomous_loop`)에 `extra_guidance`를 주입해 동일 실패 반복 가능성을 감소
+  - 관련 테스트: `test_run_agent_analysis_autonomous_retry_then_success`에서 guidance 전달 검증
 - 삭제/생성 품질 보강:
   - 삭제 의도 판별 정규식 개선(예: "삭제 테스트 페이지"를 삭제 요청으로 오인하지 않음)
   - 다중 제목 지정 요약 생성 지원(예: `"더 코어 3", "사이먼 블로그"` 지정 조회)

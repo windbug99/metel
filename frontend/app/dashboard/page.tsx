@@ -52,6 +52,7 @@ type CommandLog = {
   plan_source: string | null;
   execution_mode: string | null;
   autonomous_fallback_reason: string | null;
+  verification_reason: string | null;
   llm_provider: string | null;
   llm_model: string | null;
   created_at: string;
@@ -180,7 +181,7 @@ export default function DashboardPage() {
       const { data, error } = await supabase
         .from("command_logs")
         .select(
-          "id, channel, command, status, error_code, detail, plan_source, execution_mode, autonomous_fallback_reason, llm_provider, llm_model, created_at"
+          "id, channel, command, status, error_code, detail, plan_source, execution_mode, autonomous_fallback_reason, verification_reason, llm_provider, llm_model, created_at"
         )
         .order("created_at", { ascending: false })
         .limit(20);
@@ -758,6 +759,7 @@ export default function DashboardPage() {
                   <p className="mt-1 text-xs text-gray-600">
                     mode: {log.plan_source || "-"} / {log.execution_mode || "-"}
                     {log.autonomous_fallback_reason ? ` · fallback=${log.autonomous_fallback_reason}` : ""}
+                    {log.verification_reason ? ` · verify=${log.verification_reason}` : ""}
                   </p>
                 ) : null}
                 {(log.llm_provider || log.llm_model) ? (

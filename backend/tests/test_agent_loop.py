@@ -245,6 +245,8 @@ def test_run_agent_analysis_autonomous_retry_then_success(monkeypatch):
                 artifacts={"error_code": "turn_limit"},
             )
         assert kwargs.get("max_turns_override") == 8
+        assert isinstance(kwargs.get("extra_guidance"), str)
+        assert "turn 한도" in kwargs.get("extra_guidance")
         return AgentExecutionResult(
             success=True,
             user_message="auto-retry-ok",

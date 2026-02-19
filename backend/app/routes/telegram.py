@@ -433,6 +433,7 @@ def _record_command_log(
     autonomous_fallback_reason: str | None = None,
     llm_provider: str | None = None,
     llm_model: str | None = None,
+    verification_reason: str | None = None,
 ):
     try:
         settings = get_settings()
@@ -450,6 +451,7 @@ def _record_command_log(
             "autonomous_fallback_reason": autonomous_fallback_reason,
             "llm_provider": llm_provider,
             "llm_model": llm_model,
+            "verification_reason": verification_reason,
         }
         try:
             supabase.table("command_logs").insert(payload).execute()
@@ -465,6 +467,7 @@ def _record_command_log(
                     "autonomous_fallback_reason",
                     "llm_provider",
                     "llm_model",
+                    "verification_reason",
                 )
             ):
                 legacy_payload = {
@@ -686,6 +689,7 @@ async def telegram_webhook(
             verification_reason = None
             llm_provider = None
             llm_model = None
+            verification_reason = None
             for note in analysis.plan.notes:
                 if note.startswith("autonomous_error="):
                     autonomous_fallback_reason = note.split("=", 1)[1]
@@ -733,6 +737,7 @@ async def telegram_webhook(
                 autonomous_fallback_reason=autonomous_fallback_reason,
                 llm_provider=llm_provider,
                 llm_model=llm_model,
+                verification_reason=verification_reason,
             )
 
             await _telegram_api(

@@ -76,6 +76,17 @@ def _parse_data_source_query_state(user_text: str) -> tuple[bool, str]:
     return True, "invalid"
 
 
+def _retry_guidance_for_error(error_code: str) -> str:
+    guides = {
+        "turn_limit": "이전 실행에서 turn 한도에 도달했습니다. 불필요한 조회를 줄이고 핵심 도구만 사용하세요.",
+        "tool_call_limit": "이전 실행에서 도구 호출 한도에 도달했습니다. 반복 호출 없이 목적 작업을 우선 수행하세요.",
+        "timeout": "이전 실행에서 시간 제한을 초과했습니다. 단계 수를 줄이고 즉시 실행 가능한 도구를 선택하세요.",
+        "replan_limit": "이전 실행에서 재계획 한도를 초과했습니다. 재계획보다 실행 단계 완료를 우선하세요.",
+        "verification_failed": "이전 실행이 완료 검증에 실패했습니다. 요청의 필수 동작을 실제 도구 호출로 충족하세요.",
+    }
+    return guides.get(error_code, "이전 실패 원인을 반영해 같은 오류를 반복하지 마세요.")
+
+
 async def run_agent_analysis(user_text: str, connected_services: list[str], user_id: str) -> AgentRunResult:
     """Run the agent flow with planning + execution.
 
@@ -179,6 +190,7 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
                     max_tool_calls_override=max(2, int(getattr(settings, "llm_autonomous_max_tool_calls", 8)) + 2),
                     timeout_sec_override=max(10, int(getattr(settings, "llm_autonomous_timeout_sec", 45)) + 15),
                     replan_limit_override=max(0, int(getattr(settings, "llm_autonomous_replan_limit", 1)) + 1),
+                    extra_guidance=_retry_guidance_for_error(error_code),
                 )
                 if retry.success:
                     execution = retry

@@ -262,6 +262,7 @@ async def _choose_next_action(
     allowed_tools: list[str],
     tool_schema_snippet: str,
     history: list[dict[str, Any]],
+    extra_guidance: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     settings = get_settings()
     attempts: list[tuple[str, str]] = []
@@ -306,6 +307,8 @@ async def _choose_next_action(
         '  "updated_selected_tools": ["notion_search"]\n'
         "}\n"
     )
+    if extra_guidance:
+        user_prompt += f"\n재시도 가이드:\n{extra_guidance}\n"
 
     errors: list[str] = []
     for provider, model in attempts:
@@ -333,6 +336,7 @@ async def run_autonomous_loop(
     max_tool_calls_override: int | None = None,
     timeout_sec_override: int | None = None,
     replan_limit_override: int | None = None,
+    extra_guidance: str | None = None,
 ) -> AgentExecutionResult:
     settings = get_settings()
     max_turns = max(1, max_turns_override if max_turns_override is not None else settings.llm_autonomous_max_turns)
@@ -420,6 +424,7 @@ async def run_autonomous_loop(
             allowed_tools=allowed_tools,
             tool_schema_snippet=tool_schema_snippet,
             history=history,
+            extra_guidance=extra_guidance,
         )
         if not action_payload:
             steps.append(AgentExecutionStep(name=f"turn_{turn}_action", status="error", detail=action_error or "unknown"))
