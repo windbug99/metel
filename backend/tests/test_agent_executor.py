@@ -59,6 +59,10 @@ def test_extract_page_rename_request():
     assert title == "Metel test page"
     assert new_title == "주간 회의록"
 
+    title2, new_title2 = _extract_page_rename_request('더 코어 페이지 제목을 "더 코어 2"로 바꾸고')
+    assert title2 == "더 코어"
+    assert new_title2 == "더 코어 2"
+
 
 def test_extract_data_source_query_request():
     source_id, page_size = _extract_data_source_query_request(

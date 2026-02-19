@@ -161,8 +161,8 @@ def _extract_append_target_and_content(user_text: str) -> tuple[str | None, str 
 
 def _extract_page_rename_request(user_text: str) -> tuple[str | None, str | None]:
     patterns = [
-        r"(?i)(?:노션에서\s*)?(?P<title>.+?)\s*(?:페이지)?\s*제목을\s*(?P<new_title>.+?)\s*로\s*(?:변경|수정|바꿔줘|바꿔|rename)",
-        r"(?i)(?:노션에서\s*)?(?P<title>.+?)의\s*제목을\s*(?P<new_title>.+?)\s*로\s*(?:변경|수정|바꿔줘|바꿔|rename)",
+        r'(?i)(?:노션에서\s*)?"?(?P<title>.+?)"?\s*(?:페이지)?\s*제목(?:을)?\s*"?(?P<new_title>.+?)"?\s*로\s*(?:변경|수정|바꿔줘|바꿔|바꾸고|바꾸|rename)',
+        r'(?i)(?:노션에서\s*)?"?(?P<title>.+?)"?의\s*제목(?:을)?\s*"?(?P<new_title>.+?)"?\s*로\s*(?:변경|수정|바꿔줘|바꿔|바꾸고|바꾸|rename)',
     ]
     for pattern in patterns:
         match = re.search(pattern, user_text.strip())
@@ -226,7 +226,7 @@ def _requires_append_to_page(plan: AgentPlan) -> bool:
 
 def _requires_page_title_update(plan: AgentPlan) -> bool:
     text = plan.user_text
-    return "제목" in text and any(keyword in text for keyword in ("변경", "수정", "바꿔", "rename"))
+    return "제목" in text and any(keyword in text for keyword in ("변경", "수정", "바꿔", "바꾸", "rename"))
 
 
 def _requires_data_source_query(plan: AgentPlan) -> bool:
@@ -303,6 +303,87 @@ def _pick_tool(plan: AgentPlan, keyword: str, default_tool: str) -> str:
     return default_tool
 
 
+async def _read_page_lines_or_summary(
+    *,
+    user_id: str,
+    plan: AgentPlan,
+    steps: list[AgentExecutionStep],
+    selected_page: dict,
+) -> AgentExecutionResult:
+    _ = await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_tool(plan, "retrieve_page", "notion_retrieve_page"),
+        payload={"page_id": selected_page["id"]},
+    )
+    steps.append(AgentExecutionStep(name="retrieve_page", status="success", detail="페이지 메타데이터 조회 완료"))
+
+    block_result = await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_tool(plan, "retrieve_block_children", "notion_retrieve_block_children"),
+        payload={"block_id": selected_page["id"], "page_size": 20},
+    )
+    blocks = (block_result.get("data") or {}).get("results", [])
+    plain = _extract_plain_text_from_blocks(blocks)
+    raw_lines = [line.strip() for line in plain.splitlines() if line.strip()]
+    line_count = _extract_requested_line_count(plan.user_text, default_count=10)
+    top_lines = raw_lines[:line_count]
+
+    if not raw_lines:
+        return AgentExecutionResult(
+            success=False,
+            summary="페이지 본문 텍스트를 찾지 못했습니다.",
+            user_message=(
+                f"'{selected_page['title']}' 페이지에서 텍스트 블록을 찾지 못했습니다.\n"
+                f"페이지 링크: {selected_page['url']}"
+            ),
+            artifacts={"source_page_url": selected_page["url"]},
+            steps=steps,
+        )
+
+    if _requires_summary_only(plan):
+        summary = _simple_korean_summary("\n".join(raw_lines), max_chars=700)
+        steps.append(
+            AgentExecutionStep(
+                name="summarize_page",
+                status="success",
+                detail=f"본문 {len(raw_lines)}라인 요약",
+            )
+        )
+        return AgentExecutionResult(
+            success=True,
+            summary="요청한 특정 페이지 요약을 완료했습니다.",
+            user_message=(
+                f"요청하신 페이지 요약입니다.\n"
+                f"- 페이지: {selected_page['title']}\n"
+                f"- 링크: {selected_page['url']}\n\n"
+                f"{summary}"
+            ),
+            artifacts={"source_page_url": selected_page["url"], "source_page_title": selected_page["title"]},
+            steps=steps,
+        )
+
+    steps.append(
+        AgentExecutionStep(
+            name="extract_lines",
+            status="success",
+            detail=f"본문 라인 {len(raw_lines)}개 중 상위 {len(top_lines)}개 추출",
+        )
+    )
+    output_lines = [f"{idx}. {line}" for idx, line in enumerate(top_lines, start=1)]
+    return AgentExecutionResult(
+        success=True,
+        summary="요청한 페이지 상위 라인 추출을 완료했습니다.",
+        user_message=(
+            f"요청하신 페이지 상위 {len(top_lines)}줄입니다.\n"
+            f"- 페이지: {selected_page['title']}\n"
+            f"- 링크: {selected_page['url']}\n\n"
+            + "\n".join(output_lines)
+        ),
+        artifacts={"source_page_url": selected_page["url"], "source_page_title": selected_page["title"]},
+        steps=steps,
+    )
+
+
 async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
     steps: list[AgentExecutionStep] = []
     steps.append(AgentExecutionStep(name="tool_runner_init", status="success", detail="Notion Tool Runner 준비 완료"))
@@ -371,7 +452,31 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
                 },
             },
         )
+        old_title = selected_page["title"]
         steps.append(AgentExecutionStep(name="update_page", status="success", detail=f"새 제목: {new_title}"))
+
+        # Compound intent: rename + then read lines/summary from the same page.
+        if _requires_top_lines(plan) or _requires_page_content_read(plan) or _requires_summary_only(plan):
+            selected_page = dict(selected_page)
+            selected_page["title"] = new_title
+            content_result = await _read_page_lines_or_summary(
+                user_id=user_id,
+                plan=plan,
+                steps=steps,
+                selected_page=selected_page,
+            )
+            if content_result.success:
+                content_result.summary = "페이지 제목 변경 및 본문 조회를 완료했습니다."
+                content_result.user_message = (
+                    "요청하신 페이지 제목을 먼저 변경한 뒤 본문을 조회했습니다.\n"
+                    f"- 이전 제목: {old_title}\n"
+                    f"- 새 제목: {new_title}\n"
+                    f"- 페이지 링크: {selected_page['url']}\n\n"
+                    f"{content_result.user_message}"
+                )
+                content_result.artifacts["new_title"] = new_title
+            return content_result
+
         return AgentExecutionResult(
             success=True,
             summary="페이지 제목 변경을 완료했습니다.",
@@ -663,77 +768,11 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
                 detail=f"선택 페이지: {selected_page['title']}",
             )
         )
-        _ = await execute_tool(
+        return await _read_page_lines_or_summary(
             user_id=user_id,
-            tool_name=_pick_tool(plan, "retrieve_page", "notion_retrieve_page"),
-            payload={"page_id": selected_page["id"]},
-        )
-        steps.append(AgentExecutionStep(name="retrieve_page", status="success", detail="페이지 메타데이터 조회 완료"))
-
-        block_result = await execute_tool(
-            user_id=user_id,
-            tool_name=_pick_tool(plan, "retrieve_block_children", "notion_retrieve_block_children"),
-            payload={"block_id": selected_page["id"], "page_size": 20},
-        )
-        blocks = (block_result.get("data") or {}).get("results", [])
-        plain = _extract_plain_text_from_blocks(blocks)
-        raw_lines = [line.strip() for line in plain.splitlines() if line.strip()]
-        line_count = _extract_requested_line_count(plan.user_text, default_count=10)
-        top_lines = raw_lines[:line_count]
-
-        if not raw_lines:
-            return AgentExecutionResult(
-                success=False,
-                summary="페이지 본문 텍스트를 찾지 못했습니다.",
-                user_message=(
-                    f"'{selected_page['title']}' 페이지에서 텍스트 블록을 찾지 못했습니다.\n"
-                    f"페이지 링크: {selected_page['url']}"
-                ),
-                artifacts={"source_page_url": selected_page["url"]},
-                steps=steps,
-            )
-
-        if _requires_summary_only(plan):
-            summary = _simple_korean_summary("\n".join(raw_lines), max_chars=700)
-            steps.append(
-                AgentExecutionStep(
-                    name="summarize_page",
-                    status="success",
-                    detail=f"본문 {len(raw_lines)}라인 요약",
-                )
-            )
-            return AgentExecutionResult(
-                success=True,
-                summary="요청한 특정 페이지 요약을 완료했습니다.",
-                user_message=(
-                    f"요청하신 페이지 요약입니다.\n"
-                    f"- 페이지: {selected_page['title']}\n"
-                    f"- 링크: {selected_page['url']}\n\n"
-                    f"{summary}"
-                ),
-                artifacts={"source_page_url": selected_page["url"], "source_page_title": selected_page["title"]},
-                steps=steps,
-            )
-
-        steps.append(
-            AgentExecutionStep(
-                name="extract_lines",
-                status="success",
-                detail=f"본문 라인 {len(raw_lines)}개 중 상위 {len(top_lines)}개 추출",
-            )
-        )
-        output_lines = [f"{idx}. {line}" for idx, line in enumerate(top_lines, start=1)]
-        return AgentExecutionResult(
-            success=True,
-            summary="요청한 페이지 상위 라인 추출을 완료했습니다.",
-            user_message=(
-                f"요청하신 페이지 상위 {len(top_lines)}줄입니다.\n"
-                f"- 페이지: {selected_page['title']}\n"
-                f"- 링크: {selected_page['url']}\n\n"
-                + "\n".join(output_lines)
-            ),
-            artifacts={"source_page_url": selected_page["url"], "source_page_title": selected_page["title"]},
+            plan=plan,
             steps=steps,
+            selected_page=selected_page,
         )
 
     if _requires_top_lines(plan) or _requires_page_content_read(plan):

@@ -11,3 +11,9 @@ def test_map_page_create_intent_to_create_command():
     command, rest = _map_natural_text_to_command("노션 페이지 생성해줘 주간 회의록")
     assert command == "/notion_create"
     assert "주간 회의록" in rest
+
+
+def test_map_data_source_query_to_agent_path():
+    command, rest = _map_natural_text_to_command("노션 데이터소스 invalid-id 조회해줘")
+    assert command == ""
+    assert rest == ""

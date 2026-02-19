@@ -321,12 +321,32 @@ def _map_natural_text_to_command(text: str) -> tuple[str, str]:
     page_keywords = ["페이지", "문서"]
     looks_like_list_intent = any(keyword in lower for keyword in list_keywords) or "몇 개" in raw or "몇개" in raw
     looks_like_created_adjective = "생성된" in lower
+    advanced_agent_keywords = [
+        "요약",
+        "데이터소스",
+        "data source",
+        "data_source",
+        "제목",
+        "변경",
+        "수정",
+        "바꾸",
+        "상위",
+        "본문",
+        "삭제",
+        "아카이브",
+        "그리고",
+        "invalid-id",
+    ]
 
     if any(keyword in lower for keyword in ["도움말", "help", "메뉴", "menu", "명령어"]):
         return "/help", ""
 
     if any(keyword in lower for keyword in ["상태", "status", "연결상태"]):
         return "/status", ""
+
+    # 고급/복합 작업은 강제 매핑하지 않고 LLM/에이전트 경로로 전달
+    if any(keyword in lower for keyword in advanced_agent_keywords):
+        return "", ""
 
     # 생성 의도는 목록보다 먼저 매칭해야 오탐이 줄어듭니다.
     if (

@@ -129,6 +129,71 @@ def test_execute_notion_archive_flow(monkeypatch):
     assert len(calls) == 2
 
 
+def test_execute_notion_rename_then_top_lines_flow(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "notion_search":
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {
+                            "id": "page-1",
+                            "url": "https://notion.so/page-1",
+                            "properties": {"title": {"type": "title", "title": [{"plain_text": "더 코어"}]}},
+                        }
+                    ]
+                },
+            }
+        if tool_name == "notion_update_page":
+            return {"ok": True, "data": {"id": "page-1"}}
+        if tool_name == "notion_retrieve_page":
+            return {"ok": True, "data": {"id": "page-1"}}
+        if tool_name == "notion_retrieve_block_children":
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {
+                            "type": "paragraph",
+                            "paragraph": {"rich_text": [{"plain_text": "line 1"}]},
+                        },
+                        {
+                            "type": "paragraph",
+                            "paragraph": {"rich_text": [{"plain_text": "line 2"}]},
+                        },
+                        {
+                            "type": "paragraph",
+                            "paragraph": {"rich_text": [{"plain_text": "line 3"}]},
+                        },
+                        {
+                            "type": "paragraph",
+                            "paragraph": {"rich_text": [{"plain_text": "line 4"}]},
+                        },
+                    ]
+                },
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    plan = _plan(
+        '더 코어 페이지 제목을 "더 코어 2"로 바꾸고, 바꾼 페이지 본문 상위 4줄을 출력해줘',
+        ["notion_search", "notion_update_page", "notion_retrieve_page", "notion_retrieve_block_children"],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert "제목 변경" in result.summary
+    assert "상위 4줄" in result.user_message
+    assert [item[0] for item in calls] == [
+        "notion_search",
+        "notion_update_page",
+        "notion_retrieve_page",
+        "notion_retrieve_block_children",
+    ]
+
+
 def test_execute_plan_error_message_standardized(monkeypatch):
     async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
         raise HTTPException(status_code=400, detail="notion_search:AUTH_REQUIRED")
