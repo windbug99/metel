@@ -49,6 +49,11 @@ type CommandLog = {
   status: string;
   error_code: string | null;
   detail: string | null;
+  plan_source: string | null;
+  execution_mode: string | null;
+  autonomous_fallback_reason: string | null;
+  llm_provider: string | null;
+  llm_model: string | null;
   created_at: string;
 };
 
@@ -174,7 +179,9 @@ export default function DashboardPage() {
     try {
       const { data, error } = await supabase
         .from("command_logs")
-        .select("id, channel, command, status, error_code, detail, created_at")
+        .select(
+          "id, channel, command, status, error_code, detail, plan_source, execution_mode, autonomous_fallback_reason, llm_provider, llm_model, created_at"
+        )
         .order("created_at", { ascending: false })
         .limit(20);
 
@@ -680,6 +687,17 @@ export default function DashboardPage() {
                 <p className="mt-1 text-xs text-gray-600">
                   {new Date(log.created_at).toLocaleString()} · {log.channel}
                 </p>
+                {(log.plan_source || log.execution_mode) ? (
+                  <p className="mt-1 text-xs text-gray-600">
+                    mode: {log.plan_source || "-"} / {log.execution_mode || "-"}
+                    {log.autonomous_fallback_reason ? ` · fallback=${log.autonomous_fallback_reason}` : ""}
+                  </p>
+                ) : null}
+                {(log.llm_provider || log.llm_model) ? (
+                  <p className="mt-1 text-xs text-gray-600">
+                    llm: {log.llm_provider || "-"} / {log.llm_model || "-"}
+                  </p>
+                ) : null}
                 {log.error_code ? (
                   <p className="mt-1 text-xs text-amber-700">error_code: {log.error_code}</p>
                 ) : null}

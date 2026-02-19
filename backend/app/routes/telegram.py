@@ -396,6 +396,11 @@ def _record_command_log(
     status: str,
     error_code: str | None = None,
     detail: str | None = None,
+    plan_source: str | None = None,
+    execution_mode: str | None = None,
+    autonomous_fallback_reason: str | None = None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
 ):
     try:
         settings = get_settings()
@@ -408,8 +413,40 @@ def _record_command_log(
             "status": status,
             "error_code": error_code,
             "detail": detail,
+            "plan_source": plan_source,
+            "execution_mode": execution_mode,
+            "autonomous_fallback_reason": autonomous_fallback_reason,
+            "llm_provider": llm_provider,
+            "llm_model": llm_model,
         }
-        supabase.table("command_logs").insert(payload).execute()
+        try:
+            supabase.table("command_logs").insert(payload).execute()
+        except Exception as exc:
+            # Backward compatibility: if SQL migration is not applied yet, retry with legacy fields only.
+            text = str(exc).lower()
+            if any(
+                marker in text
+                for marker in (
+                    "column",
+                    "plan_source",
+                    "execution_mode",
+                    "autonomous_fallback_reason",
+                    "llm_provider",
+                    "llm_model",
+                )
+            ):
+                legacy_payload = {
+                    "user_id": user_id,
+                    "channel": "telegram",
+                    "chat_id": chat_id,
+                    "command": command,
+                    "status": status,
+                    "error_code": error_code,
+                    "detail": detail,
+                }
+                supabase.table("command_logs").insert(legacy_payload).execute()
+            else:
+                raise
     except Exception as exc:
         logger.exception("failed to record command log: %s", exc)
 
@@ -614,9 +651,15 @@ async def telegram_webhook(
             execution_error_code = None
             execution_mode = "rule"
             autonomous_fallback_reason = None
+            llm_provider = None
+            llm_model = None
             for note in analysis.plan.notes:
                 if note.startswith("autonomous_error="):
                     autonomous_fallback_reason = note.split("=", 1)[1]
+                if note.startswith("llm_provider="):
+                    llm_provider = note.split("=", 1)[1]
+                if note.startswith("llm_model="):
+                    llm_model = note.split("=", 1)[1]
             if analysis.execution:
                 execution_steps_text = (
                     "\n".join(f"- {step.name}: {step.status} ({step.detail})" for step in analysis.execution.steps)
@@ -639,6 +682,11 @@ async def telegram_webhook(
                 status="success" if analysis.ok else "error",
                 error_code=None if analysis.ok else (execution_error_code or "execution_failed"),
                 detail=f"services={services_text}",
+                plan_source=analysis.plan_source,
+                execution_mode=execution_mode,
+                autonomous_fallback_reason=autonomous_fallback_reason,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
             )
 
             await _telegram_api(

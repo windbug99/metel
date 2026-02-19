@@ -99,6 +99,10 @@ Supabase SQL Editor에서 `docs/sql/001_create_users_table.sql` 실행:
 
 - 텔레그램 명령 감사 로그 테이블 생성
 
+추가로 `docs/sql/005_add_command_logs_telemetry_columns.sql` 실행:
+
+- 에이전트 실행 텔레메트리 컬럼 추가(`plan_source`, `execution_mode`, `autonomous_fallback_reason`, `llm_provider`, `llm_model`)
+
 ## Production Env Checklist
 
 ### Vercel (frontend)
