@@ -12,7 +12,6 @@ from agent.registry import load_registry
 from agent.tool_runner import execute_tool
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan
 from app.core.config import get_settings
-from app.security.provider_keys import load_user_provider_token
 
 
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
@@ -360,7 +359,6 @@ async def _choose_next_action(
     allowed_tools: list[str],
     tool_schema_snippet: str,
     history: list[dict[str, Any]],
-    openai_api_key: str | None,
     extra_guidance: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     settings = get_settings()
@@ -417,7 +415,7 @@ async def _choose_next_action(
             model=model,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            openai_api_key=openai_api_key,
+            openai_api_key=settings.openai_api_key,
             google_api_key=settings.google_api_key,
         )
         if payload:
@@ -440,8 +438,6 @@ async def run_autonomous_loop(
     extra_guidance: str | None = None,
 ) -> AgentExecutionResult:
     settings = get_settings()
-    user_openai_key = load_user_provider_token(user_id, "openai")
-    effective_openai_key = user_openai_key or settings.openai_api_key
     max_turns = max(1, max_turns_override if max_turns_override is not None else settings.llm_autonomous_max_turns)
     max_tool_calls = max(
         1, max_tool_calls_override if max_tool_calls_override is not None else settings.llm_autonomous_max_tool_calls
@@ -534,7 +530,6 @@ async def run_autonomous_loop(
             allowed_tools=allowed_tools,
             tool_schema_snippet=tool_schema_snippet,
             history=history,
-            openai_api_key=effective_openai_key,
             extra_guidance=extra_guidance,
         )
         if not action_payload:

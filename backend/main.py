@@ -7,8 +7,8 @@ from fastapi.responses import JSONResponse
 
 from agent.registry import ToolSpecValidationError, validate_registry_on_startup
 from app.core.config import get_settings
+from app.routes.linear import router as linear_router
 from app.routes.notion import router as notion_router
-from app.routes.openai import router as openai_router
 from app.routes.spotify import router as spotify_router
 from app.routes.telegram import router as telegram_router
 
@@ -87,6 +87,6 @@ async def health_check():
 
 
 app.include_router(notion_router)
-app.include_router(openai_router)
+app.include_router(linear_router)
 app.include_router(spotify_router)
 app.include_router(telegram_router)

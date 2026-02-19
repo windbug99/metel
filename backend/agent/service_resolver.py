@@ -8,6 +8,7 @@ from agent.registry import load_registry
 
 SERVICE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "notion": ("notion", "노션", "페이지", "문서", "데이터베이스", "회의록"),
+    "linear": ("linear", "리니어", "issue", "이슈", "프로젝트", "스프린트"),
     "spotify": ("spotify", "스포티파이", "플레이리스트", "노래", "음악", "트랙"),
     "google": ("google", "구글", "gmail", "캘린더", "드라이브"),
     "github": ("github", "깃허브", "repo", "pull request", "이슈"),

@@ -224,6 +224,121 @@ async def _execute_spotify_http(user_id: str, tool: ToolDefinition, payload: dic
     return _parse_response_data(response)
 
 
+def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    if tool_name == "linear_get_viewer":
+        return (
+            """
+            query Viewer {
+              viewer {
+                id
+                name
+                email
+              }
+            }
+            """,
+            {},
+        )
+    if tool_name == "linear_list_issues":
+        first = int(payload.get("first", 5))
+        return (
+            """
+            query Issues($first: Int!) {
+              issues(first: $first, orderBy: updatedAt) {
+                nodes {
+                  id
+                  identifier
+                  title
+                  url
+                  priority
+                  state {
+                    name
+                  }
+                  assignee {
+                    name
+                  }
+                }
+              }
+            }
+            """,
+            {"first": max(1, min(20, first))},
+        )
+    if tool_name == "linear_search_issues":
+        first = int(payload.get("first", 5))
+        query = str(payload.get("query", "")).strip()
+        return (
+            """
+            query SearchIssues($query: String!, $first: Int!) {
+              issueSearch(query: $query, first: $first) {
+                nodes {
+                  id
+                  identifier
+                  title
+                  url
+                  state {
+                    name
+                  }
+                }
+              }
+            }
+            """,
+            {"query": query, "first": max(1, min(20, first))},
+        )
+    if tool_name == "linear_create_issue":
+        return (
+            """
+            mutation CreateIssue($input: IssueCreateInput!) {
+              issueCreate(input: $input) {
+                success
+                issue {
+                  id
+                  identifier
+                  title
+                  url
+                }
+              }
+            }
+            """,
+            {
+                "input": {
+                    "teamId": str(payload.get("team_id", "")),
+                    "title": str(payload.get("title", "")),
+                    "description": str(payload.get("description", "")),
+                }
+            },
+        )
+    raise HTTPException(status_code=400, detail=f"{tool_name}:NOT_IMPLEMENTED")
+
+
+async def _execute_linear_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
+    token = _load_oauth_access_token(user_id=user_id, provider="linear")
+    query, variables = _linear_query_and_variables(tool.tool_name, payload)
+    url = f"{tool.base_url}/graphql"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.post(url, headers=headers, json={"query": query, "variables": variables})
+
+    if response.status_code >= 400:
+        mapped = tool.error_map.get(str(response.status_code), "TOOL_FAILED")
+        raise HTTPException(
+            status_code=400,
+            detail=f"{tool.tool_name}:{mapped}|status={response.status_code}|message={response.text[:300]}",
+        )
+
+    try:
+        data = response.json()
+    except JSONDecodeError:
+        raise HTTPException(status_code=400, detail=f"{tool.tool_name}:TOOL_FAILED|invalid_json")
+
+    if data.get("errors"):
+        message = str(data.get("errors"))[:300]
+        raise HTTPException(status_code=400, detail=f"{tool.tool_name}:TOOL_FAILED|message={message}")
+    return {"ok": True, "data": data.get("data", {})}
+
+
 def _build_default_headers_for_service(user_id: str, tool: ToolDefinition) -> dict[str, str]:
     headers: dict[str, str] = {}
     if tool.service == "notion":
@@ -271,4 +386,6 @@ async def execute_tool(user_id: str, tool_name: str, payload: dict[str, Any]) ->
         return await _execute_notion_http(user_id=user_id, tool=tool, payload=payload)
     if tool.service == "spotify":
         return await _execute_spotify_http(user_id=user_id, tool=tool, payload=payload)
+    if tool.service == "linear":
+        return await _execute_linear_http(user_id=user_id, tool=tool, payload=payload)
     return await _execute_generic_http(user_id=user_id, tool=tool, payload=payload)

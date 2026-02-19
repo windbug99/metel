@@ -16,10 +16,16 @@ def test_service_resolver_spotify():
 
 def test_guide_retriever():
     guides = list_guide_services()
+    assert "linear" in guides
     assert "notion" in guides
     assert "spotify" in guides
     context = get_planning_context("spotify", max_chars=800)
     assert "인증" in context
+
+
+def test_service_resolver_linear():
+    service = resolve_primary_service("linear 이슈 목록 보여줘", connected_services=["linear", "notion"])
+    assert service == "linear"
 
 
 def test_service_resolver_dynamic_keyword_from_tool_spec(monkeypatch):

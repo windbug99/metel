@@ -10,7 +10,6 @@ from fastapi import HTTPException
 from agent.tool_runner import execute_tool
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan
 from app.core.config import get_settings
-from app.security.provider_keys import load_user_provider_token
 
 
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
@@ -188,11 +187,9 @@ async def _request_summary_with_provider(
     return None
 
 
-async def _summarize_text_with_llm(text: str, user_text: str, user_id: str | None = None) -> tuple[str, str]:
+async def _summarize_text_with_llm(text: str, user_text: str) -> tuple[str, str]:
     line_count = _extract_summary_line_count(user_text)
     settings = get_settings()
-    user_openai_key = load_user_provider_token(user_id, "openai") if user_id else None
-    effective_openai_key = user_openai_key or settings.openai_api_key
     attempts: list[tuple[str, str]] = []
 
     primary_provider = (settings.llm_planner_provider or "openai").strip().lower()
@@ -215,7 +212,7 @@ async def _summarize_text_with_llm(text: str, user_text: str, user_id: str | Non
                 model=model,
                 text=text,
                 line_count=line_count,
-                openai_api_key=effective_openai_key,
+                openai_api_key=settings.openai_api_key,
                 google_api_key=settings.google_api_key,
             )
             if summary:
@@ -566,6 +563,134 @@ def _extract_spotify_output_page_title(user_text: str, default_title: str = "spo
     return default_title
 
 
+def _extract_linear_search_query(user_text: str) -> str | None:
+    quoted = re.findall(r'"([^"]+)"|\'([^\']+)\'', user_text)
+    for a, b in quoted:
+        candidate = (a or b or "").strip()
+        if candidate:
+            return candidate
+    match = re.search(r"(?i)(?:linear|리니어).*(?:검색|search)\s+(.+)$", user_text.strip())
+    if not match:
+        return None
+    candidate = match.group(1).strip(" \"'`")
+    return candidate or None
+
+
+async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
+    steps: list[AgentExecutionStep] = []
+    steps.append(AgentExecutionStep(name="tool_runner_init", status="success", detail="Linear Tool Runner 준비 완료"))
+
+    text = (plan.user_text or "").lower()
+    if any(token in text for token in ("생성", "create", "이슈 만들", "issue 만들")):
+        team_match = re.search(r"([0-9a-fA-F\-]{8,})", plan.user_text)
+        title_match = re.search(r'(?i)(?:제목|title)\s*[:：]\s*(.+)$', plan.user_text)
+        team_id = team_match.group(1).strip() if team_match else ""
+        title = title_match.group(1).strip(" \"'`") if title_match else ""
+        if not team_id or not title:
+            return AgentExecutionResult(
+                success=False,
+                summary="Linear 이슈 생성 입력이 부족합니다.",
+                user_message=(
+                    "Linear 이슈 생성을 위해 `team_id`와 `title`이 필요합니다.\n"
+                    "예: `Linear team_id <TEAM_ID> 제목: 로그인 오류 수정 이슈 생성`"
+                ),
+                artifacts={"error_code": "validation_error"},
+                steps=steps + [AgentExecutionStep(name="extract_create_issue_input", status="error", detail="missing_team_or_title")],
+            )
+        created = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "linear_create_issue", "linear_create_issue"),
+            payload={"team_id": team_id, "title": title, "description": ""},
+        )
+        issue_create = (created.get("data") or {}).get("issueCreate") or {}
+        issue = issue_create.get("issue") or {}
+        steps.append(AgentExecutionStep(name="linear_create_issue", status="success", detail=f"id={issue.get('id')}"))
+        return AgentExecutionResult(
+            success=True,
+            summary="Linear 이슈 생성을 완료했습니다.",
+            user_message=(
+                "Linear 이슈를 생성했습니다.\n"
+                f"- 식별자: {issue.get('identifier') or '-'}\n"
+                f"- 제목: {issue.get('title') or title}\n"
+                f"- 링크: {issue.get('url') or '-'}"
+            ),
+            artifacts={"created_issue_url": issue.get("url") or "", "created_issue_id": issue.get("id") or ""},
+            steps=steps,
+        )
+
+    if any(token in text for token in ("검색", "search")):
+        query = _extract_linear_search_query(plan.user_text)
+        if query:
+            result = await execute_tool(
+                user_id=user_id,
+                tool_name=_pick_tool(plan, "linear_search_issues", "linear_search_issues"),
+                payload={"query": query, "first": 5},
+            )
+            nodes = (((result.get("data") or {}).get("issueSearch") or {}).get("nodes") or [])
+            steps.append(AgentExecutionStep(name="linear_search_issues", status="success", detail=f"count={len(nodes)}"))
+            if not nodes:
+                return AgentExecutionResult(
+                    success=True,
+                    summary="Linear 검색 결과가 없습니다.",
+                    user_message=f"`{query}`에 대한 Linear 이슈를 찾지 못했습니다.",
+                    steps=steps,
+                )
+            lines = [f"Linear 검색 결과: `{query}`"]
+            for idx, node in enumerate(nodes[:5], start=1):
+                lines.append(f"{idx}. {node.get('identifier') or '-'} {node.get('title') or '(제목 없음)'}")
+                lines.append(f"   {node.get('url') or '-'}")
+            return AgentExecutionResult(
+                success=True,
+                summary="Linear 이슈 검색을 완료했습니다.",
+                user_message="\n".join(lines),
+                steps=steps,
+            )
+
+    if any(token in text for token in ("이슈", "issues", "목록", "최근", "조회", "list")):
+        result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "linear_list_issues", "linear_list_issues"),
+            payload={"first": 5},
+        )
+        nodes = (((result.get("data") or {}).get("issues") or {}).get("nodes") or [])
+        steps.append(AgentExecutionStep(name="linear_list_issues", status="success", detail=f"count={len(nodes)}"))
+        if not nodes:
+            return AgentExecutionResult(
+                success=True,
+                summary="Linear 이슈 목록이 비어 있습니다.",
+                user_message="현재 조회 가능한 Linear 이슈가 없습니다.",
+                steps=steps,
+            )
+        lines = ["최근 Linear 이슈입니다:"]
+        for idx, node in enumerate(nodes[:5], start=1):
+            lines.append(f"{idx}. {node.get('identifier') or '-'} {node.get('title') or '(제목 없음)'}")
+            lines.append(f"   {node.get('url') or '-'}")
+        return AgentExecutionResult(
+            success=True,
+            summary="Linear 이슈 목록 조회를 완료했습니다.",
+            user_message="\n".join(lines),
+            steps=steps,
+        )
+
+    viewer = await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_tool(plan, "linear_get_viewer", "linear_get_viewer"),
+        payload={},
+    )
+    viewer_data = (viewer.get("data") or {}).get("viewer") or {}
+    steps.append(AgentExecutionStep(name="linear_get_viewer", status="success", detail=f"id={viewer_data.get('id')}"))
+    return AgentExecutionResult(
+        success=True,
+        summary="Linear 프로필 조회를 완료했습니다.",
+        user_message=(
+            "Linear 연동 상태를 확인했습니다.\n"
+            f"- 사용자: {viewer_data.get('name') or '-'}\n"
+            f"- 이메일: {viewer_data.get('email') or '-'}"
+        ),
+        steps=steps,
+    )
+
+
 async def _execute_spotify_recent_tracks_to_notion(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
     steps: list[AgentExecutionStep] = []
     steps.append(AgentExecutionStep(name="tool_runner_init", status="success", detail="Spotify+Notion Tool Runner 준비 완료"))
@@ -764,7 +889,7 @@ async def _read_page_lines_or_summary(
         )
 
     if _requires_summary_only(plan):
-        summary, summarize_mode = await _summarize_text_with_llm("\n".join(raw_lines), plan.user_text, user_id)
+        summary, summarize_mode = await _summarize_text_with_llm("\n".join(raw_lines), plan.user_text)
         steps.append(
             AgentExecutionStep(
                 name="summarize_page",
@@ -1122,7 +1247,7 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         if urls and "요약" in plan.user_text:
             source_text = await _fetch_url_plain_text(urls[0])
             if source_text:
-                summary_text, summarize_mode = await _summarize_text_with_llm(source_text, plan.user_text, user_id)
+                summary_text, summarize_mode = await _summarize_text_with_llm(source_text, plan.user_text)
                 char_limit = _extract_summary_char_limit(plan.user_text)
                 if char_limit:
                     summary_text = re.sub(r"\s+", " ", summary_text).strip()[:char_limit].rstrip()
@@ -1629,7 +1754,7 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             )
             blocks = (block_result.get("data") or {}).get("results", [])
             plain = _extract_plain_text_from_blocks(blocks)
-            short, _ = await _summarize_text_with_llm(plain, "핵심 요약 1~2문장", user_id)
+            short, _ = await _summarize_text_with_llm(plain, "핵심 요약 1~2문장")
             summary_lines.extend(
                 [
                     "",
@@ -1697,6 +1822,8 @@ async def execute_agent_plan(user_id: str, plan: AgentPlan) -> AgentExecutionRes
     try:
         if _requires_spotify_recent_tracks_to_notion(plan):
             return await _execute_spotify_recent_tracks_to_notion(user_id, plan)
+        if "linear" in plan.target_services:
+            return await _execute_linear_plan(user_id, plan)
         if "notion" in plan.target_services:
             return await _execute_notion_plan(user_id, plan)
         return AgentExecutionResult(

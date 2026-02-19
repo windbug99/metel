@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     spotify_client_secret: str | None = None
     spotify_redirect_uri: str | None = None
     spotify_state_secret: str | None = None
+    linear_client_id: str | None = None
+    linear_client_secret: str | None = None
+    linear_redirect_uri: str | None = None
+    linear_state_secret: str | None = None
 
     telegram_bot_token: str | None = None
     telegram_link_secret: str | None = None

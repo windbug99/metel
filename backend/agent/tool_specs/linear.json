@@ -1,0 +1,102 @@
+{
+  "service": "linear",
+  "version": "graphql-v1",
+  "base_url": "https://api.linear.app",
+  "auth": {
+    "type": "oauth2",
+    "required_scopes": [
+      "read",
+      "write"
+    ]
+  },
+  "limits": {
+    "timeout_ms": 12000,
+    "max_calls_per_run": 8
+  },
+  "tools": [
+    {
+      "tool_name": "linear_get_viewer",
+      "description": "Get current Linear viewer profile",
+      "method": "POST",
+      "path": "/graphql",
+      "adapter_function": "linear_get_viewer",
+      "required_scopes": ["read"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "linear_list_issues",
+      "description": "List issues from connected Linear workspace",
+      "method": "POST",
+      "path": "/graphql",
+      "adapter_function": "linear_list_issues",
+      "required_scopes": ["read"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "first": { "type": "integer", "minimum": 1, "maximum": 20 }
+        }
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "linear_search_issues",
+      "description": "Search issues in connected Linear workspace",
+      "method": "POST",
+      "path": "/graphql",
+      "adapter_function": "linear_search_issues",
+      "required_scopes": ["read"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string" },
+          "first": { "type": "integer", "minimum": 1, "maximum": 20 }
+        },
+        "required": ["query"]
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "linear_create_issue",
+      "description": "Create a new issue in Linear",
+      "method": "POST",
+      "path": "/graphql",
+      "adapter_function": "linear_create_issue",
+      "required_scopes": ["write"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "team_id": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string" }
+        },
+        "required": ["team_id", "title"]
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
+    }
+  ]
+}
+

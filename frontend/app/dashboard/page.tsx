@@ -21,6 +21,15 @@ type NotionStatus = {
   } | null;
 } | null;
 
+type LinearStatus = {
+  connected: boolean;
+  integration?: {
+    workspace_name: string | null;
+    workspace_id: string | null;
+    updated_at: string | null;
+  } | null;
+} | null;
+
 type TelegramStatus = {
   connected: boolean;
   telegram_chat_id?: number | null;
@@ -33,14 +42,6 @@ type TelegramConnectInfo = {
   startCommand: string;
   botUsername: string;
   expiresInSeconds: number;
-} | null;
-
-type OpenAIStatus = {
-  connected: boolean;
-  integration?: {
-    workspace_id: string | null;
-    updated_at: string | null;
-  } | null;
 } | null;
 
 type CommandLog = {
@@ -78,10 +79,10 @@ export default function DashboardPage() {
   const [notionStatus, setNotionStatus] = useState<NotionStatus>(null);
   const [notionStatusError, setNotionStatusError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
-  const [openaiStatus, setOpenaiStatus] = useState<OpenAIStatus>(null);
-  const [openaiStatusError, setOpenaiStatusError] = useState<string | null>(null);
-  const [openaiConnecting, setOpenaiConnecting] = useState(false);
-  const [openaiDisconnecting, setOpenaiDisconnecting] = useState(false);
+  const [linearStatus, setLinearStatus] = useState<LinearStatus>(null);
+  const [linearStatusError, setLinearStatusError] = useState<string | null>(null);
+  const [linearConnecting, setLinearConnecting] = useState(false);
+  const [linearDisconnecting, setLinearDisconnecting] = useState(false);
   const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>(null);
   const [telegramStatusError, setTelegramStatusError] = useState<string | null>(null);
   const [telegramDisconnecting, setTelegramDisconnecting] = useState(false);
@@ -136,23 +137,27 @@ export default function DashboardPage() {
     [apiBaseUrl, getAuthHeaders]
   );
 
-  const fetchOpenaiStatus = useCallback(
+  const fetchLinearStatus = useCallback(
     async () => {
       if (!apiBaseUrl) {
         return;
       }
+
       try {
         const headers = await getAuthHeaders();
-        const response = await fetch(`${apiBaseUrl}/api/oauth/openai/status`, { headers });
+        const response = await fetch(
+          `${apiBaseUrl}/api/oauth/linear/status`,
+          { headers }
+        );
         if (response.ok) {
-          const data: OpenAIStatus = await response.json();
-          setOpenaiStatus(data);
-          setOpenaiStatusError(null);
+          const data: LinearStatus = await response.json();
+          setLinearStatus(data);
+          setLinearStatusError(null);
         } else {
-          setOpenaiStatusError("Failed to fetch OpenAI status.");
+          setLinearStatusError("Failed to fetch Linear status.");
         }
       } catch {
-        setOpenaiStatusError("Network error while fetching OpenAI status.");
+        setLinearStatusError("Network error while fetching Linear status.");
       }
     },
     [apiBaseUrl, getAuthHeaders]
@@ -362,7 +367,7 @@ export default function DashboardPage() {
           .single();
 
         await fetchNotionStatus();
-        await fetchOpenaiStatus();
+        await fetchLinearStatus();
         await fetchTelegramStatus();
         await fetchCommandLogs();
 
@@ -383,7 +388,7 @@ export default function DashboardPage() {
     return () => {
       mounted = false;
     };
-  }, [router, fetchNotionStatus, fetchOpenaiStatus, fetchTelegramStatus, fetchCommandLogs]);
+  }, [router, fetchNotionStatus, fetchLinearStatus, fetchTelegramStatus, fetchCommandLogs]);
 
   const handleDisconnectNotion = async () => {
     if (!apiBaseUrl || !profile?.id || disconnecting) {
@@ -432,70 +437,53 @@ export default function DashboardPage() {
     }
   };
 
-  const handleConnectOpenai = async () => {
-    if (!apiBaseUrl || !profile?.id || openaiConnecting) {
+  const handleDisconnectLinear = async () => {
+    if (!apiBaseUrl || !profile?.id || linearDisconnecting) {
       return;
     }
-    setOpenaiConnecting(true);
+
+    setLinearDisconnecting(true);
     try {
       const headers = await getAuthHeaders();
-      const startResponse = await fetch(`${apiBaseUrl}/api/oauth/openai/start`, {
-        method: "POST",
-        headers,
-      });
-      if (!startResponse.ok) {
-        setOpenaiStatusError("Failed to start OpenAI connection.");
+      const response = await fetch(
+        `${apiBaseUrl}/api/oauth/linear/disconnect`,
+        { method: "DELETE", headers }
+      );
+      if (!response.ok) {
+        setLinearStatusError("Failed to disconnect Linear.");
         return;
       }
-      const apiKey = window.prompt("OpenAI API 키를 입력하세요. (sk-...)", "");
-      const normalized = (apiKey || "").trim();
-      if (!normalized) {
-        setOpenaiStatusError("OpenAI API 키 입력이 취소되었습니다.");
-        return;
-      }
-      const connectResponse = await fetch(`${apiBaseUrl}/api/oauth/openai/connect`, {
-        method: "POST",
-        headers: {
-          ...headers,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ api_key: normalized }),
-      });
-      const payload = await connectResponse.json().catch(() => null);
-      if (!connectResponse.ok || !payload?.connected) {
-        setOpenaiStatusError("OpenAI API 키 연동에 실패했습니다.");
-        return;
-      }
-      await fetchOpenaiStatus();
-      setOpenaiStatusError(null);
+      setLinearStatus({ connected: false, integration: null });
+      setLinearStatusError(null);
     } catch {
-      setOpenaiStatusError("Network error while connecting OpenAI.");
+      setLinearStatusError("Network error while disconnecting Linear.");
     } finally {
-      setOpenaiConnecting(false);
+      setLinearDisconnecting(false);
     }
   };
 
-  const handleDisconnectOpenai = async () => {
-    if (!apiBaseUrl || !profile?.id || openaiDisconnecting) {
+  const handleConnectLinear = async () => {
+    if (!apiBaseUrl || !profile?.id || linearConnecting) {
       return;
     }
-    setOpenaiDisconnecting(true);
+
+    setLinearConnecting(true);
     try {
       const headers = await getAuthHeaders();
-      const response = await fetch(`${apiBaseUrl}/api/oauth/openai/disconnect`, {
-        method: "DELETE",
+      const response = await fetch(`${apiBaseUrl}/api/oauth/linear/start`, {
+        method: "POST",
         headers,
       });
-      if (!response.ok) {
-        setOpenaiStatusError("Failed to disconnect OpenAI.");
+      const payload = await response.json();
+      if (!response.ok || !payload?.auth_url) {
+        setLinearStatusError("Failed to start Linear connection.");
         return;
       }
-      setOpenaiStatus({ connected: false, integration: null });
-      setOpenaiStatusError(null);
+      window.location.href = payload.auth_url;
     } catch {
-      setOpenaiStatusError("Network error while disconnecting OpenAI.");
+      setLinearStatusError("Network error while starting Linear connection.");
     } finally {
-      setOpenaiDisconnecting(false);
+      setLinearConnecting(false);
     }
   };
 
@@ -757,29 +745,29 @@ export default function DashboardPage() {
           <article className="rounded-xl border border-gray-200 bg-gray-50 p-4">
             <div className="flex items-center justify-between">
               <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
-                <ServiceLogo src="/logos/openai.svg" alt="OpenAI" />
-                OpenAI
+                <ServiceLogo src="/logos/linear.svg" alt="Linear" />
+                Linear
               </p>
-              <p className="text-xs text-gray-600">{openaiStatus?.connected ? "Connected" : "Not connected"}</p>
+              <p className="text-xs text-gray-600">{linearStatus?.connected ? "Connected" : "Not connected"}</p>
             </div>
             <p className="mt-2 text-sm text-gray-700">
-              API Key: {openaiStatus?.integration?.workspace_id ?? "-"}
+              User: {linearStatus?.integration?.workspace_name ?? "-"}
             </p>
             <button
               type="button"
               onClick={() => {
-                if (openaiStatus?.connected) {
-                  void handleDisconnectOpenai();
+                if (linearStatus?.connected) {
+                  void handleDisconnectLinear();
                   return;
                 }
-                void handleConnectOpenai();
+                void handleConnectLinear();
               }}
-              disabled={!apiBaseUrl || !profile?.id || openaiConnecting || openaiDisconnecting}
+              disabled={!apiBaseUrl || !profile?.id || linearConnecting || linearDisconnecting}
               className="mt-3 inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
             >
-              {openaiStatus?.connected
-                ? (openaiDisconnecting ? "Disconnecting..." : "Disconnect")
-                : (openaiConnecting ? "Connecting..." : "Connect")}
+              {linearStatus?.connected
+                ? (linearDisconnecting ? "Disconnecting..." : "Disconnect")
+                : (linearConnecting ? "Connecting..." : "Connect")}
             </button>
           </article>
 
@@ -804,7 +792,7 @@ export default function DashboardPage() {
           </article>
         </div>
         {notionStatusError ? <p className="mt-3 text-sm text-amber-700">{notionStatusError}</p> : null}
-        {openaiStatusError ? <p className="mt-3 text-sm text-amber-700">{openaiStatusError}</p> : null}
+        {linearStatusError ? <p className="mt-3 text-sm text-amber-700">{linearStatusError}</p> : null}
         {!apiBaseUrl || !profile?.id ? (
           <p className="mt-3 text-sm text-amber-700">
             Set NEXT_PUBLIC_API_BASE_URL to enable service connection.
