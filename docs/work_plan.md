@@ -73,6 +73,10 @@
   - command log `error_code`도 표준 코드 우선 기록
 - 실행 모드 가시성 강화:
   - 텔레그램 응답에 `plan_source` + `execution_mode` + `autonomous_fallback_reason` 표시
+- 자율 루프 수렴 개선(2026-02-19):
+  - `autonomous.py`에서 요청 의도 기반 도구 우선순위 정렬 적용
+  - 자율 루프 도구 후보를 최대 8개로 축소(Planner가 선택한 도구 우선 고정)
+  - 자율 액션 프롬프트에 `workflow_steps` 주입 및 "필요 tool_call 완료 전 final 금지" 원칙 추가
 - 삭제/생성 품질 보강:
   - 삭제 의도 판별 정규식 개선(예: "삭제 테스트 페이지"를 삭제 요청으로 오인하지 않음)
   - 다중 제목 지정 요약 생성 지원(예: `"더 코어 3", "사이먼 블로그"` 지정 조회)

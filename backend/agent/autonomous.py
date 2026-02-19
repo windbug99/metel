@@ -58,6 +58,51 @@ def _dedupe_keep_order(items: list[str]) -> list[str]:
     return out
 
 
+def _rank_tools_by_intent(tools: list[str], plan: AgentPlan) -> list[str]:
+    text = (plan.user_text or "").lower()
+    workflow_text = " ".join(plan.workflow_steps).lower()
+    merged = f"{text} {workflow_text}"
+
+    def score(tool_name: str) -> int:
+        name = tool_name.lower()
+        s = 0
+
+        if "search" in name:
+            s += 2
+        if any(token in merged for token in ("조회", "검색", "목록", "show", "list", "find")) and "search" in name:
+            s += 4
+
+        if any(token in merged for token in ("요약", "summary", "출력", "본문", "상위")) and (
+            "retrieve_page" in name or "retrieve_block_children" in name or "retrieve_page_property_item" in name
+        ):
+            s += 6
+
+        if any(token in merged for token in ("생성", "만들", "create")) and (
+            "create" in name or "append_block_children" in name
+        ):
+            s += 8
+
+        if any(token in merged for token in ("추가", "append", "추가해줘")) and "append_block_children" in name:
+            s += 8
+
+        if any(token in merged for token in ("변경", "수정", "바꿔", "rename", "update")) and "update_page" in name:
+            s += 8
+
+        if any(token in merged for token in ("삭제", "아카이브", "archive", "delete")) and (
+            "delete_block" in name or "update_page" in name
+        ):
+            s += 10
+
+        if any(token in merged for token in ("데이터소스", "data source", "data_source")) and (
+            "query_data_source" in name or "retrieve_data_source" in name
+        ):
+            s += 10
+
+        return s
+
+    return sorted(tools, key=lambda item: score(item), reverse=True)
+
+
 def _plan_needs_lookup(plan: AgentPlan) -> bool:
     text = plan.user_text
     return any(keyword in text for keyword in ("조회", "검색", "목록", "보여", "출력", "요약"))
@@ -197,11 +242,13 @@ async def _choose_next_action(
     history_text = json.dumps(history[-8:], ensure_ascii=False)
     system_prompt = (
         "당신은 metel의 실행 에이전트입니다. 반드시 JSON object만 출력하세요. "
-        "도구 호출은 허용된 tool_name만 사용하고, tool_input은 JSON object로 작성하세요."
+        "도구 호출은 허용된 tool_name만 사용하고, tool_input은 JSON object로 작성하세요. "
+        "핵심 원칙: 작업이 끝나기 전에는 final을 선택하지 말고 필요한 tool_call을 우선 수행하세요."
     )
     user_prompt = (
         f"사용자 요청: {plan.user_text}\n"
         f"요구사항: {[item.summary for item in plan.requirements]}\n"
+        f"워크플로우 단계: {plan.workflow_steps}\n"
         f"허용 도구: {allowed_tools}\n"
         f"도구 스키마 요약:\n{tool_schema_snippet}\n"
         f"현재 실행 이력(JSON): {history_text}\n\n"
@@ -275,6 +322,15 @@ async def run_autonomous_loop(
         allowed_tools = _dedupe_keep_order(selected_known + mutation_fallback)
     else:
         allowed_tools = _dedupe_keep_order([tool.tool_name for tool in service_tools])
+    allowed_tools = _rank_tools_by_intent(allowed_tools, plan)
+
+    # Reduce tool fan-out to improve autonomous convergence (while preserving planner-selected tools).
+    max_candidates = 8
+    if len(allowed_tools) > max_candidates:
+        pinned = [name for name in plan.selected_tools if name in allowed_tools]
+        compact = _dedupe_keep_order(pinned + allowed_tools)
+        allowed_tools = compact[:max_candidates]
+
     tools = [registry.get_tool(name) for name in allowed_tools]
     tool_schema_snippet = "\n".join(
         f"- {tool.tool_name}: {tool.description} / schema={json.dumps(tool.input_schema, ensure_ascii=False)}"
