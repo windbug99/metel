@@ -275,6 +275,23 @@ def _extract_target_page_title(user_text: str) -> str | None:
     return None
 
 
+def _extract_requested_page_titles(user_text: str) -> list[str]:
+    # Prefer explicit quoted titles in multi-page requests.
+    quoted = [item.strip() for item in re.findall(r'"([^"]+)"|\'([^\']+)\'', user_text) for item in item if item.strip()]
+    if quoted:
+        return quoted
+
+    # Fallback: "<title1>, <title2> 페이지를 요약..."
+    match = re.search(r"(?i)노션에서\s+(.+?)\s*페이지(?:를|를\s*요약|를\s*조회|를\s*출력|를\s*읽)", user_text)
+    if not match:
+        return []
+    raw = match.group(1).strip()
+    if not raw:
+        return []
+    parts = [part.strip(" \"'`") for part in re.split(r",| 그리고 | 및 | 와 | 과 ", raw) if part.strip()]
+    return [part for part in parts if part]
+
+
 def _extract_append_target_and_content(user_text: str) -> tuple[str | None, str | None]:
     pattern = r"(?i)(?:노션에서\s*)?(?P<title>.+?)\s*(?:페이지)?에\s*(?P<content>.+?)\s*(?:을|를)?\s*추가(?:해줘|해|해줘요)?$"
     match = re.search(pattern, user_text.strip())
@@ -880,12 +897,25 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         except HTTPException as exc:
             if "notion_update_page:BAD_REQUEST" not in str(exc.detail):
                 raise
-            await execute_tool(
-                user_id=user_id,
-                tool_name=_pick_tool(plan, "update_page", "notion_update_page"),
-                payload={"page_id": selected_page_id, "in_trash": True},
-            )
-            steps.append(AgentExecutionStep(name="archive_retry", status="success", detail="fallback=in_trash"))
+            try:
+                await execute_tool(
+                    user_id=user_id,
+                    tool_name=_pick_tool(plan, "update_page", "notion_update_page"),
+                    payload={"page_id": selected_page_id, "in_trash": True},
+                )
+                steps.append(AgentExecutionStep(name="archive_retry", status="success", detail="fallback=in_trash"))
+            except HTTPException as retry_exc:
+                # If page is already archived, treat as success for idempotent delete UX.
+                retrieve = await execute_tool(
+                    user_id=user_id,
+                    tool_name=_pick_tool(plan, "retrieve_page", "notion_retrieve_page"),
+                    payload={"page_id": selected_page_id},
+                )
+                page_data = retrieve.get("data") or {}
+                if page_data.get("archived") is True or page_data.get("in_trash") is True:
+                    steps.append(AgentExecutionStep(name="archive_retry", status="success", detail="already_archived"))
+                else:
+                    raise retry_exc
         steps.append(AgentExecutionStep(name="archive_page", status="success", detail=f"페이지 아카이브: {selected_page['title']}"))
         return AgentExecutionResult(
             success=True,
@@ -968,19 +998,60 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         )
 
     count = _extract_requested_count(plan, default_count=3)
-    search_result = await execute_tool(
-        user_id=user_id,
-        tool_name=_pick_tool(plan, "search", "notion_search"),
-        payload={
-            "query": "",
-            "page_size": count,
-            "filter": {"property": "object", "value": "page"},
-            "sort": {"direction": "descending", "timestamp": "last_edited_time"},
-        },
-    )
-    pages = (search_result.get("data") or {}).get("results", [])
-    normalized_pages = [{"id": page.get("id"), "title": _extract_page_title(page), "url": page.get("url")} for page in pages]
-    steps.append(AgentExecutionStep(name="search_pages", status="success", detail=f"최근 페이지 {len(normalized_pages)}건 조회"))
+    requested_titles = _extract_requested_page_titles(plan.user_text)
+    if requested_titles and _requires_creation(plan):
+        output_title = _extract_output_title(plan.user_text, default_title="")
+        if output_title:
+            requested_titles = [title for title in requested_titles if _normalize_title(title) != _normalize_title(output_title)]
+    if requested_titles:
+        gathered_pages: list[dict] = []
+        for title in requested_titles:
+            search_result = await execute_tool(
+                user_id=user_id,
+                tool_name=_pick_tool(plan, "search", "notion_search"),
+                payload={
+                    "query": title,
+                    "page_size": 5,
+                    "filter": {"property": "object", "value": "page"},
+                    "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+                },
+            )
+            pages = (search_result.get("data") or {}).get("results", [])
+            normalized = [{"id": page.get("id"), "title": _extract_page_title(page), "url": page.get("url")} for page in pages]
+            if not normalized:
+                continue
+            normalized_target = _normalize_title(title)
+            selected = next(
+                (page for page in normalized if _normalize_title(page["title"]) == normalized_target),
+                None,
+            ) or next(
+                (page for page in normalized if normalized_target in _normalize_title(page["title"])),
+                normalized[0],
+            )
+            if not any(item["id"] == selected["id"] for item in gathered_pages):
+                gathered_pages.append(selected)
+        normalized_pages = gathered_pages
+        steps.append(
+            AgentExecutionStep(
+                name="search_pages",
+                status="success",
+                detail=f"요청 제목 기반 조회 {len(normalized_pages)}건 ({', '.join(requested_titles)})",
+            )
+        )
+    else:
+        search_result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "search", "notion_search"),
+            payload={
+                "query": "",
+                "page_size": count,
+                "filter": {"property": "object", "value": "page"},
+                "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+            },
+        )
+        pages = (search_result.get("data") or {}).get("results", [])
+        normalized_pages = [{"id": page.get("id"), "title": _extract_page_title(page), "url": page.get("url")} for page in pages]
+        steps.append(AgentExecutionStep(name="search_pages", status="success", detail=f"최근 페이지 {len(normalized_pages)}건 조회"))
 
     if not normalized_pages:
         return AgentExecutionResult(

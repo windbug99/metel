@@ -253,7 +253,18 @@ async def run_autonomous_loop(user_id: str, plan: AgentPlan) -> AgentExecutionRe
         service_tools = [registry.get_tool(name) for name in plan.selected_tools]
 
     selected_known = [name for name in plan.selected_tools if any(tool.tool_name == name for tool in service_tools)]
-    allowed_tools = _dedupe_keep_order(selected_known + [tool.tool_name for tool in service_tools])
+    if selected_known:
+        # Keep planner tools primary, but add minimal mutation fallback tools when request clearly needs mutation.
+        mutation_fallback = []
+        if _plan_needs_creation(plan):
+            mutation_fallback = [
+                tool.tool_name
+                for tool in service_tools
+                if any(token in tool.tool_name for token in ("create", "append", "update", "delete", "archive"))
+            ]
+        allowed_tools = _dedupe_keep_order(selected_known + mutation_fallback)
+    else:
+        allowed_tools = _dedupe_keep_order([tool.tool_name for tool in service_tools])
     tools = [registry.get_tool(name) for name in allowed_tools]
     tool_schema_snippet = "\n".join(
         f"- {tool.tool_name}: {tool.description} / schema={json.dumps(tool.input_schema, ensure_ascii=False)}"
