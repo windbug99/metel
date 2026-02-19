@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     llm_autonomous_strict: bool = False
     llm_autonomous_limit_retry_once: bool = True
     llm_autonomous_rule_fallback_enabled: bool = True
+    llm_autonomous_rule_fallback_mutation_enabled: bool = False
 
     frontend_url: str = "http://localhost:3000"
     allowed_origins: str = "http://localhost:3000"

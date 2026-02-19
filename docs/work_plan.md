@@ -110,6 +110,12 @@
   - `true`(기본): 자율 실패 시 rule executor fallback 수행
   - `false`: 자율 실패를 그대로 반환(autonomous-only 검증 모드)
 - 관련 테스트: `test_run_agent_analysis_can_disable_rule_fallback`
+- `LLM_AUTONOMOUS_RULE_FALLBACK_MUTATION_ENABLED` 옵션 추가
+  - `false`(기본): 생성/추가/이동/삭제/수정 같은 mutation 의도에서 자율 실패 시 rule fallback 차단
+  - `true`: mutation 의도도 기존처럼 rule fallback 허용
+- 관련 테스트:
+  - `test_run_agent_analysis_blocks_rule_fallback_for_mutation_intent`
+  - `test_run_agent_analysis_allows_rule_fallback_for_lookup_intent`
 
 ### 자율 품질 측정 운영 (1단계 구현 완료)
 

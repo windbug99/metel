@@ -76,6 +76,31 @@ def _parse_data_source_query_state(user_text: str) -> tuple[bool, str]:
     return True, "invalid"
 
 
+def _is_mutation_intent(user_text: str) -> bool:
+    text = (user_text or "").strip().lower()
+    mutation_keywords = (
+        "생성",
+        "만들",
+        "작성",
+        "추가",
+        "변경",
+        "수정",
+        "삭제",
+        "지워",
+        "아카이브",
+        "이동",
+        "옮겨",
+        "rename",
+        "create",
+        "update",
+        "delete",
+        "archive",
+        "move",
+        "append",
+    )
+    return any(keyword in text for keyword in mutation_keywords)
+
+
 def _retry_guidance_for_error(error_code: str) -> str:
     guides = {
         "turn_limit": "이전 실행에서 turn 한도에 도달했습니다. 불필요한 조회를 줄이고 핵심 도구만 사용하세요.",
@@ -189,6 +214,10 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     autonomous_strict = bool(getattr(settings, "llm_autonomous_strict", False))
     autonomous_retry_once = bool(getattr(settings, "llm_autonomous_limit_retry_once", True))
     autonomous_rule_fallback_enabled = bool(getattr(settings, "llm_autonomous_rule_fallback_enabled", True))
+    autonomous_rule_fallback_mutation_enabled = bool(
+        getattr(settings, "llm_autonomous_rule_fallback_mutation_enabled", False)
+    )
+    autonomous: AgentExecutionResult | None = None
 
     if autonomous_enabled:
         autonomous = await run_autonomous_loop(user_id=user_id, plan=plan)
@@ -233,6 +262,15 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             if execution is None and not autonomous_rule_fallback_enabled:
                 execution = autonomous
                 plan.notes.append("execution=autonomous_no_rule_fallback")
+
+            if (
+                execution is None
+                and autonomous is not None
+                and not autonomous_rule_fallback_mutation_enabled
+                and _is_mutation_intent(user_text)
+            ):
+                execution = autonomous
+                plan.notes.append("execution=autonomous_no_rule_fallback_mutation")
 
             if execution is None:
                 plan.notes.append("execution=autonomous_fallback")

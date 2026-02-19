@@ -197,6 +197,74 @@ def test_run_agent_analysis_can_disable_rule_fallback(monkeypatch):
     assert any(item == "execution=autonomous_no_rule_fallback" for item in result.plan.notes)
 
 
+def test_run_agent_analysis_blocks_rule_fallback_for_mutation_intent(monkeypatch):
+    llm_plan = _sample_plan()
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        llm_autonomous_strict = False
+        llm_autonomous_limit_retry_once = False
+        llm_autonomous_rule_fallback_enabled = True
+        llm_autonomous_rule_fallback_mutation_enabled = False
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan, **kwargs):
+        return AgentExecutionResult(
+            success=False,
+            user_message="auto-fail",
+            summary="auto-fail",
+            artifacts={"error_code": "verification_failed"},
+        )
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        raise AssertionError("executor should not be called for mutation intent when blocked")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("노션 페이지 생성해줘 주간 회의록", ["notion"], "user-1"))
+    assert result.ok is False
+    assert any(item == "execution=autonomous_no_rule_fallback_mutation" for item in result.plan.notes)
+
+
+def test_run_agent_analysis_allows_rule_fallback_for_lookup_intent(monkeypatch):
+    llm_plan = _sample_plan()
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        llm_autonomous_strict = False
+        llm_autonomous_limit_retry_once = False
+        llm_autonomous_rule_fallback_enabled = True
+        llm_autonomous_rule_fallback_mutation_enabled = False
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan, **kwargs):
+        return AgentExecutionResult(
+            success=False,
+            user_message="auto-fail",
+            summary="auto-fail",
+            artifacts={"error_code": "turn_limit"},
+        )
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("노션 최근 페이지 3개 조회해줘", ["notion"], "user-1"))
+    assert result.ok is True
+    assert any(item == "execution=autonomous_fallback" for item in result.plan.notes)
+
+
 def test_run_agent_analysis_validates_data_source_id_early(monkeypatch):
     called = {"llm": False, "exec": False}
 
