@@ -9,6 +9,7 @@ from agent.planner import build_agent_plan
 from agent.registry import load_registry
 from agent.types import AgentPlan, AgentRequirement
 from app.core.config import get_settings
+from app.security.provider_keys import load_user_provider_token
 
 
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
@@ -87,6 +88,7 @@ async def try_build_agent_plan_with_llm(
     *,
     user_text: str,
     connected_services: list[str],
+    user_id: str | None = None,
 ) -> tuple[AgentPlan | None, str | None]:
     settings = get_settings()
     if not settings.llm_planner_enabled:
@@ -130,6 +132,8 @@ async def try_build_agent_plan_with_llm(
         attempts.append((fallback_provider, fallback_model))
 
     errors: list[str] = []
+    user_openai_key = load_user_provider_token(user_id, "openai") if user_id else None
+    effective_openai_key = user_openai_key or settings.openai_api_key
     used: set[tuple[str, str]] = set()
     for provider, model in attempts:
         key = (provider, model)
@@ -137,7 +141,7 @@ async def try_build_agent_plan_with_llm(
             continue
         used.add(key)
 
-        if provider == "openai" and not settings.openai_api_key:
+        if provider == "openai" and not effective_openai_key:
             errors.append("openai_api_key_missing")
             continue
         if provider == "gemini" and not settings.google_api_key:
@@ -149,7 +153,7 @@ async def try_build_agent_plan_with_llm(
             model=model,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            openai_api_key=settings.openai_api_key,
+            openai_api_key=effective_openai_key,
             google_api_key=settings.google_api_key,
         )
         if err:

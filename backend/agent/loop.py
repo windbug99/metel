@@ -349,6 +349,7 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     llm_plan, llm_error = await try_build_agent_plan_with_llm(
         user_text=user_text,
         connected_services=connected_services,
+        user_id=user_id,
     )
     if llm_plan:
         plan = llm_plan

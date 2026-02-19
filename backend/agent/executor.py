@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from agent.tool_runner import execute_tool
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan
 from app.core.config import get_settings
+from app.security.provider_keys import load_user_provider_token
 
 
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
@@ -187,9 +188,11 @@ async def _request_summary_with_provider(
     return None
 
 
-async def _summarize_text_with_llm(text: str, user_text: str) -> tuple[str, str]:
+async def _summarize_text_with_llm(text: str, user_text: str, user_id: str | None = None) -> tuple[str, str]:
     line_count = _extract_summary_line_count(user_text)
     settings = get_settings()
+    user_openai_key = load_user_provider_token(user_id, "openai") if user_id else None
+    effective_openai_key = user_openai_key or settings.openai_api_key
     attempts: list[tuple[str, str]] = []
 
     primary_provider = (settings.llm_planner_provider or "openai").strip().lower()
@@ -212,7 +215,7 @@ async def _summarize_text_with_llm(text: str, user_text: str) -> tuple[str, str]
                 model=model,
                 text=text,
                 line_count=line_count,
-                openai_api_key=settings.openai_api_key,
+                openai_api_key=effective_openai_key,
                 google_api_key=settings.google_api_key,
             )
             if summary:
@@ -761,7 +764,7 @@ async def _read_page_lines_or_summary(
         )
 
     if _requires_summary_only(plan):
-        summary, summarize_mode = await _summarize_text_with_llm("\n".join(raw_lines), plan.user_text)
+        summary, summarize_mode = await _summarize_text_with_llm("\n".join(raw_lines), plan.user_text, user_id)
         steps.append(
             AgentExecutionStep(
                 name="summarize_page",
@@ -1119,7 +1122,7 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         if urls and "요약" in plan.user_text:
             source_text = await _fetch_url_plain_text(urls[0])
             if source_text:
-                summary_text, summarize_mode = await _summarize_text_with_llm(source_text, plan.user_text)
+                summary_text, summarize_mode = await _summarize_text_with_llm(source_text, plan.user_text, user_id)
                 char_limit = _extract_summary_char_limit(plan.user_text)
                 if char_limit:
                     summary_text = re.sub(r"\s+", " ", summary_text).strip()[:char_limit].rstrip()
@@ -1626,7 +1629,7 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             )
             blocks = (block_result.get("data") or {}).get("results", [])
             plain = _extract_plain_text_from_blocks(blocks)
-            short, _ = await _summarize_text_with_llm(plain, "핵심 요약 1~2문장")
+            short, _ = await _summarize_text_with_llm(plain, "핵심 요약 1~2문장", user_id)
             summary_lines.extend(
                 [
                     "",
