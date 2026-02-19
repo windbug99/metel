@@ -10,6 +10,9 @@ def test_registry_loads_services_and_tools():
     tool = registry.get_tool("notion_search")
     assert tool.service == "notion"
     assert tool.method == "POST"
+    comment_tool = registry.get_tool("notion_retrieve_comment")
+    assert comment_tool.service == "notion"
+    assert comment_tool.method == "GET"
 
 
 def test_registry_filters_by_connected_services():

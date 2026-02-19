@@ -170,7 +170,7 @@ async def notion_pages_list(request: Request, page_size: int = Query(5, ge=1, le
                 "https://api.notion.com/v1/search",
                 headers={
                     "Authorization": f"Bearer {token}",
-                    "Notion-Version": "2022-06-28",
+                    "Notion-Version": settings.notion_api_version,
                     "Content-Type": "application/json",
                 },
                 json={

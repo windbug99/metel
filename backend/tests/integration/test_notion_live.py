@@ -19,9 +19,10 @@ def _env(name: str) -> str:
 
 
 def _headers(token: str) -> dict[str, str]:
+    notion_version = os.getenv("NOTION_LIVE_API_VERSION", "2025-09-03")
     return {
         "Authorization": f"Bearer {token}",
-        "Notion-Version": "2022-06-28",
+        "Notion-Version": notion_version,
         "Content-Type": "application/json",
     }
 

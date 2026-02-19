@@ -129,7 +129,7 @@ async def _fetch_notion_pages_for_user(user_id: str, page_size: int = 5) -> list
             "https://api.notion.com/v1/search",
             headers={
                 "Authorization": f"Bearer {token}",
-                "Notion-Version": "2022-06-28",
+                "Notion-Version": settings.notion_api_version,
                 "Content-Type": "application/json",
             },
             json={
@@ -196,7 +196,7 @@ async def _create_notion_page_for_user(user_id: str, title: str) -> dict:
             "https://api.notion.com/v1/pages",
             headers={
                 "Authorization": f"Bearer {token}",
-                "Notion-Version": "2022-06-28",
+                "Notion-Version": settings.notion_api_version,
                 "Content-Type": "application/json",
             },
             json={

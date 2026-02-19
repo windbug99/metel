@@ -343,8 +343,8 @@ def _extract_append_target_and_content(user_text: str) -> tuple[str | None, str 
 def _extract_move_request(user_text: str) -> tuple[str | None, str | None]:
     text = re.sub(r"\s+", " ", (user_text or "").strip())
     patterns = [
-        r'(?is)(?:노션에서\s*)?(?P<source>.+?)\s*(?:페이지)?를\s*(?P<parent>.+?)\s*(?:페이지)?\s*(?:하위|아래|밑)\s*로\s*(?:이동|옮겨|옮기)(?:해줘|해주세요|하세요)?',
-        r'(?is)(?:노션에서\s*)?(?P<source>.+?)\s*(?:페이지)?를\s*(?P<parent>.+?)\s*(?:페이지)?\s*(?:하위|아래|밑)에\s*(?:이동|옮겨|옮기)(?:해줘|해주세요|하세요)?',
+        r'(?is)(?:노션에서\s*)?(?P<source>.+?)\s*(?:페이지)?를\s*(?P<parent>.+?)(?:의)?\s*(?:하위\s*페이지|하위|아래|밑)\s*(?:로|에)\s*(?:이동|옮겨|옮기|이동시키)(?:주세요|세요|해줘|해주세요|하세요|해)?',
+        r'(?is)(?:노션에서\s*)?(?P<source>.+?)\s*(?:페이지)?를\s*(?P<parent>.+?)\s*(?:페이지)?\s*(?:하위\s*페이지|하위|아래|밑)\s*(?:로|에)\s*(?:이동|옮겨|옮기|이동시키)(?:주세요|세요|해줘|해주세요|하세요|해)?',
     ]
     for pattern in patterns:
         match = re.search(pattern, text)
@@ -352,6 +352,7 @@ def _extract_move_request(user_text: str) -> tuple[str | None, str | None]:
             continue
         source = re.sub(r"^(노션|notion)\s*", "", match.group("source").strip(" \"'`"), flags=re.IGNORECASE).strip()
         parent = re.sub(r"^(노션|notion)\s*", "", match.group("parent").strip(" \"'`"), flags=re.IGNORECASE).strip()
+        parent = re.sub(r"(?:페이지)?의$", "", parent).strip()
         if source and parent:
             return source, parent
     return None, None

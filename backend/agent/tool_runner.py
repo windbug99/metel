@@ -38,6 +38,14 @@ def _load_oauth_access_token(user_id: str, provider: str) -> str:
     return TokenVault(settings.notion_token_encryption_key).decrypt(encrypted)
 
 
+def _notion_headers(token: str) -> dict[str, str]:
+    settings = get_settings()
+    return {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": settings.notion_api_version,
+    }
+
+
 def _extract_path_params(path: str) -> list[str]:
     return re.findall(r"{([a-zA-Z0-9_]+)}", path)
 
@@ -109,10 +117,7 @@ async def _execute_notion_http(user_id: str, tool: ToolDefinition, payload: dict
     body_or_query = _strip_path_params(tool.path, payload)
     url = f"https://api.notion.com{path}"
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Notion-Version": "2022-06-28",
-    }
+    headers = _notion_headers(token)
     method = tool.method.upper()
     async with httpx.AsyncClient(timeout=20) as client:
         if method == "GET":

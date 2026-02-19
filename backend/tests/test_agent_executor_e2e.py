@@ -608,6 +608,59 @@ def test_execute_notion_move_page_under_parent(monkeypatch):
     assert [item[0] for item in calls] == ["notion_search", "notion_search", "notion_update_page"]
 
 
+def test_execute_notion_move_page_under_parent_with_possessive_phrase(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "notion_search":
+            if payload.get("query") == "일일 회의록":
+                return {
+                    "ok": True,
+                    "data": {
+                        "results": [
+                            {
+                                "id": "src-1",
+                                "url": "https://notion.so/src-1",
+                                "properties": {"title": {"type": "title", "title": [{"plain_text": "일일 회의록"}]}},
+                            }
+                        ]
+                    },
+                }
+            if payload.get("query") == "Metel test page":
+                return {
+                    "ok": True,
+                    "data": {
+                        "results": [
+                            {
+                                "id": "parent-1",
+                                "url": "https://notion.so/parent-1",
+                                "properties": {
+                                    "title": {"type": "title", "title": [{"plain_text": "Metel test page"}]}
+                                },
+                            }
+                        ]
+                    },
+                }
+        if tool_name == "notion_update_page":
+            assert payload.get("page_id") == "src-1"
+            assert payload.get("parent", {}).get("page_id") == "parent-1"
+            return {"ok": True, "data": {"id": "src-1"}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = _plan(
+        "노션에서 일일 회의록 페이지를 Metel test page의 하위 페이지로 이동시키세요",
+        ["notion_search", "notion_update_page"],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+
+    assert result.success is True
+    assert "페이지 이동" in result.summary
+    assert [item[0] for item in calls] == ["notion_search", "notion_search", "notion_update_page"]
+
+
 def test_execute_notion_append_with_url_summary(monkeypatch):
     calls = []
 
