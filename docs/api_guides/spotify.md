@@ -30,6 +30,9 @@
 
 - 현재 사용자 조회: `GET /v1/me`
 - 최근 재생곡 조회: `GET /v1/me/player/recently-played`
+- 툴 이름 호환성:
+  - `spotify_get_recently_played` (정식)
+  - `spotify_get_recent_tracks` (planner/autonomous 호환 alias)
 - 사용자 상위 트랙: `GET /v1/me/top/tracks`
 - 플레이리스트 트랙 조회: `GET /v1/playlists/{playlist_id}/tracks`
 
