@@ -37,7 +37,15 @@ def _registry():
         description="create page",
         input_schema={"type": "object", "properties": {"title": {"type": "string"}}},
     )
-    tools = [notion_search, notion_create]
+    notion_append = SimpleNamespace(
+        tool_name="notion_append_block_children",
+        description="append block children",
+        input_schema={
+            "type": "object",
+            "properties": {"block_id": {"type": "string"}, "children": {"type": "array"}},
+        },
+    )
+    tools = [notion_search, notion_create, notion_append]
     return SimpleNamespace(
         list_tools=lambda service: tools if service == "notion" else [],
         get_tool=lambda name: next(item for item in tools if item.tool_name == name),
@@ -192,3 +200,56 @@ def test_autonomous_append_requires_append_block_children_tool(monkeypatch):
         step.name.endswith("_verify") and step.detail == "append_requires_append_block_children"
         for step in result.steps
     )
+
+
+def test_autonomous_blocks_duplicate_mutation_tool_call(monkeypatch):
+    def _settings_dup():
+        return SimpleNamespace(
+            llm_autonomous_enabled=True,
+            llm_autonomous_max_turns=5,
+            llm_autonomous_max_tool_calls=5,
+            llm_autonomous_timeout_sec=30,
+            llm_autonomous_replan_limit=1,
+        )
+
+    sequence = iter(
+        [
+            (
+                {
+                    "action": "tool_call",
+                    "tool_name": "notion_append_block_children",
+                    "tool_input": {"block_id": "p1", "children": [{"object": "block"}]},
+                },
+                None,
+            ),
+            (
+                {
+                    "action": "tool_call",
+                    "tool_name": "notion_append_block_children",
+                    "tool_input": {"block_id": "p1", "children": [{"object": "block"}]},
+                },
+                None,
+            ),
+            ({"action": "final", "final_response": "추가를 완료했습니다."}, None),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        return {"ok": True, "data": {"id": "p1"}}
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings_dup)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+
+    result = asyncio.run(run_autonomous_loop("user-1", _plan("0219 페이지에 액션 아이템 추가해줘")))
+
+    assert result.success is True
+    assert len(calls) == 1
+    assert any(step.detail == "duplicate_mutation_call_blocked" for step in result.steps)

@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from agent.registry import ToolSpecValidationError, validate_registry_on_startup
 from app.core.config import get_settings
 from app.routes.notion import router as notion_router
 from app.routes.telegram import router as telegram_router
@@ -24,6 +25,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def validate_tool_specs() -> None:
+    if not settings.tool_specs_validate_on_startup:
+        logger.info("tool_specs_validation skipped (TOOL_SPECS_VALIDATE_ON_STARTUP=false)")
+        return
+    try:
+        summary = validate_registry_on_startup()
+        logger.info(
+            "tool_specs_validation ok service_count=%s tool_count=%s",
+            summary["service_count"],
+            summary["tool_count"],
+        )
+    except ToolSpecValidationError as exc:
+        logger.exception("tool_specs_validation failed")
+        raise RuntimeError(f"Tool spec validation failed: {exc}") from exc
 
 
 @app.middleware("http")

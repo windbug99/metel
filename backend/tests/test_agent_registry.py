@@ -1,4 +1,4 @@
-from agent.registry import load_registry
+from agent.registry import load_registry, validate_registry_on_startup
 
 
 def test_registry_loads_services_and_tools():
@@ -20,3 +20,14 @@ def test_registry_filters_by_connected_services():
     notion_tools = registry.list_available_tools(connected_services=["notion"])
     assert notion_tools
     assert all(tool.service == "notion" for tool in notion_tools)
+
+
+def test_registry_summary_and_startup_validation():
+    registry = load_registry()
+    summary = registry.summary()
+    assert summary["service_count"] >= 2
+    assert summary["tool_count"] >= 10
+
+    startup_summary = validate_registry_on_startup()
+    assert startup_summary["service_count"] == summary["service_count"]
+    assert startup_summary["tool_count"] == summary["tool_count"]

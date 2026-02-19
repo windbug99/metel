@@ -79,9 +79,9 @@ class ToolRegistry:
         self._by_name = {tool.tool_name: tool for tool in tools}
 
     @classmethod
-    def load_from_disk(cls) -> "ToolRegistry":
+    def load_from_dir(cls, specs_dir: Path) -> "ToolRegistry":
         tools: list[ToolDefinition] = []
-        for path in sorted(TOOL_SPECS_DIR.glob("*.json")):
+        for path in sorted(specs_dir.glob("*.json")):
             if path.name == "schema.json":
                 continue
             spec = _load_json(path)
@@ -103,6 +103,17 @@ class ToolRegistry:
                     )
                 )
         return cls(tools)
+
+    @classmethod
+    def load_from_disk(cls) -> "ToolRegistry":
+        return cls.load_from_dir(TOOL_SPECS_DIR)
+
+    def summary(self) -> dict[str, int]:
+        services = {tool.service for tool in self._tools}
+        return {
+            "service_count": len(services),
+            "tool_count": len(self._tools),
+        }
 
     def list_services(self) -> list[str]:
         return sorted({tool.service for tool in self._tools})
@@ -158,3 +169,7 @@ def reload_registry() -> ToolRegistry:
     load_registry.cache_clear()
     return load_registry()
 
+
+def validate_registry_on_startup() -> dict[str, int]:
+    registry = reload_registry()
+    return registry.summary()

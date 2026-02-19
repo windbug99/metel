@@ -74,7 +74,8 @@
 - 실행 모드 가시성 강화:
   - 텔레그램 응답에 `plan_source` + `execution_mode` + `autonomous_fallback_reason` 표시
 - 자율 루프 수렴 개선(2026-02-19):
-  - `autonomous.py`에서 요청 의도 기반 도구 우선순위 정렬 적용
+- `autonomous.py`에서 요청 의도 기반 도구 우선순위 정렬 적용
+- `autonomous.py`에서 동일 mutation 도구 호출 반복 방지(같은 tool+payload 재실행 차단) 적용
   - 자율 루프 도구 후보를 최대 8개로 축소(Planner가 선택한 도구 우선 고정)
   - 자율 액션 프롬프트에 `workflow_steps` 주입 및 "필요 tool_call 완료 전 final 금지" 원칙 추가
 - 자율 실행 정책 강화(2026-02-19):
@@ -557,20 +558,31 @@ Notion은 생산성 도구로서 다양한 API를 제공하며, OAuth 연동이 
     2.  추론된 서비스의 가이드 핵심 섹션만 추출.
     3.  Planner 입력 컨텍스트에 가이드 요약 포함.
 *   **완료 기준:** 요청별로 서비스 추론 결과와 참조된 가이드 섹션이 로그에 남음.
+*   **진행 상태:** 고도화 진행 중
+    *   Service Resolver가 하드코딩 키워드 + `tool_specs`(tool_name/description) 기반 동적 키워드를 함께 사용하도록 개선.
+    *   신규 서비스가 `connected_services`와 spec에만 추가되어도 추론 후보로 잡히는 단위 테스트 추가.
 
 #### 3.8.3. Tool Spec 컴파일/검증 파이프라인
 
 *   **구현 내용:**
     *   `tool_specs`의 스키마 유효성 검증과 런타임 로딩 안정화.
+    *   서버 시작 시 spec 전체 검증을 강제하고, 수동 점검 스크립트를 제공.
 *   **생성/수정 파일:**
     *   `backend/agent/tool_specs/schema.json`
     *   `backend/agent/registry.py`
-    *   `backend/tests/test_tool_spec_schema.py`
+    *   `backend/main.py`
+    *   `backend/scripts/check_tool_specs.py`
+    *   `backend/tests/test_agent_registry.py`
+    *   `backend/.env.example`
 *   **진행 순서:**
     1.  tool spec JSON Schema 정의.
     2.  서버 시작 시 전체 스펙 검증/로드.
     3.  invalid spec 발견 시 부팅 실패 또는 경고 정책 적용.
 *   **완료 기준:** 잘못된 tool spec이 런타임까지 유입되지 않음.
+*   **현재 상태:** 완료
+    *   `TOOL_SPECS_VALIDATE_ON_STARTUP=true`(기본)일 때 FastAPI startup에서 `validate_registry_on_startup()` 실행.
+    *   잘못된 스펙 감지 시 서버가 즉시 실패(fail-fast)하도록 적용.
+    *   수동 검증: `cd backend && . .venv/bin/activate && python scripts/check_tool_specs.py --json`
 
 #### 3.8.4. Spotify 실행 도구 세트 추가
 
@@ -609,6 +621,10 @@ Notion은 생산성 도구로서 다양한 API를 제공하며, OAuth 연동이 
     2.  에이전트가 해당 서비스 요청을 인식/계획/실행하는지 검증.
     3.  실패 시 어떤 단계에서 막혔는지 로그로 추적 확인.
 *   **완료 기준:** 핵심 라우터 수정 없이 신규 서비스가 동작.
+*   **진행 상태:** 부분 완료
+    *   `ToolRegistry.load_from_dir(...)`를 추가해 스펙 디렉토리 단위 로딩 검증 가능.
+    *   `backend/tests/test_registry_extensibility.py`에서 mock 서비스 스펙 1개만으로 로딩/도구 조회 성공을 검증.
+    *   남은 작업: 실제 실행 어댑터(HTTP runner)까지 포함한 E2E 수용 테스트 추가.
 
 ## 4. 결론
 

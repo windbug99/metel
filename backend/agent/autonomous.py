@@ -180,6 +180,37 @@ def _has_successful_tool(history: list[dict[str, Any]], *tokens: str) -> bool:
     return False
 
 
+def _is_mutation_tool_name(tool_name: str) -> bool:
+    lower = tool_name.lower()
+    return any(token in lower for token in ("create", "append", "update", "delete", "archive", "move"))
+
+
+def _has_same_successful_mutation_call(
+    history: list[dict[str, Any]],
+    *,
+    tool_name: str,
+    tool_input: dict[str, Any],
+) -> bool:
+    if not _is_mutation_tool_name(tool_name):
+        return False
+    try:
+        needle = json.dumps(tool_input, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        needle = str(tool_input)
+    for item in history:
+        if item.get("action") != "tool_call" or item.get("status") != "success":
+            continue
+        if item.get("tool_name") != tool_name:
+            continue
+        try:
+            prev = json.dumps(item.get("tool_input", {}), ensure_ascii=False, sort_keys=True)
+        except TypeError:
+            prev = str(item.get("tool_input", {}))
+        if prev == needle:
+            return True
+    return False
+
+
 def _plan_needs_move(plan: AgentPlan) -> bool:
     text = plan.user_text
     return any(token in text for token in ("이동", "옮겨", "옮기", "이동시키")) and any(
@@ -525,6 +556,37 @@ async def run_autonomous_loop(
             if invalid_action_count >= 2 and replan_count < replan_limit:
                 replan_count += 1
                 history.append({"turn": turn, "action": "replan", "status": "forced", "reason": "invalid_tool_input"})
+            continue
+
+        if _has_same_successful_mutation_call(history, tool_name=tool_name, tool_input=tool_input):
+            steps.append(
+                AgentExecutionStep(
+                    name=f"turn_{turn}_tool:{tool_name}",
+                    status="error",
+                    detail="duplicate_mutation_call_blocked",
+                )
+            )
+            history.append(
+                {
+                    "turn": turn,
+                    "action": "tool_call",
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
+                    "status": "skipped",
+                    "error": "duplicate_mutation_call_blocked",
+                }
+            )
+            invalid_action_count += 1
+            if invalid_action_count >= 2 and replan_count < replan_limit:
+                replan_count += 1
+                history.append(
+                    {
+                        "turn": turn,
+                        "action": "replan",
+                        "status": "forced",
+                        "reason": "duplicate_mutation_call_blocked",
+                    }
+                )
             continue
 
         try:

@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     llm_autonomous_limit_retry_once: bool = True
     llm_autonomous_rule_fallback_enabled: bool = True
     llm_autonomous_rule_fallback_mutation_enabled: bool = False
+    tool_specs_validate_on_startup: bool = True
 
     frontend_url: str = "http://localhost:3000"
     allowed_origins: str = "http://localhost:3000"
