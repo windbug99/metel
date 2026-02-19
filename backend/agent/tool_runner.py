@@ -125,7 +125,27 @@ async def _execute_notion_http(user_id: str, tool: ToolDefinition, payload: dict
 
     if response.status_code >= 400:
         mapped = tool.error_map.get(str(response.status_code), "TOOL_FAILED")
-        raise HTTPException(status_code=400, detail=f"{tool.tool_name}:{mapped}")
+        # Preserve compact error code prefix for existing handlers,
+        # and append upstream diagnostics for faster debugging.
+        upstream_code = ""
+        upstream_message = ""
+        upstream_request_id = response.headers.get("x-notion-request-id", "")
+        try:
+            err_payload = response.json()
+            upstream_code = str(err_payload.get("code", "") or "")
+            upstream_message = str(err_payload.get("message", "") or "")
+            if not upstream_request_id:
+                upstream_request_id = str(err_payload.get("request_id", "") or "")
+        except JSONDecodeError:
+            upstream_message = response.text[:300]
+
+        extra = (
+            f"|status={response.status_code}"
+            f"|code={upstream_code}"
+            f"|message={upstream_message}"
+            f"|request_id={upstream_request_id}"
+        )
+        raise HTTPException(status_code=400, detail=f"{tool.tool_name}:{mapped}{extra}")
     try:
         return {"ok": True, "data": response.json()}
     except JSONDecodeError:

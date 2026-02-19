@@ -870,12 +870,19 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             {"id": page.get("id"), "title": _extract_page_title(page), "url": page.get("url")}
             for page in raw_pages
         ]
+        steps.append(
+            AgentExecutionStep(
+                name="search_pages",
+                status="success",
+                detail=f"삭제 대상 조회 '{target_title}' 결과 {len(normalized_pages)}건",
+            )
+        )
         if not normalized_pages:
             return AgentExecutionResult(
                 success=False,
                 summary="삭제 대상 페이지를 찾지 못했습니다.",
                 user_message=f"'{target_title}' 페이지를 찾지 못했습니다.",
-                steps=steps + [AgentExecutionStep(name="search_pages", status="error", detail="page_not_found")],
+                steps=steps + [AgentExecutionStep(name="select_page", status="error", detail="page_not_found")],
             )
 
         normalized_target = _normalize_title(target_title)
@@ -885,6 +892,13 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         ) or next(
             (page for page in normalized_pages if normalized_target in _normalize_title(page["title"])),
             normalized_pages[0],
+        )
+        steps.append(
+            AgentExecutionStep(
+                name="select_page",
+                status="success",
+                detail=f"선택 페이지: {selected_page['title']} ({selected_page.get('id')})",
+            )
         )
         selected_page_id = selected_page.get("id")
         if not _is_valid_notion_id(selected_page_id):
