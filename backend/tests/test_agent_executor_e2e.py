@@ -54,6 +54,62 @@ def test_execute_notion_rename_flow(monkeypatch):
     assert calls[1][0] == "notion_update_page"
 
 
+def test_execute_spotify_recent_tracks_to_notion(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "spotify_get_recently_played":
+            return {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {
+                            "track": {
+                                "name": "Song A",
+                                "artists": [{"name": "Artist A"}],
+                                "external_urls": {"spotify": "https://open.spotify.com/track/a"},
+                            }
+                        },
+                        {
+                            "track": {
+                                "name": "Song B",
+                                "artists": [{"name": "Artist B"}],
+                                "external_urls": {"spotify": "https://open.spotify.com/track/b"},
+                            }
+                        }
+                    ]
+                },
+            }
+        if tool_name == "notion_create_page":
+            return {"ok": True, "data": {"id": "page-lyrics", "url": "https://notion.so/page-lyrics"}}
+        if tool_name == "notion_append_block_children":
+            return {"ok": True, "data": {"results": []}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="스포티파이에서 최근 들었던 10곡을 노션에 spotify10 새로운 페이지에 작성하세요",
+        requirements=[AgentRequirement(summary="최근 재생곡 목록 페이지 생성")],
+        target_services=["spotify", "notion"],
+        selected_tools=["spotify_get_recently_played", "notion_create_page", "notion_append_block_children"],
+        workflow_steps=[],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert "목록" in result.summary
+    assert result.artifacts["created_page_title"] == "spotify10"
+    assert result.artifacts["track_count"] == "2"
+    assert [name for name, _ in calls] == [
+        "spotify_get_recently_played",
+        "notion_create_page",
+        "notion_append_block_children",
+    ]
+
+
 def test_execute_notion_data_source_query_flow(monkeypatch):
     calls = []
 

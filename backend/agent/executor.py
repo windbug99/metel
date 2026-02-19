@@ -529,6 +529,152 @@ def _requires_summary(plan: AgentPlan) -> bool:
     return any("요약" in req.summary for req in plan.requirements) or "요약" in plan.user_text
 
 
+def _requires_spotify_recent_tracks_to_notion(plan: AgentPlan) -> bool:
+    text = (plan.user_text or "").lower()
+    has_spotify = any(token in text for token in ("spotify", "스포티파이"))
+    has_notion = any(token in text for token in ("notion", "노션"))
+    has_recent_track = any(token in text for token in ("마지막", "최근", "last", "recent", "들었던"))
+    has_track_word = any(token in text for token in ("곡", "트랙", "track", "songs", "song"))
+    has_create = any(token in text for token in ("생성", "만들", "create", "페이지"))
+    return has_spotify and has_notion and has_recent_track and has_track_word and has_create
+
+
+def _extract_spotify_recent_track_count(user_text: str, default_count: int = 10) -> int:
+    match = re.search(r"(\d{1,2})\s*(곡|트랙|개|songs?|tracks?)", user_text, flags=re.IGNORECASE)
+    if not match:
+        return default_count
+    return max(1, min(50, int(match.group(1))))
+
+
+def _extract_spotify_output_page_title(user_text: str, default_title: str = "spotify10") -> str:
+    text = re.sub(r"\s+", " ", user_text.strip())
+    patterns = [
+        r'(?i)노션에\s+"(?P<title>[^"]+)"\s*(?:새로운|새로|new)?\s*페이지',
+        r"(?i)노션에\s+'(?P<title>[^']+)'\s*(?:새로운|새로|new)?\s*페이지",
+        r"(?i)노션에\s+(?P<title>[^\s]+)\s*(?:새로운|새로|new)?\s*페이지",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        title = match.group("title").strip(" \"'`")
+        if title:
+            return title[:100]
+    return default_title
+
+
+async def _execute_spotify_recent_tracks_to_notion(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
+    steps: list[AgentExecutionStep] = []
+    steps.append(AgentExecutionStep(name="tool_runner_init", status="success", detail="Spotify+Notion Tool Runner 준비 완료"))
+
+    track_count = _extract_spotify_recent_track_count(plan.user_text, default_count=10)
+    output_title = _extract_spotify_output_page_title(plan.user_text, default_title=f"spotify{track_count}")
+
+    recent = await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_tool(plan, "recently_played", "spotify_get_recently_played"),
+        payload={"limit": track_count},
+    )
+    items = (recent.get("data") or {}).get("items", [])
+    steps.append(AgentExecutionStep(name="spotify_recently_played", status="success", detail=f"items={len(items)}"))
+    if not items:
+        return AgentExecutionResult(
+            success=False,
+            summary="최근 재생곡을 찾지 못했습니다.",
+            user_message="Spotify 최근 재생 기록이 없습니다. 최근 재생 후 다시 시도해주세요.",
+            steps=steps,
+        )
+
+    tracks: list[tuple[str, str, str]] = []
+    seen = set()
+    for item in items:
+        track = (item or {}).get("track") or {}
+        track_name = (track.get("name") or "").strip()
+        if not track_name:
+            continue
+        artists = [artist.get("name", "").strip() for artist in (track.get("artists") or []) if artist.get("name")]
+        artist_name = ", ".join(artists) if artists else "Unknown Artist"
+        external_url = (((track.get("external_urls") or {}).get("spotify")) or "").strip()
+        key = (track_name.lower(), artist_name.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        tracks.append((track_name, artist_name, external_url))
+        if len(tracks) >= track_count:
+            break
+
+    if not tracks:
+        return AgentExecutionResult(
+            success=False,
+            summary="최근 재생 트랙 정보를 추출하지 못했습니다.",
+            user_message="Spotify 최근 재생 트랙 이름을 추출하지 못했습니다. 잠시 후 다시 시도해주세요.",
+            steps=steps,
+        )
+
+    create = await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_tool(plan, "create_page", "notion_create_page"),
+        payload={
+            "parent": _notion_create_parent_payload(),
+            "properties": {
+                "title": {
+                    "title": [{"type": "text", "text": {"content": output_title[:100]}}],
+                }
+            },
+        },
+    )
+    page = create.get("data") or {}
+    page_id = page.get("id")
+    page_url = page.get("url")
+    steps.append(AgentExecutionStep(name="create_page", status="success", detail=f"title={output_title}"))
+
+    if page_id:
+        lines: list[str] = [
+            "Spotify recently played tracks",
+            f"Collected count: {len(tracks)}",
+            f"Generated at: {datetime.now(timezone.utc).isoformat()}",
+            "",
+        ]
+        for idx, (track_name, artist_name, external_url) in enumerate(tracks, start=1):
+            line = f"{idx}. {track_name} — {artist_name}"
+            if external_url:
+                line = f"{line} ({external_url})"
+            lines.append(line)
+        children = [
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": [{"type": "text", "text": {"content": line[:1800]}}]},
+            }
+            for line in lines
+            if line.strip()
+        ][:80]
+        await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "append_block_children", "notion_append_block_children"),
+            payload={"block_id": page_id, "children": children},
+        )
+        steps.append(AgentExecutionStep(name="append_content", status="success", detail=f"blocks={len(children)}"))
+
+    return AgentExecutionResult(
+        success=True,
+        summary="최근 재생곡 목록 Notion 페이지 생성을 완료했습니다.",
+        user_message=(
+            "Spotify 최근 재생곡 목록 페이지를 Notion에 생성했습니다.\n"
+            f"- 요청 개수: {track_count}\n"
+            f"- 반영 개수: {len(tracks)}\n"
+            f"- 페이지 제목: {output_title}\n"
+            f"- 페이지 링크: {page_url or '-'}"
+        ),
+        artifacts={
+            "track_count": str(len(tracks)),
+            "created_page_title": output_title,
+            "created_page_url": page_url or "",
+        },
+        steps=steps,
+    )
+
+
 def _requires_creation(plan: AgentPlan) -> bool:
     if _requires_append_to_page(plan):
         return False
@@ -1546,6 +1692,8 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
 
 async def execute_agent_plan(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
     try:
+        if _requires_spotify_recent_tracks_to_notion(plan):
+            return await _execute_spotify_recent_tracks_to_notion(user_id, plan)
         if "notion" in plan.target_services:
             return await _execute_notion_plan(user_id, plan)
         return AgentExecutionResult(

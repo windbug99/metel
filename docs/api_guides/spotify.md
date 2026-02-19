@@ -22,12 +22,14 @@
   - `playlist-modify-public`
 - 선택 권한:
   - `user-top-read` (상위 트랙 기반 추천 구성 시)
+  - `user-read-recently-played` (최근 재생곡 기반 자동화)
 
 ## 4. 핵심 엔드포인트
 
 ### 4.1 Read
 
 - 현재 사용자 조회: `GET /v1/me`
+- 최근 재생곡 조회: `GET /v1/me/player/recently-played`
 - 사용자 상위 트랙: `GET /v1/me/top/tracks`
 - 플레이리스트 트랙 조회: `GET /v1/playlists/{playlist_id}/tracks`
 
@@ -42,6 +44,8 @@
 - API rate limit 존재(429 + Retry-After 대응)
 - 트랙 추가는 URI 단위로 처리(배치 크기 제한 고려)
 - 동일 요청 중복 실행 방지(idempotency key/중복 트랙 체크) 필요
+- Spotify Web API는 가사(lyrics) 엔드포인트를 제공하지 않음
+  - 구현 시나리오에서 가사는 별도 가사 소스 조회가 필요
 
 ## 6. 에러 처리
 

@@ -8,7 +8,8 @@
       "playlist-read-private",
       "playlist-modify-private",
       "playlist-modify-public",
-      "user-top-read"
+      "user-top-read",
+      "user-read-recently-played"
     ]
   },
   "limits": {
@@ -30,6 +31,26 @@
       },
       "error_map": {
         "401": "AUTH_REQUIRED",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "spotify_get_recently_played",
+      "description": "Get the user's recently played tracks",
+      "method": "GET",
+      "path": "/v1/me/player/recently-played",
+      "adapter_function": "spotify_get_recently_played",
+      "required_scopes": ["user-read-recently-played"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+        }
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
         "429": "RATE_LIMITED"
       }
     },

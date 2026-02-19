@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     notion_token_encryption_key: str | None = None
     notion_default_parent_page_id: str | None = None
     notion_api_version: str = "2025-09-03"
+    spotify_client_id: str | None = None
+    spotify_client_secret: str | None = None
+    spotify_redirect_uri: str | None = None
+    spotify_state_secret: str | None = None
 
     telegram_bot_token: str | None = None
     telegram_link_secret: str | None = None

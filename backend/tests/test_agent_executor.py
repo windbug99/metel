@@ -8,6 +8,7 @@ from agent.executor import (
     _extract_requested_line_count,
     _extract_summary_line_count,
     _extract_target_page_title,
+    _requires_spotify_recent_tracks_to_notion,
 )
 from agent.types import AgentPlan, AgentRequirement
 
@@ -90,3 +91,8 @@ def test_extract_summary_line_count():
 def test_extract_page_archive_target():
     title = _extract_page_archive_target("노션에서 Metel test page 페이지 삭제해줘")
     assert title == "Metel test page"
+
+
+def test_requires_spotify_recent_tracks_to_notion():
+    plan = _build_plan("스포티파이에서 최근 들었던 10곡을 노션에 spotify10 새로운 페이지에 작성하세요")
+    assert _requires_spotify_recent_tracks_to_notion(plan) is True
