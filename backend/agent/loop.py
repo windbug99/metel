@@ -10,6 +10,50 @@ from agent.types import AgentExecutionResult, AgentExecutionStep, AgentRunResult
 from app.core.config import get_settings
 
 
+def _has_any_tool(selected_tools: list[str], *tokens: str) -> bool:
+    return any(any(token in tool for token in tokens) for tool in selected_tools)
+
+
+def _is_delete_intent(text: str) -> bool:
+    patterns = [
+        r"(?i)(?:페이지|문서)?\s*(?:를|을)?\s*삭제(?:해줘|해|해주세요)\b",
+        r"(?i)(?:페이지|문서)?\s*(?:를|을)?\s*지워(?:줘|줘요|라|해줘|해)\b",
+        r"(?i)(?:페이지|문서)?\s*(?:를|을)?\s*아카이브(?:해줘|해|해주세요)\b",
+        r"(?i)\b페이지\s*삭제\b",
+        r"(?i)\barchive\b",
+    ]
+    return any(re.search(pattern, text) for pattern in patterns)
+
+
+def _plan_consistency_reason(user_text: str, selected_tools: list[str]) -> str | None:
+    text = (user_text or "").strip()
+    lower = text.lower()
+    tools = selected_tools or []
+
+    if _is_delete_intent(text) and not _has_any_tool(tools, "delete_block", "update_page", "archive"):
+        return "missing_delete_tool"
+
+    if ("데이터소스" in text or "data source" in lower or "data_source" in lower) and any(
+        token in text for token in ("조회", "목록", "query", "불러", "보여")
+    ):
+        if not _has_any_tool(tools, "query_data_source", "retrieve_data_source"):
+            return "missing_data_source_tool"
+
+    if ("추가" in text and "페이지" in text) and not _has_any_tool(tools, "append_block_children"):
+        return "missing_append_tool"
+
+    if any(token in text for token in ("생성", "만들", "작성", "create")) and not _has_any_tool(tools, "create_page"):
+        return "missing_create_tool"
+
+    if "요약" in text and not _has_any_tool(tools, "retrieve_block_children", "retrieve_page"):
+        return "missing_summary_read_tool"
+
+    if any(token in text for token in ("조회", "검색", "목록", "출력", "보여")) and not _has_any_tool(tools, "search"):
+        return "missing_search_tool"
+
+    return None
+
+
 def _parse_data_source_query_state(user_text: str) -> tuple[bool, str]:
     text = user_text or ""
     lower = text.lower()
@@ -85,6 +129,12 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     if llm_plan:
         plan = llm_plan
         plan_source = "llm"
+        consistency_error = _plan_consistency_reason(user_text, plan.selected_tools)
+        if consistency_error:
+            # Auto-replan to deterministic rule planner when LLM plan misses essential tools.
+            plan = build_agent_plan(user_text=user_text, connected_services=connected_services)
+            plan_source = "rule"
+            plan.notes.append(f"plan_realign_from_llm:{consistency_error}")
     else:
         plan = build_agent_plan(user_text=user_text, connected_services=connected_services)
         if llm_error:

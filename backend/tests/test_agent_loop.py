@@ -229,3 +229,46 @@ def test_run_agent_analysis_autonomous_retry_then_success(monkeypatch):
     assert calls["count"] == 2
     assert any(item == "autonomous_retry=1" for item in result.plan.notes)
     assert any(item == "execution=autonomous_retry" for item in result.plan.notes)
+
+
+def test_run_agent_analysis_realigns_bad_llm_plan_to_rule(monkeypatch):
+    # Delete intent인데 llm plan이 delete/update tool을 빠뜨린 경우 자동 재계획(rule)로 전환
+    bad_llm_plan = AgentPlan(
+        user_text="일일 회의록 페이지 삭제해줘",
+        requirements=[AgentRequirement(summary="페이지 삭제")],
+        target_services=["notion"],
+        selected_tools=["notion_search"],  # intentionally incomplete
+        workflow_steps=["1. 검색", "2. 삭제"],
+        notes=[],
+    )
+    rule_plan = AgentPlan(
+        user_text="일일 회의록 페이지 삭제해줘",
+        requirements=[AgentRequirement(summary="페이지 삭제")],
+        target_services=["notion"],
+        selected_tools=["notion_search", "notion_update_page"],
+        workflow_steps=["1. 검색", "2. 아카이브"],
+        notes=[],
+    )
+
+    class _Settings:
+        llm_autonomous_enabled = False
+
+    async def _fake_try_build(**kwargs):
+        return bad_llm_plan, None
+
+    def _fake_build_plan(user_text: str, connected_services: list[str]):
+        return rule_plan
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        assert plan is rule_plan
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.build_agent_plan", _fake_build_plan)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("일일 회의록 페이지 삭제해줘", ["notion"], "user-1"))
+    assert result.ok is True
+    assert result.plan_source == "rule"
+    assert any(item.startswith("plan_realign_from_llm:") for item in result.plan.notes)
