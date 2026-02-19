@@ -21,13 +21,6 @@ type NotionStatus = {
   } | null;
 } | null;
 
-type NotionPage = {
-  id: string;
-  title: string;
-  url: string;
-  last_edited_time: string;
-};
-
 type TelegramStatus = {
   connected: boolean;
   telegram_chat_id?: number | null;
@@ -62,6 +55,18 @@ type CommandLog = {
   created_at: string;
 };
 
+function ServiceLogo({ src, alt }: { src: string; alt: string }) {
+  return (
+    <img
+      src={src}
+      alt={alt}
+      width={20}
+      height={20}
+      className="h-5 w-5 rounded-sm object-contain"
+    />
+  );
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -69,9 +74,6 @@ export default function DashboardPage() {
   const [notionStatus, setNotionStatus] = useState<NotionStatus>(null);
   const [notionStatusError, setNotionStatusError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
-  const [loadingPages, setLoadingPages] = useState(false);
-  const [pagesError, setPagesError] = useState<string | null>(null);
-  const [notionPages, setNotionPages] = useState<NotionPage[]>([]);
   const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>(null);
   const [telegramStatusError, setTelegramStatusError] = useState<string | null>(null);
   const [telegramDisconnecting, setTelegramDisconnecting] = useState(false);
@@ -568,34 +570,6 @@ export default function DashboardPage() {
     }
   };
 
-  const handleLoadNotionPages = async () => {
-    if (!apiBaseUrl || !profile?.id || loadingPages || !notionStatus?.connected) {
-      return;
-    }
-
-    setLoadingPages(true);
-    setPagesError(null);
-    try {
-      const headers = await getAuthHeaders();
-      const response = await fetch(
-        `${apiBaseUrl}/api/oauth/notion/pages?page_size=5`,
-        { headers }
-      );
-      const payload = await response.json();
-      if (!response.ok || !payload?.ok) {
-        const message =
-          payload?.error?.message ?? payload?.detail ?? "Failed to fetch Notion pages.";
-        setPagesError(message);
-        return;
-      }
-      setNotionPages(Array.isArray(payload.pages) ? payload.pages : []);
-    } catch {
-      setPagesError("Network error while fetching Notion pages.");
-    } finally {
-      setLoadingPages(false);
-    }
-  };
-
   if (loading) {
     return (
       <main className="mx-auto max-w-5xl px-6 py-16">
@@ -639,7 +613,10 @@ export default function DashboardPage() {
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <article className="rounded-xl border border-gray-200 bg-gray-50 p-4">
             <div className="flex items-center justify-between">
-              <p className="text-base font-semibold text-gray-900">✈ Telegram</p>
+              <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
+                <ServiceLogo src="/logos/telegram.svg" alt="Telegram" />
+                Telegram
+              </p>
               <p className="text-xs text-gray-600">{telegramStatus?.connected ? "Connected" : "Not connected"}</p>
             </div>
             <p className="mt-2 text-sm text-gray-700">
@@ -665,7 +642,10 @@ export default function DashboardPage() {
 
           <article className="rounded-xl border border-gray-200 bg-gray-50 p-4 opacity-60">
             <div className="flex items-center justify-between">
-              <p className="text-base font-semibold text-gray-900"># Slack</p>
+              <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
+                <ServiceLogo src="/logos/slack.svg" alt="Slack" />
+                Slack
+              </p>
               <p className="text-xs text-gray-600">Disabled</p>
             </div>
             <p className="mt-2 text-sm text-gray-700">Slack connection is not enabled in this prototype.</p>
@@ -737,7 +717,10 @@ export default function DashboardPage() {
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <article className="rounded-xl border border-gray-200 bg-gray-50 p-4">
             <div className="flex items-center justify-between">
-              <p className="text-base font-semibold text-gray-900">N Notion</p>
+              <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
+                <ServiceLogo src="/logos/notion.svg" alt="Notion" />
+                Notion
+              </p>
               <p className="text-xs text-gray-600">{notionStatus?.connected ? "Connected" : "Not connected"}</p>
             </div>
             <p className="mt-2 text-sm text-gray-700">
@@ -761,7 +744,10 @@ export default function DashboardPage() {
 
           <article className="rounded-xl border border-gray-200 bg-gray-50 p-4">
             <div className="flex items-center justify-between">
-              <p className="text-base font-semibold text-gray-900">♫ Spotify</p>
+              <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
+                <ServiceLogo src="/logos/spotify.svg" alt="Spotify" />
+                Spotify
+              </p>
               <p className="text-xs text-gray-600">{spotifyConnected ? "Connected" : "Not connected"}</p>
             </div>
             <p className="mt-2 text-sm text-gray-700">Music integration for playlist and track actions.</p>
@@ -789,43 +775,6 @@ export default function DashboardPage() {
           <p className="mt-3 text-sm text-amber-700">
             Set NEXT_PUBLIC_API_BASE_URL to enable service connection.
           </p>
-        ) : null}
-        {notionStatus?.connected ? (
-          <div className="mt-6 rounded-lg border border-gray-200 bg-gray-50 p-4">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-base font-semibold text-gray-900">Recent Notion Pages</h3>
-              <button
-                type="button"
-                onClick={handleLoadNotionPages}
-                disabled={loadingPages}
-                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
-              >
-                {loadingPages ? "Loading..." : "Fetch"}
-              </button>
-            </div>
-            {pagesError ? <p className="mt-3 text-sm text-amber-700">{pagesError}</p> : null}
-            {notionPages.length > 0 ? (
-              <ul className="mt-3 space-y-2">
-                {notionPages.map((page) => (
-                  <li key={page.id} className="rounded-md border border-gray-200 bg-white p-3">
-                    <a
-                      href={page.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sm font-medium text-blue-700 underline"
-                    >
-                      {page.title}
-                    </a>
-                    <p className="mt-1 text-xs text-gray-600">
-                      {new Date(page.last_edited_time).toLocaleString()}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="mt-3 text-sm text-gray-600">Click fetch to load recent pages.</p>
-            )}
-          </div>
         ) : null}
       </section>
 
