@@ -118,6 +118,35 @@ def _validate_payload_by_schema(tool: ToolDefinition, payload: dict[str, Any]) -
             raise HTTPException(status_code=400, detail=f"{tool.tool_name}:VALIDATION_ENUM:{key}")
 
 
+def _default_notion_parent() -> dict[str, Any]:
+    settings = get_settings()
+    parent_page_id = (settings.notion_default_parent_page_id or "").strip()
+    if parent_page_id:
+        return {"page_id": parent_page_id}
+    return {"workspace": True}
+
+
+def _normalize_notion_create_page_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    parent = payload.get("parent")
+    if not isinstance(parent, dict):
+        payload["parent"] = _default_notion_parent()
+        return payload
+
+    # LLM frequently emits placeholders from docs/examples.
+    placeholder_values = {"your_database_id_here", "database_id_here", "your_page_id_here", "page_id_here"}
+    database_id = (parent.get("database_id") or "").strip() if isinstance(parent.get("database_id"), str) else ""
+    page_id = (parent.get("page_id") or "").strip() if isinstance(parent.get("page_id"), str) else ""
+    workspace = parent.get("workspace")
+    data_source_id = (parent.get("data_source_id") or "").strip() if isinstance(parent.get("data_source_id"), str) else ""
+
+    invalid_db = database_id.lower() in placeholder_values
+    invalid_page = page_id.lower() in placeholder_values
+    has_valid_shape = bool(workspace is True or data_source_id or (database_id and not invalid_db) or (page_id and not invalid_page))
+    if not has_valid_shape:
+        payload["parent"] = _default_notion_parent()
+    return payload
+
+
 async def _execute_notion_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
     token = _load_oauth_access_token(user_id=user_id, provider="notion")
     path = _build_path(tool.path, payload)
@@ -182,7 +211,16 @@ async def _execute_spotify_http(user_id: str, tool: ToolDefinition, payload: dic
 
     if response.status_code >= 400:
         mapped = tool.error_map.get(str(response.status_code), "TOOL_FAILED")
-        raise HTTPException(status_code=400, detail=f"{tool.tool_name}:{mapped}")
+        upstream_message = ""
+        try:
+            err_payload = response.json()
+            upstream_message = str(err_payload.get("error", {}).get("message", "") or "")
+        except JSONDecodeError:
+            upstream_message = response.text[:300]
+        raise HTTPException(
+            status_code=400,
+            detail=f"{tool.tool_name}:{mapped}|status={response.status_code}|message={upstream_message}",
+        )
     return _parse_response_data(response)
 
 
@@ -226,6 +264,8 @@ async def _execute_generic_http(user_id: str, tool: ToolDefinition, payload: dic
 async def execute_tool(user_id: str, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     registry = load_registry()
     tool = registry.get_tool(tool_name)
+    if tool.tool_name == "notion_create_page":
+        payload = _normalize_notion_create_page_payload(dict(payload))
     _validate_payload_by_schema(tool, payload)
     if tool.service == "notion":
         return await _execute_notion_http(user_id=user_id, tool=tool, payload=payload)
