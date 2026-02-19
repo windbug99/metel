@@ -216,6 +216,38 @@ export default function DashboardPage() {
     });
   }, [commandLogs, commandLogStatusFilter, commandLogCommandFilter]);
 
+  const agentTelemetry = useMemo(() => {
+    const agentLogs = commandLogs.filter((log) => log.command === "agent_plan");
+    const total = agentLogs.length;
+    const autonomous = agentLogs.filter((log) => log.execution_mode === "autonomous").length;
+    const rule = agentLogs.filter((log) => log.execution_mode === "rule").length;
+    const llmPlan = agentLogs.filter((log) => log.plan_source === "llm").length;
+    const rulePlan = agentLogs.filter((log) => log.plan_source === "rule").length;
+    const success = agentLogs.filter((log) => log.status === "success").length;
+    const error = agentLogs.filter((log) => log.status === "error").length;
+    const fallbackLogs = agentLogs.filter((log) => Boolean(log.autonomous_fallback_reason));
+    const fallbackReasonCount = fallbackLogs.reduce<Record<string, number>>((acc, log) => {
+      const key = log.autonomous_fallback_reason ?? "unknown";
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+    const topFallbackReasons = Object.entries(fallbackReasonCount)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3);
+
+    return {
+      total,
+      autonomous,
+      rule,
+      llmPlan,
+      rulePlan,
+      success,
+      error,
+      fallbackCount: fallbackLogs.length,
+      topFallbackReasons
+    };
+  }, [commandLogs]);
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -673,6 +705,41 @@ export default function DashboardPage() {
             </button>
           </div>
         </div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+            <p className="text-xs text-gray-600">Agent Logs</p>
+            <p className="mt-1 text-sm font-semibold text-gray-900">{agentTelemetry.total}</p>
+          </div>
+          <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+            <p className="text-xs text-gray-600">Execution Mode</p>
+            <p className="mt-1 text-sm font-semibold text-gray-900">
+              auto {agentTelemetry.autonomous} / rule {agentTelemetry.rule}
+            </p>
+          </div>
+          <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+            <p className="text-xs text-gray-600">Plan Source</p>
+            <p className="mt-1 text-sm font-semibold text-gray-900">
+              llm {agentTelemetry.llmPlan} / rule {agentTelemetry.rulePlan}
+            </p>
+          </div>
+          <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+            <p className="text-xs text-gray-600">Success / Error</p>
+            <p className="mt-1 text-sm font-semibold text-gray-900">
+              {agentTelemetry.success} / {agentTelemetry.error}
+            </p>
+          </div>
+        </div>
+        {agentTelemetry.fallbackCount > 0 ? (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+            <p className="text-xs font-medium text-amber-800">
+              autonomous fallback 발생: {agentTelemetry.fallbackCount}건
+            </p>
+            <p className="mt-1 text-xs text-amber-800">
+              상위 사유:{" "}
+              {agentTelemetry.topFallbackReasons.map(([reason, count]) => `${reason}(${count})`).join(", ")}
+            </p>
+          </div>
+        ) : null}
         {commandLogsError ? <p className="mt-3 text-sm text-amber-700">{commandLogsError}</p> : null}
         <p className="mt-3 text-xs text-gray-600">
           표시: {filteredCommandLogs.length} / {commandLogs.length}
