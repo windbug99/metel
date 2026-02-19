@@ -15,12 +15,10 @@ export default function Home() {
           <div className="mx-auto w-full max-w-4xl text-center">
             <p className="font-mono text-xs uppercase tracking-[0.3em] text-neutral-500">Autonomous API Router</p>
             <h1 className="mt-6 text-6xl font-semibold tracking-tight text-black sm:text-7xl lg:text-8xl">
-              Connect your tools.
-              <br />
-              Automate with one command.
+              Metel.AI
             </h1>
-            <p className="mx-auto mt-7 max-w-2xl text-lg text-neutral-700 sm:text-xl">
-              Metel routes one request across connected services and returns traceable execution results.
+            <p className="mx-auto mt-7 max-w-2xl text-base text-neutral-700 sm:text-lg">
+              Connect your tools. Automate with one command.
             </p>
             <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
               <AuthPanel
