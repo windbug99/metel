@@ -316,9 +316,11 @@ def _map_natural_text_to_command(text: str) -> tuple[str, str]:
     raw = text.strip()
     lower = raw.lower()
     list_keywords = ["목록", "리스트", "최근", "조회", "보여", "불러", "확인"]
-    create_keywords = ["만들", "생성", "create", "추가", "작성"]
+    create_keywords = ["만들", "create", "추가", "작성", "생성해", "생성해줘"]
     notion_keywords = ["notion", "노션"]
     page_keywords = ["페이지", "문서"]
+    looks_like_list_intent = any(keyword in lower for keyword in list_keywords) or "몇 개" in raw or "몇개" in raw
+    looks_like_created_adjective = "생성된" in lower
 
     if any(keyword in lower for keyword in ["도움말", "help", "메뉴", "menu", "명령어"]):
         return "/help", ""
@@ -327,8 +329,12 @@ def _map_natural_text_to_command(text: str) -> tuple[str, str]:
         return "/status", ""
 
     # 생성 의도는 목록보다 먼저 매칭해야 오탐이 줄어듭니다.
-    if any(keyword in lower for keyword in create_keywords) and (
+    if (
+        any(keyword in lower for keyword in create_keywords)
+        and not (looks_like_list_intent and looks_like_created_adjective)
+        and (
         any(keyword in lower for keyword in page_keywords) or any(keyword in lower for keyword in notion_keywords)
+        )
     ):
         title = raw
         patterns = [
@@ -344,7 +350,7 @@ def _map_natural_text_to_command(text: str) -> tuple[str, str]:
         return "/notion_create", title
 
     if (
-        (any(keyword in lower for keyword in list_keywords) or "몇 개" in raw or "몇개" in raw)
+        looks_like_list_intent
         and (any(keyword in lower for keyword in notion_keywords) or any(keyword in lower for keyword in page_keywords))
         and not any(keyword in lower for keyword in create_keywords)
     ):
