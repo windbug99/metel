@@ -87,6 +87,24 @@ def _retry_guidance_for_error(error_code: str) -> str:
     return guides.get(error_code, "이전 실패 원인을 반영해 같은 오류를 반복하지 마세요.")
 
 
+def _extract_last_tool_error_detail(steps: list[AgentExecutionStep]) -> str | None:
+    for step in reversed(steps):
+        if "_tool:" in step.name and step.status == "error":
+            return f"{step.name} -> {step.detail}"
+    return None
+
+
+def _build_retry_guidance(autonomous: AgentExecutionResult, error_code: str) -> str:
+    parts = [_retry_guidance_for_error(error_code)]
+    verification_reason = str(autonomous.artifacts.get("verification_reason", "") or "").strip()
+    if verification_reason:
+        parts.append(f"검증 실패 사유: {verification_reason}")
+    last_tool_error = _extract_last_tool_error_detail(autonomous.steps)
+    if last_tool_error:
+        parts.append(f"직전 도구 오류: {last_tool_error}")
+    return "\n".join(parts)
+
+
 async def run_agent_analysis(user_text: str, connected_services: list[str], user_id: str) -> AgentRunResult:
     """Run the agent flow with planning + execution.
 
@@ -180,7 +198,14 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             error_code = str(autonomous.artifacts.get("error_code", "unknown"))
             plan.notes.append(f"autonomous_error={error_code}")
 
-            retryable_errors = {"turn_limit", "tool_call_limit", "replan_limit", "timeout"}
+            retryable_errors = {
+                "turn_limit",
+                "tool_call_limit",
+                "replan_limit",
+                "timeout",
+                "verification_failed",
+                "unsupported_action",
+            }
             if autonomous_retry_once and error_code in retryable_errors:
                 plan.notes.append("autonomous_retry=1")
                 retry = await run_autonomous_loop(
@@ -190,7 +215,7 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
                     max_tool_calls_override=max(2, int(getattr(settings, "llm_autonomous_max_tool_calls", 8)) + 2),
                     timeout_sec_override=max(10, int(getattr(settings, "llm_autonomous_timeout_sec", 45)) + 15),
                     replan_limit_override=max(0, int(getattr(settings, "llm_autonomous_replan_limit", 1)) + 1),
-                    extra_guidance=_retry_guidance_for_error(error_code),
+                    extra_guidance=_build_retry_guidance(autonomous, error_code),
                 )
                 if retry.success:
                     execution = retry

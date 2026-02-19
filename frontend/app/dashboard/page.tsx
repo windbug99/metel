@@ -235,6 +235,15 @@ export default function DashboardPage() {
     const topFallbackReasons = Object.entries(fallbackReasonCount)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3);
+    const verificationLogs = agentLogs.filter((log) => Boolean(log.verification_reason));
+    const verificationReasonCount = verificationLogs.reduce<Record<string, number>>((acc, log) => {
+      const key = log.verification_reason ?? "unknown";
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+    const topVerificationReasons = Object.entries(verificationReasonCount)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3);
 
     return {
       total,
@@ -245,7 +254,9 @@ export default function DashboardPage() {
       success,
       error,
       fallbackCount: fallbackLogs.length,
-      topFallbackReasons
+      topFallbackReasons,
+      verificationCount: verificationLogs.length,
+      topVerificationReasons
     };
   }, [commandLogs]);
 
@@ -738,6 +749,17 @@ export default function DashboardPage() {
             <p className="mt-1 text-xs text-amber-800">
               상위 사유:{" "}
               {agentTelemetry.topFallbackReasons.map(([reason, count]) => `${reason}(${count})`).join(", ")}
+            </p>
+          </div>
+        ) : null}
+        {agentTelemetry.verificationCount > 0 ? (
+          <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 p-3">
+            <p className="text-xs font-medium text-rose-800">
+              검증 실패 사유 기록: {agentTelemetry.verificationCount}건
+            </p>
+            <p className="mt-1 text-xs text-rose-800">
+              상위 사유:{" "}
+              {agentTelemetry.topVerificationReasons.map(([reason, count]) => `${reason}(${count})`).join(", ")}
             </p>
           </div>
         ) : null}

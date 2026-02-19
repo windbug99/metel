@@ -349,29 +349,6 @@ def _autonomous_fallback_hint(reason: str | None) -> str:
 def _map_natural_text_to_command(text: str) -> tuple[str, str]:
     raw = text.strip()
     lower = raw.lower()
-    list_keywords = ["목록", "리스트", "최근", "조회", "보여", "불러", "확인"]
-    create_keywords = ["만들", "create", "작성", "생성해", "생성해줘"]
-    append_keywords = ["추가", "붙여", "append"]
-    notion_keywords = ["notion", "노션"]
-    page_keywords = ["페이지", "문서"]
-    looks_like_list_intent = any(keyword in lower for keyword in list_keywords) or "몇 개" in raw or "몇개" in raw
-    looks_like_created_adjective = "생성된" in lower
-    advanced_agent_keywords = [
-        "요약",
-        "데이터소스",
-        "data source",
-        "data_source",
-        "제목",
-        "변경",
-        "수정",
-        "바꾸",
-        "상위",
-        "본문",
-        "삭제",
-        "아카이브",
-        "그리고",
-        "invalid-id",
-    ]
 
     if any(keyword in lower for keyword in ["도움말", "help", "메뉴", "menu", "명령어"]):
         return "/help", ""
@@ -379,44 +356,8 @@ def _map_natural_text_to_command(text: str) -> tuple[str, str]:
     if any(keyword in lower for keyword in ["상태", "status", "연결상태"]):
         return "/status", ""
 
-    # 고급/복합 작업은 강제 매핑하지 않고 LLM/에이전트 경로로 전달
-    if any(keyword in lower for keyword in advanced_agent_keywords):
-        return "", ""
-
-    # "페이지에 ... 추가"는 생성이 아니라 append 계열이므로 매핑하지 않고 에이전트 경로로 전달
-    if any(keyword in lower for keyword in append_keywords) and "페이지에" in raw:
-        return "", ""
-
-    # 생성 의도는 목록보다 먼저 매칭해야 오탐이 줄어듭니다.
-    if (
-        any(keyword in lower for keyword in create_keywords)
-        and not (looks_like_list_intent and looks_like_created_adjective)
-        and (
-        any(keyword in lower for keyword in page_keywords) or any(keyword in lower for keyword in notion_keywords)
-        )
-    ):
-        title = raw
-        patterns = [
-            r"(?i)^\s*(notion|노션)\s*(페이지|문서)?\s*(만들어줘|만들어|생성해줘|생성|추가해줘|작성해줘|create)\s*",
-            r"(?i)^\s*(페이지|문서)\s*(만들어줘|만들어|생성해줘|생성|추가해줘|작성해줘)\s*",
-            r"(?i)^\s*(create)\s*",
-        ]
-        for pattern in patterns:
-            title = re.sub(pattern, "", title).strip(" :")
-        # 조사/접속어 등 불필요한 앞부분 제거
-        title = re.sub(r"^(으로|로|에|를|을)\s*", "", title).strip()
-        title = re.sub(r"\s+(만들어줘|생성해줘|작성해줘)$", "", title, flags=re.IGNORECASE).strip()
-        return "/notion_create", title
-
-    if (
-        looks_like_list_intent
-        and (any(keyword in lower for keyword in notion_keywords) or any(keyword in lower for keyword in page_keywords))
-        and not any(keyword in lower for keyword in create_keywords)
-    ):
-        count_match = re.search(r"(\d{1,2})\s*(개|개만|개만요|개 보여|개 보여줘)?", raw)
-        count = count_match.group(1) if count_match else ""
-        return "/notion_pages", count
-
+    # 자연어 요청은 가능한 한 자율 에이전트 경로로 전달한다.
+    # (/notion_pages, /notion_create 등 단축 명령은 사용자가 명시적으로 입력한 경우에만 처리)
     return "", ""
 
 

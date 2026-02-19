@@ -1,7 +1,7 @@
 import asyncio
 
 from agent.loop import run_agent_analysis
-from agent.types import AgentExecutionResult, AgentPlan, AgentRequirement
+from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRequirement
 
 
 def _sample_plan() -> AgentPlan:
@@ -268,6 +268,109 @@ def test_run_agent_analysis_autonomous_retry_then_success(monkeypatch):
     assert calls["count"] == 2
     assert any(item == "autonomous_retry=1" for item in result.plan.notes)
     assert any(item == "execution=autonomous_retry" for item in result.plan.notes)
+
+
+def test_run_agent_analysis_autonomous_retry_includes_last_tool_error_guidance(monkeypatch):
+    llm_plan = _sample_plan()
+    calls = {"count": 0}
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        llm_autonomous_strict = False
+        llm_autonomous_limit_retry_once = True
+        llm_autonomous_max_turns = 6
+        llm_autonomous_max_tool_calls = 8
+        llm_autonomous_timeout_sec = 45
+        llm_autonomous_replan_limit = 1
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return AgentExecutionResult(
+                success=False,
+                user_message="failed",
+                summary="failed",
+                artifacts={"error_code": "tool_call_limit"},
+                steps=[
+                    AgentExecutionStep(
+                        name="turn_2_tool:notion_append_block_children",
+                        status="error",
+                        detail="notion_append_block_children:BAD_REQUEST",
+                    )
+                ],
+            )
+        guidance = str(kwargs.get("extra_guidance", ""))
+        assert ("도구 호출 한도" in guidance) or ("tool 호출 한도" in guidance)
+        assert "직전 도구 오류:" in guidance
+        assert "notion_append_block_children" in guidance
+        return AgentExecutionResult(
+            success=True,
+            user_message="ok",
+            summary="ok",
+            artifacts={"autonomous": "true"},
+        )
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        raise AssertionError("executor should not be called after retry success")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("text", ["notion"], "user-1"))
+    assert result.ok is True
+    assert calls["count"] == 2
+
+
+def test_run_agent_analysis_retries_on_verification_failed(monkeypatch):
+    llm_plan = _sample_plan()
+    calls = {"count": 0}
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        llm_autonomous_strict = False
+        llm_autonomous_limit_retry_once = True
+        llm_autonomous_max_turns = 6
+        llm_autonomous_max_tool_calls = 8
+        llm_autonomous_timeout_sec = 45
+        llm_autonomous_replan_limit = 1
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return AgentExecutionResult(
+                success=False,
+                user_message="verify-fail",
+                summary="verify-fail",
+                artifacts={"error_code": "verification_failed", "verification_reason": "append_requires_append_block_children"},
+            )
+        assert "검증 실패 사유" in str(kwargs.get("extra_guidance", ""))
+        return AgentExecutionResult(
+            success=True,
+            user_message="retry-ok",
+            summary="retry-ok",
+            artifacts={"autonomous": "true"},
+        )
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        raise AssertionError("executor should not be called after retry success")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("text", ["notion"], "user-1"))
+    assert result.ok is True
+    assert result.result_summary == "retry-ok"
+    assert calls["count"] == 2
 
 
 def test_run_agent_analysis_realigns_bad_llm_plan_to_rule(monkeypatch):
