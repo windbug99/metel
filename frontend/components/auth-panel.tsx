@@ -11,9 +11,10 @@ type UserState = {
 type AuthPanelProps = {
   className?: string;
   signInButtonClassName?: string;
+  variant?: "panel" | "button";
 };
 
-export default function AuthPanel({ className, signInButtonClassName }: AuthPanelProps) {
+export default function AuthPanel({ className, signInButtonClassName, variant = "panel" }: AuthPanelProps) {
   const router = useRouter();
   const [user, setUser] = useState<UserState>(null);
   const [loading, setLoading] = useState(true);
@@ -100,6 +101,20 @@ export default function AuthPanel({ className, signInButtonClassName }: AuthPane
   const defaultSignInButtonClassName =
     signInButtonClassName ??
     "rounded-md border border-neutral-900 bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800";
+
+  if (variant === "button") {
+    return (
+      <div className={className}>
+        <button
+          type="button"
+          onClick={signInWithGoogle}
+          className={defaultSignInButtonClassName}
+        >
+          Sign in with Google
+        </button>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
