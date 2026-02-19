@@ -20,13 +20,13 @@ def _map_execution_error(detail: str) -> tuple[str, str, str]:
     code = detail or "unknown_error"
     lower = code.lower()
 
-    if "notion_not_connected" in lower:
+    if "notion_not_connected" in lower or lower.endswith("_not_connected"):
         return (
-            "Notion 연결이 필요합니다.",
-            "Notion이 연결되어 있지 않습니다. 대시보드에서 Notion 연동 후 다시 시도해주세요.",
-            "notion_not_connected",
+            "서비스 연결이 필요합니다.",
+            "요청한 서비스가 연결되어 있지 않습니다. 대시보드에서 연동 후 다시 시도해주세요.",
+            "service_not_connected",
         )
-    if "token_missing" in lower:
+    if "token_missing" in lower or lower.endswith("_token_missing"):
         return (
             "연동 토큰을 찾지 못했습니다.",
             "연동 토큰 정보를 찾지 못했습니다. 연동을 해제 후 다시 연결해주세요.",
@@ -626,7 +626,7 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
                 tool_name=_pick_tool(plan, "linear_search_issues", "linear_search_issues"),
                 payload={"query": query, "first": 5},
             )
-            nodes = (((result.get("data") or {}).get("issueSearch") or {}).get("nodes") or [])
+            nodes = (((result.get("data") or {}).get("issues") or {}).get("nodes") or [])
             steps.append(AgentExecutionStep(name="linear_search_issues", status="success", detail=f"count={len(nodes)}"))
             if not nodes:
                 return AgentExecutionResult(

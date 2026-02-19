@@ -268,7 +268,16 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
         return (
             """
             query SearchIssues($query: String!, $first: Int!) {
-              issueSearch(query: $query, first: $first) {
+              issues(
+                first: $first,
+                orderBy: updatedAt,
+                filter: {
+                  or: [
+                    { title: { containsIgnoreCase: $query } },
+                    { identifier: { containsIgnoreCase: $query } }
+                  ]
+                }
+              ) {
                 nodes {
                   id
                   identifier

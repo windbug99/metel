@@ -300,12 +300,13 @@ def _agent_error_guide(error_code: str | None, verification_reason: str | None =
 
     guides = {
         "notion_not_connected": "Notion 미연결 상태입니다. 대시보드에서 Notion 연동 후 다시 시도해주세요.",
+        "service_not_connected": "요청한 서비스가 연결되어 있지 않습니다. 대시보드에서 연동 후 다시 시도해주세요.",
         "token_missing": "연동 토큰이 없거나 손상되었습니다. 연동을 해제 후 다시 연결해주세요.",
-        "auth_error": "권한이 부족하거나 만료되었습니다. Notion 권한을 다시 승인해주세요.",
+        "auth_error": "권한이 부족하거나 만료되었습니다. 해당 서비스 권한을 다시 승인해주세요.",
         "rate_limited": "외부 API 호출 한도를 초과했습니다. 1~2분 후 다시 시도해주세요.",
         "validation_error": "요청 형식을 확인해주세요. 페이지 제목/데이터소스 ID/개수 형식을 점검해주세요.",
         "not_found": "요청한 페이지 또는 데이터를 찾지 못했습니다. 제목/ID를 다시 확인해주세요.",
-        "upstream_error": "Notion 응답 처리에 실패했습니다. 잠시 후 다시 시도해주세요.",
+        "upstream_error": "외부 서비스 응답 처리에 실패했습니다. 잠시 후 다시 시도해주세요.",
         "execution_error": "실행 중 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
         "verification_failed": "자율 실행 결과가 요청 조건을 충족하지 못했습니다. 더 구체적으로 다시 요청해주세요.",
     }
