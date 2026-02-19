@@ -521,7 +521,7 @@ export default function DashboardPage() {
       <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-black">Messenger Connection</h2>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4 opacity-60">
             <div className="flex items-center justify-between">
               <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
                 <ServiceLogo src="/logos/telegram.svg" alt="Telegram" />
