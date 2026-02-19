@@ -1,4 +1,4 @@
-# metel
+# metel.ai
 
 Monorepo for metel prototype.
 
