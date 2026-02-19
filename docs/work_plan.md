@@ -167,6 +167,32 @@
   - 리포트 파일 출력: `python scripts/eval_agent_quality.py --limit 30 --output ../docs/reports/agent_quality_latest.md`
 - JSON 출력: `python scripts/eval_agent_quality.py --limit 30 --output-json ../docs/reports/agent_quality_latest.json`
   - 정책 제안 확인: 위 JSON의 `policy_recommendations` 필드 확인
+- 자율 품질 게이트 파이프라인(자동 PASS/FAIL):
+  - 스크립트: `backend/scripts/run_autonomous_gate.sh`
+  - 기본 동작:
+    - 최근 `command_logs` 기준 품질 측정
+    - 최소 샘플 미달도 실패 처리(`--fail-on-insufficient-sample`)
+    - 기준:
+      - autonomous success rate
+      - fallback rate
+      - planner failed rate
+      - autonomous attempt rate
+      - autonomous success over attempt rate
+    - 결과 저장:
+      - `docs/reports/agent_quality_latest.md`
+      - `docs/reports/agent_quality_latest.json`
+  - 운영:
+    - `cd backend && ./scripts/run_autonomous_gate.sh`
+    - 환경변수로 threshold 오버라이드 가능(`LIMIT`, `MIN_SAMPLE`, `TARGET_AUTONOMOUS_SUCCESS` 등)
+- 정책 반자동 반영(운영 튜너):
+  - 스크립트: `backend/scripts/apply_agent_policy_recommendations.py`
+  - 입력: `eval_agent_quality.py --output-json` 결과의 `policy_recommendations`
+  - 안전장치:
+    - allowlist 기반 env key만 반영
+    - 기본 `dry-run` (미리보기만), `--apply` 시에만 실제 `.env` 수정
+  - 예시:
+    - 미리보기: `cd backend && python scripts/apply_agent_policy_recommendations.py --from-json ../docs/reports/agent_quality_latest.json`
+    - 반영: `cd backend && python scripts/apply_agent_policy_recommendations.py --from-json ../docs/reports/agent_quality_latest.json --apply`
 - 삭제/생성 품질 보강:
   - 삭제 의도 판별 정규식 개선(예: "삭제 테스트 페이지"를 삭제 요청으로 오인하지 않음)
   - 다중 제목 지정 요약 생성 지원(예: `"더 코어 3", "사이먼 블로그"` 지정 조회)

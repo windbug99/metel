@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "../lib/supabase";
 
 type UserState = {
   email: string;
@@ -41,7 +41,7 @@ export default function AuthPanel() {
           return;
         }
         setUser(null);
-        setErrorMessage(error instanceof Error ? error.message : "인증 상태를 불러오지 못했습니다.");
+        setErrorMessage(error instanceof Error ? error.message : "Failed to load auth state.");
       } finally {
         if (mounted) {
           setLoading(false);
@@ -86,38 +86,38 @@ export default function AuthPanel() {
   };
 
   if (loading) {
-    return <p className="mt-6 text-sm text-gray-500">인증 상태 확인 중...</p>;
+    return <p className="mt-6 text-sm text-gray-500">Checking auth state...</p>;
   }
 
   return (
     <section className="mt-8 rounded-xl border border-gray-200 p-5">
-      {errorMessage ? <p className="mb-3 text-sm text-red-600">인증 조회 오류: {errorMessage}</p> : null}
+      {errorMessage ? <p className="mb-3 text-sm text-red-600">Auth check error: {errorMessage}</p> : null}
       {user ? (
         <div className="space-y-3">
-          <p className="text-sm text-gray-700">로그인됨: {user.email}</p>
+          <p className="text-sm text-gray-700">Signed in: {user.email}</p>
           <a
             href="/dashboard"
             className="inline-block rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900"
           >
-            대시보드 이동
+            Open Dashboard
           </a>
           <button
             type="button"
             onClick={signOut}
             className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white"
           >
-            로그아웃
+            Sign out
           </button>
         </div>
       ) : (
         <div className="space-y-3">
-          <p className="text-sm text-gray-700">Google 계정으로 로그인하세요.</p>
+          <p className="text-sm text-gray-700">Sign in with Google.</p>
           <button
             type="button"
             onClick={signInWithGoogle}
             className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white"
           >
-            Google로 로그인
+            Sign in with Google
           </button>
         </div>
       )}

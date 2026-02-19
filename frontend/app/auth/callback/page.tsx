@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
-import { upsertUserProfile } from "@/lib/profile";
+import { supabase } from "../../../lib/supabase";
+import { upsertUserProfile } from "../../../lib/profile";
 
 export default function AuthCallbackPage() {
   const router = useRouter();
@@ -14,7 +14,7 @@ export default function AuthCallbackPage() {
       const code = new URLSearchParams(window.location.search).get("code");
 
       if (!code) {
-        setErrorMessage("인증 코드가 없습니다.");
+        setErrorMessage("Missing auth code.");
         return;
       }
 
@@ -40,7 +40,7 @@ export default function AuthCallbackPage() {
 
   return (
     <main className="mx-auto max-w-xl px-6 py-16">
-      <h1 className="text-2xl font-semibold">로그인 처리 중...</h1>
+      <h1 className="text-2xl font-semibold">Completing sign-in...</h1>
       {errorMessage ? <p className="mt-4 text-sm text-red-600">{errorMessage}</p> : null}
     </main>
   );

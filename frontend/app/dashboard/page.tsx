@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
-import { upsertUserProfile } from "@/lib/profile";
+import { supabase } from "../../lib/supabase";
+import { upsertUserProfile } from "../../lib/profile";
 
 type UserProfile = {
   id: string;
@@ -91,7 +91,7 @@ export default function DashboardPage() {
     } = await supabase.auth.getSession();
     const accessToken = session?.access_token;
     if (!accessToken) {
-      throw new Error("로그인 세션을 찾을 수 없습니다.");
+      throw new Error("No active login session was found.");
     }
     return { Authorization: `Bearer ${accessToken}` };
   }, []);
@@ -113,10 +113,10 @@ export default function DashboardPage() {
           setNotionStatus(notionData);
           setNotionStatusError(null);
         } else {
-          setNotionStatusError("Notion 상태 조회에 실패했습니다.");
+          setNotionStatusError("Failed to fetch Notion status.");
         }
       } catch {
-        setNotionStatusError("Notion 상태 조회 중 네트워크 오류가 발생했습니다.");
+        setNotionStatusError("Network error while fetching Notion status.");
       }
     },
     [apiBaseUrl, getAuthHeaders]
@@ -147,10 +147,10 @@ export default function DashboardPage() {
           }
         }
       } else {
-        setTelegramStatusError("텔레그램 상태 조회에 실패했습니다.");
+        setTelegramStatusError("Failed to fetch Telegram status.");
       }
     } catch {
-      setTelegramStatusError("텔레그램 상태 조회 중 네트워크 오류가 발생했습니다.");
+      setTelegramStatusError("Network error while fetching Telegram status.");
     }
   }, [apiBaseUrl, getAuthHeaders]);
 
@@ -187,14 +187,14 @@ export default function DashboardPage() {
         .limit(20);
 
       if (error) {
-        setCommandLogsError("명령 로그 조회에 실패했습니다.");
+        setCommandLogsError("Failed to fetch command logs.");
         return;
       }
 
       setCommandLogs(Array.isArray(data) ? (data as CommandLog[]) : []);
       setCommandLogsError(null);
     } catch {
-      setCommandLogsError("명령 로그 조회 중 네트워크 오류가 발생했습니다.");
+      setCommandLogsError("Network error while fetching command logs.");
     } finally {
       setCommandLogsLoading(false);
     }
@@ -361,13 +361,13 @@ export default function DashboardPage() {
         { method: "DELETE", headers }
       );
       if (!response.ok) {
-        setNotionStatusError("Notion 연결해제에 실패했습니다.");
+        setNotionStatusError("Failed to disconnect Notion.");
         return;
       }
       setNotionStatus({ connected: false, integration: null });
       setNotionStatusError(null);
     } catch {
-      setNotionStatusError("Notion 연결해제 중 네트워크 오류가 발생했습니다.");
+      setNotionStatusError("Network error while disconnecting Notion.");
     } finally {
       setDisconnecting(false);
     }
@@ -386,12 +386,12 @@ export default function DashboardPage() {
       });
       const payload = await response.json();
       if (!response.ok || !payload?.auth_url) {
-        setNotionStatusError("Notion 연결 시작에 실패했습니다.");
+        setNotionStatusError("Failed to start Notion connection.");
         return;
       }
       window.location.href = payload.auth_url;
     } catch {
-      setNotionStatusError("Notion 연결 시작 중 네트워크 오류가 발생했습니다.");
+      setNotionStatusError("Network error while starting Notion connection.");
     }
   };
 
@@ -410,7 +410,7 @@ export default function DashboardPage() {
       const payload = await response.json();
       if (!response.ok || !payload?.deep_link) {
         const message =
-          payload?.error?.message ?? payload?.detail ?? "텔레그램 연결 링크 생성에 실패했습니다.";
+          payload?.error?.message ?? payload?.detail ?? "Failed to create Telegram connection link.";
         setTelegramStatusError(message);
         return;
       }
@@ -436,7 +436,7 @@ export default function DashboardPage() {
       setTelegramStatusError(null);
       startTelegramStatusPolling();
     } catch {
-      setTelegramStatusError("텔레그램 연결 시작 중 네트워크 오류가 발생했습니다.");
+      setTelegramStatusError("Network error while starting Telegram connection.");
     } finally {
       setTelegramConnecting(false);
     }
@@ -455,7 +455,7 @@ export default function DashboardPage() {
         headers,
       });
       if (!response.ok) {
-        setTelegramStatusError("텔레그램 연결해제에 실패했습니다.");
+        setTelegramStatusError("Failed to disconnect Telegram.");
         return;
       }
       setTelegramStatus({ connected: false, telegram_chat_id: null, telegram_username: null });
@@ -463,7 +463,7 @@ export default function DashboardPage() {
       setTelegramStatusError(null);
       await fetchTelegramStatus();
     } catch {
-      setTelegramStatusError("텔레그램 연결해제 중 네트워크 오류가 발생했습니다.");
+      setTelegramStatusError("Network error while disconnecting Telegram.");
     } finally {
       setTelegramDisconnecting(false);
     }
@@ -472,9 +472,9 @@ export default function DashboardPage() {
   const copyText = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      setTelegramStatusError("복사 완료: 텔레그램 채팅창에 붙여넣어 실행하세요.");
+      setTelegramStatusError("Copied. Paste and run the command in Telegram.");
     } catch {
-      setTelegramStatusError("클립보드 복사에 실패했습니다. 직접 복사해주세요.");
+      setTelegramStatusError("Clipboard copy failed. Please copy manually.");
     }
   };
 
@@ -494,13 +494,13 @@ export default function DashboardPage() {
       const payload = await response.json();
       if (!response.ok || !payload?.ok) {
         const message =
-          payload?.error?.message ?? payload?.detail ?? "Notion 페이지 조회에 실패했습니다.";
+          payload?.error?.message ?? payload?.detail ?? "Failed to fetch Notion pages.";
         setPagesError(message);
         return;
       }
       setNotionPages(Array.isArray(payload.pages) ? payload.pages : []);
     } catch {
-      setPagesError("Notion 페이지 조회 중 네트워크 오류가 발생했습니다.");
+      setPagesError("Network error while fetching Notion pages.");
     } finally {
       setLoadingPages(false);
     }
@@ -508,120 +508,66 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <main className="mx-auto max-w-3xl px-6 py-16">
-        <p className="text-sm text-gray-600">대시보드 로딩 중...</p>
+      <main className="mx-auto max-w-5xl px-6 py-16">
+        <p className="text-sm text-gray-600">Loading dashboard...</p>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-16">
-      <h1 className="text-3xl font-bold">Dashboard</h1>
-      <div className="mt-6 rounded-xl border border-gray-200 p-5">
-        <p className="text-sm text-gray-700">이메일: {profile?.email ?? "-"}</p>
-        <p className="mt-2 text-sm text-gray-700">User ID: {profile?.id ?? "-"}</p>
-        <p className="mt-2 text-sm text-gray-700">가입일: {profile?.created_at ?? "-"}</p>
-      </div>
-      <section className="mt-6 rounded-xl border border-gray-200 p-5">
-        <h2 className="text-xl font-semibold">Notion 연동</h2>
-        {notionStatusError ? (
-          <p className="mt-3 text-sm text-amber-700">{notionStatusError}</p>
-        ) : null}
-        <p className="mt-3 text-sm text-gray-700">
-          상태: {notionStatus?.connected ? "연결됨" : "미연결"}
+    <main className="mx-auto max-w-5xl px-6 py-14">
+      <header className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
+        <p className="font-mono text-xs uppercase tracking-wider text-gray-500">metel</p>
+        <h1 className="mt-2 text-4xl font-semibold tracking-tight text-black">Dashboard</h1>
+        <p className="mt-2 text-sm text-gray-600">
+          Control messenger links, service integrations, and autonomous agent logs.
         </p>
-        {notionStatus?.connected ? (
-          <p className="mt-1 text-sm text-gray-700">
-            Workspace: {notionStatus.integration?.workspace_name ?? "-"}
-          </p>
-        ) : null}
-        {apiBaseUrl && profile?.id ? (
-          <div className="mt-4 flex gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                void handleConnectNotion();
-              }}
-              className="inline-block rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white"
-            >
-              Notion 연결하기
-            </button>
-            {notionStatus?.connected ? (
-              <button
-                type="button"
-                onClick={handleDisconnectNotion}
-                disabled={disconnecting}
-                className="inline-block rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
-              >
-                {disconnecting ? "연결해제 중..." : "연결해제"}
-              </button>
-            ) : null}
+      </header>
+
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+        <h2 className="text-lg font-semibold text-black">User</h2>
+        <div className="mt-4 grid gap-4 sm:grid-cols-3">
+          <div>
+            <p className="text-xs text-gray-500">Email</p>
+            <p className="mt-1 text-sm text-gray-900">{profile?.email ?? "-"}</p>
           </div>
-        ) : (
-          <p className="mt-3 text-sm text-amber-700">
-            NEXT_PUBLIC_API_BASE_URL 설정 후 Notion 연동 버튼을 사용할 수 있습니다.
-          </p>
-        )}
-        {notionStatus?.connected ? (
-          <div className="mt-6 rounded-lg border border-gray-200 p-4">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-lg font-semibold">최근 Notion 페이지</h3>
-              <button
-                type="button"
-                onClick={handleLoadNotionPages}
-                disabled={loadingPages}
-                className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
-              >
-                {loadingPages ? "조회 중..." : "페이지 조회"}
-              </button>
-            </div>
-            {pagesError ? <p className="mt-3 text-sm text-amber-700">{pagesError}</p> : null}
-            {notionPages.length > 0 ? (
-              <ul className="mt-3 space-y-2">
-                {notionPages.map((page) => (
-                  <li key={page.id} className="rounded-md border border-gray-200 p-3">
-                    <a
-                      href={page.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sm font-medium text-blue-700 underline"
-                    >
-                      {page.title}
-                    </a>
-                    <p className="mt-1 text-xs text-gray-600">{page.last_edited_time}</p>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="mt-3 text-sm text-gray-600">조회 버튼을 눌러 최근 페이지를 불러오세요.</p>
-            )}
+          <div>
+            <p className="text-xs text-gray-500">User ID</p>
+            <p className="mt-1 break-all text-sm text-gray-900">{profile?.id ?? "-"}</p>
           </div>
-        ) : null}
+          <div>
+            <p className="text-xs text-gray-500">Created</p>
+            <p className="mt-1 text-sm text-gray-900">
+              {profile?.created_at ? new Date(profile.created_at).toLocaleString() : "-"}
+            </p>
+          </div>
+        </div>
       </section>
-      <section className="mt-6 rounded-xl border border-gray-200 p-5">
-        <h2 className="text-xl font-semibold">Telegram 연동</h2>
+
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+        <h2 className="text-lg font-semibold text-black">Messenger Connection</h2>
         {telegramStatusError ? (
           <p className="mt-3 text-sm text-amber-700">{telegramStatusError}</p>
         ) : null}
         <p className="mt-3 text-sm text-gray-700">
-          상태: {telegramStatus?.connected ? "연결됨" : "미연결"}
+          Status: {telegramStatus?.connected ? "Connected" : "Not connected"}
         </p>
         {telegramStatus?.connected ? (
           <p className="mt-1 text-sm text-gray-700">
-            계정: {telegramStatus.telegram_username ? `@${telegramStatus.telegram_username}` : "-"}
+            Account: {telegramStatus.telegram_username ? `@${telegramStatus.telegram_username}` : "-"}
           </p>
         ) : null}
         {apiBaseUrl && profile?.id ? (
-          <div className="mt-4 flex gap-2">
+          <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => {
                 void handleConnectTelegram();
               }}
               disabled={telegramConnecting}
-              className="inline-block rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              className="inline-block rounded-md bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
-              {telegramConnecting ? "링크 생성 중..." : "Telegram 연결하기"}
+              {telegramConnecting ? "Generating link..." : "Connect Telegram"}
             </button>
             {telegramStatus?.connected ? (
               <button
@@ -630,24 +576,25 @@ export default function DashboardPage() {
                 disabled={telegramDisconnecting}
                 className="inline-block rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
               >
-                {telegramDisconnecting ? "연결해제 중..." : "연결해제"}
+                {telegramDisconnecting ? "Disconnecting..." : "Disconnect"}
               </button>
             ) : null}
           </div>
         ) : (
           <p className="mt-3 text-sm text-amber-700">
-            NEXT_PUBLIC_API_BASE_URL 설정 후 Telegram 연동 버튼을 사용할 수 있습니다.
+            Set NEXT_PUBLIC_API_BASE_URL to enable Telegram connection.
           </p>
         )}
         {telegramConnectInfo && !telegramStatus?.connected ? (
-          <div className="mt-4 rounded-lg border border-gray-200 p-4">
+          <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
             <p className="text-sm text-gray-700">
-              앱에서 Start가 반응하지 않으면 아래 명령을 복사해 {telegramConnectInfo.botUsername ? `@${telegramConnectInfo.botUsername}` : "봇"} 채팅에 직접 전송하세요.
+              If Start does not respond in Telegram, copy and send this command manually to{" "}
+              {telegramConnectInfo.botUsername ? `@${telegramConnectInfo.botUsername}` : "your bot"}.
             </p>
-            <p className="mt-2 break-all rounded bg-gray-50 p-2 text-xs text-gray-700">
-              {telegramConnectInfo.startCommand || "(start 명령 없음)"}
+            <p className="font-mono mt-2 break-all rounded border border-gray-200 bg-white p-2 text-xs text-gray-700">
+              {telegramConnectInfo.startCommand || "(no start command)"}
             </p>
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -657,7 +604,7 @@ export default function DashboardPage() {
                 }}
                 className="inline-block rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900"
               >
-                시작 명령 복사
+                Copy Start Command
               </button>
               <button
                 type="button"
@@ -673,22 +620,102 @@ export default function DashboardPage() {
                 }}
                 className="inline-block rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900"
               >
-                Telegram 다시 열기
+                Open Telegram Again
               </button>
             </div>
             <p className="mt-2 text-xs text-gray-600">
-              {telegramPolling ? "연결 상태 자동 확인 중..." : "연결 상태 확인이 멈췄습니다. 필요하면 다시 연결하기를 눌러주세요."}
+              {telegramPolling ? "Auto-checking connection status..." : "Auto-check stopped. Re-run connect if needed."}
             </p>
             <p className="mt-1 text-xs text-gray-500">
-              링크 만료: 약 {Math.max(1, Math.floor(telegramConnectInfo.expiresInSeconds / 60))}분
+              Expires in about {Math.max(1, Math.floor(telegramConnectInfo.expiresInSeconds / 60))} min
             </p>
           </div>
         ) : null}
       </section>
-      <section className="mt-6 rounded-xl border border-gray-200 p-5">
+
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+        <h2 className="text-lg font-semibold text-black">Service Connection</h2>
+        {notionStatusError ? (
+          <p className="mt-3 text-sm text-amber-700">{notionStatusError}</p>
+        ) : null}
+        <p className="mt-3 text-sm text-gray-700">
+          Notion: {notionStatus?.connected ? "Connected" : "Not connected"}
+        </p>
+        {notionStatus?.connected ? (
+          <p className="mt-1 text-sm text-gray-700">
+            Workspace: {notionStatus.integration?.workspace_name ?? "-"}
+          </p>
+        ) : null}
+        {apiBaseUrl && profile?.id ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                void handleConnectNotion();
+              }}
+              className="inline-block rounded-md bg-black px-4 py-2 text-sm font-medium text-white"
+            >
+              Connect Notion
+            </button>
+            {notionStatus?.connected ? (
+              <button
+                type="button"
+                onClick={handleDisconnectNotion}
+                disabled={disconnecting}
+                className="inline-block rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+              >
+                {disconnecting ? "Disconnecting..." : "Disconnect"}
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-amber-700">
+            Set NEXT_PUBLIC_API_BASE_URL to enable Notion connection.
+          </p>
+        )}
+        {notionStatus?.connected ? (
+          <div className="mt-6 rounded-lg border border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-base font-semibold text-gray-900">Recent Notion Pages</h3>
+              <button
+                type="button"
+                onClick={handleLoadNotionPages}
+                disabled={loadingPages}
+                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+              >
+                {loadingPages ? "Loading..." : "Fetch"}
+              </button>
+            </div>
+            {pagesError ? <p className="mt-3 text-sm text-amber-700">{pagesError}</p> : null}
+            {notionPages.length > 0 ? (
+              <ul className="mt-3 space-y-2">
+                {notionPages.map((page) => (
+                  <li key={page.id} className="rounded-md border border-gray-200 bg-white p-3">
+                    <a
+                      href={page.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm font-medium text-blue-700 underline"
+                    >
+                      {page.title}
+                    </a>
+                    <p className="mt-1 text-xs text-gray-600">
+                      {new Date(page.last_edited_time).toLocaleString()}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-3 text-sm text-gray-600">Click fetch to load recent pages.</p>
+            )}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-xl font-semibold">명령 로그 (최근 20건)</h2>
-          <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold text-black">Execution Logs (latest 20)</h2>
+          <div className="flex flex-wrap items-center gap-2">
             <select
               value={commandLogStatusFilter}
               onChange={(event) => {
@@ -696,9 +723,9 @@ export default function DashboardPage() {
               }}
               className="rounded-md border border-gray-300 px-2 py-2 text-sm text-gray-900"
             >
-              <option value="all">상태: 전체</option>
-              <option value="success">상태: 성공</option>
-              <option value="error">상태: 실패</option>
+              <option value="all">Status: All</option>
+              <option value="success">Status: Success</option>
+              <option value="error">Status: Error</option>
             </select>
             <select
               value={commandLogCommandFilter}
@@ -707,7 +734,7 @@ export default function DashboardPage() {
               }}
               className="rounded-md border border-gray-300 px-2 py-2 text-sm text-gray-900"
             >
-              <option value="all">명령: 전체</option>
+              <option value="all">Command: All</option>
               {commandFilterOptions.map((commandName) => (
                 <option key={commandName} value={commandName}>
                   {commandName}
@@ -722,7 +749,7 @@ export default function DashboardPage() {
               disabled={commandLogsLoading}
               className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
             >
-              {commandLogsLoading ? "조회 중..." : "새로고침"}
+              {commandLogsLoading ? "Refreshing..." : "Refresh"}
             </button>
           </div>
         </div>
@@ -771,7 +798,7 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
-            <p className="text-xs text-gray-600">Fallback Rate (target 20% 이하)</p>
+            <p className="text-xs text-gray-600">Fallback Rate (target 20% or less)</p>
             <p className="mt-1 text-sm font-semibold text-gray-900">
               {(agentTelemetry.fallbackRate * 100).toFixed(1)}%
               {" "}
@@ -793,10 +820,10 @@ export default function DashboardPage() {
         {agentTelemetry.fallbackCount > 0 ? (
           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3">
             <p className="text-xs font-medium text-amber-800">
-              autonomous fallback 발생: {agentTelemetry.fallbackCount}건
+              autonomous fallback count: {agentTelemetry.fallbackCount}
             </p>
             <p className="mt-1 text-xs text-amber-800">
-              상위 사유:{" "}
+              top reasons:{" "}
               {agentTelemetry.topFallbackReasons.map(([reason, count]) => `${reason}(${count})`).join(", ")}
             </p>
           </div>
@@ -804,17 +831,17 @@ export default function DashboardPage() {
         {agentTelemetry.verificationCount > 0 ? (
           <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 p-3">
             <p className="text-xs font-medium text-rose-800">
-              검증 실패 사유 기록: {agentTelemetry.verificationCount}건
+              verification reason records: {agentTelemetry.verificationCount}
             </p>
             <p className="mt-1 text-xs text-rose-800">
-              상위 사유:{" "}
+              top reasons:{" "}
               {agentTelemetry.topVerificationReasons.map(([reason, count]) => `${reason}(${count})`).join(", ")}
             </p>
           </div>
         ) : null}
         {commandLogsError ? <p className="mt-3 text-sm text-amber-700">{commandLogsError}</p> : null}
         <p className="mt-3 text-xs text-gray-600">
-          표시: {filteredCommandLogs.length} / {commandLogs.length}
+          Showing: {filteredCommandLogs.length} / {commandLogs.length}
         </p>
         {filteredCommandLogs.length > 0 ? (
           <ul className="mt-4 space-y-2">
@@ -848,7 +875,7 @@ export default function DashboardPage() {
             ))}
           </ul>
         ) : (
-          <p className="mt-3 text-sm text-gray-600">조건에 맞는 명령 로그가 없습니다.</p>
+          <p className="mt-3 text-sm text-gray-600">No logs match the current filters.</p>
         )}
       </section>
     </main>

@@ -153,6 +153,7 @@ def _build_markdown_report(
     top_execution_mode: list[tuple[str, int]],
     tuning_hints: list[str],
     policy_recommendations: list[dict[str, str]],
+    gate_reasons: list[str],
     verdict: str,
 ) -> str:
     lines = [
@@ -210,7 +211,60 @@ def _build_markdown_report(
                 f"- `{item['env_key']}={item['suggested_value']}`: {item['reason']}"
             )
         lines.append("")
+    if gate_reasons:
+        lines.append("## Gate Reasons")
+        lines.extend([f"- {reason}" for reason in gate_reasons])
+        lines.append("")
     return "\n".join(lines).strip() + "\n"
+
+
+def _evaluate_gate(
+    *,
+    total: int,
+    min_sample: int,
+    fail_on_insufficient_sample: bool,
+    autonomous_success_rate: float,
+    target_autonomous_success: float,
+    fallback_rate: float,
+    max_fallback_rate: float,
+    planner_failed_rate: float,
+    max_planner_failed_rate: float,
+    autonomous_attempt_rate: float,
+    min_autonomous_attempt_rate: float,
+    autonomous_success_over_attempt_rate: float,
+    min_autonomous_success_over_attempt_rate: float,
+) -> tuple[str, list[str], bool]:
+    gate_reasons: list[str] = []
+    insufficient_sample = total < min_sample
+
+    if insufficient_sample:
+        gate_reasons.append(f"insufficient_sample: {total} < {min_sample}")
+        verdict = "FAIL" if fail_on_insufficient_sample else "CHECK (insufficient sample)"
+        return verdict, gate_reasons, False
+
+    if autonomous_success_rate < target_autonomous_success:
+        gate_reasons.append(
+            f"autonomous_success_rate_below_target: {autonomous_success_rate:.3f} < {target_autonomous_success:.3f}"
+        )
+    if fallback_rate > max_fallback_rate:
+        gate_reasons.append(f"fallback_rate_above_target: {fallback_rate:.3f} > {max_fallback_rate:.3f}")
+    if planner_failed_rate > max_planner_failed_rate:
+        gate_reasons.append(
+            f"planner_failed_rate_above_target: {planner_failed_rate:.3f} > {max_planner_failed_rate:.3f}"
+        )
+    if autonomous_attempt_rate < min_autonomous_attempt_rate:
+        gate_reasons.append(
+            f"autonomous_attempt_rate_below_target: {autonomous_attempt_rate:.3f} < {min_autonomous_attempt_rate:.3f}"
+        )
+    if autonomous_success_over_attempt_rate < min_autonomous_success_over_attempt_rate:
+        gate_reasons.append(
+            "autonomous_success_over_attempt_below_target: "
+            f"{autonomous_success_over_attempt_rate:.3f} < {min_autonomous_success_over_attempt_rate:.3f}"
+        )
+
+    passed = len(gate_reasons) == 0
+    verdict = "PASS" if passed else "FAIL"
+    return verdict, gate_reasons, passed
 
 
 def main() -> int:
@@ -224,6 +278,23 @@ def main() -> int:
         type=float,
         default=0.20,
         help="Maximum llm planner failed rate",
+    )
+    parser.add_argument(
+        "--min-autonomous-attempt-rate",
+        type=float,
+        default=0.50,
+        help="Minimum autonomous attempt rate",
+    )
+    parser.add_argument(
+        "--min-autonomous-success-over-attempt-rate",
+        type=float,
+        default=0.70,
+        help="Minimum autonomous success over attempt rate",
+    )
+    parser.add_argument(
+        "--fail-on-insufficient-sample",
+        action="store_true",
+        help="Fail gate when sample size is below min-sample",
     )
     parser.add_argument("--output", type=str, default="", help="Optional markdown output path")
     parser.add_argument("--output-json", type=str, default="", help="Optional JSON output path")
@@ -335,9 +406,29 @@ def main() -> int:
         for item in policy_recommendations:
             print(f"  - {item['env_key']}={item['suggested_value']}  # {item['reason']}")
 
-    verdict = "CHECK (insufficient sample)"
+    verdict, gate_reasons, passed = _evaluate_gate(
+        total=total,
+        min_sample=args.min_sample,
+        fail_on_insufficient_sample=bool(args.fail_on_insufficient_sample),
+        autonomous_success_rate=autonomous_success_rate,
+        target_autonomous_success=args.target_autonomous_success,
+        fallback_rate=fallback_rate,
+        max_fallback_rate=args.max_fallback_rate,
+        planner_failed_rate=planner_failed_rate,
+        max_planner_failed_rate=args.max_planner_failed_rate,
+        autonomous_attempt_rate=autonomous_attempt_rate,
+        min_autonomous_attempt_rate=args.min_autonomous_attempt_rate,
+        autonomous_success_over_attempt_rate=autonomous_success_over_attempt_rate,
+        min_autonomous_success_over_attempt_rate=args.min_autonomous_success_over_attempt_rate,
+    )
+
+    if gate_reasons:
+        print("- gate reasons:")
+        for reason in gate_reasons:
+            print(f"  - {reason}")
+    print(f"- verdict: {verdict}")
+
     if total < args.min_sample:
-        print(f"- verdict: {verdict}")
         if args.output:
             report = _build_markdown_report(
                 total=total,
@@ -362,6 +453,7 @@ def main() -> int:
                 top_execution_mode=top_execution_mode,
                 tuning_hints=tuning_hints,
                 policy_recommendations=policy_recommendations,
+                gate_reasons=gate_reasons,
                 verdict=verdict,
             )
             with open(args.output, "w", encoding="utf-8") as fp:
@@ -389,21 +481,15 @@ def main() -> int:
                         "top_execution_mode": top_execution_mode,
                         "tuning_hints": tuning_hints,
                         "policy_recommendations": policy_recommendations,
+                        "gate_reasons": gate_reasons,
                         "verdict": verdict,
                     },
                     fp,
                     ensure_ascii=False,
                     indent=2,
                 )
-        return 0
+        return 0 if (not args.fail_on_insufficient_sample) else 1
 
-    passed = (
-        autonomous_success_rate >= args.target_autonomous_success
-        and fallback_rate <= args.max_fallback_rate
-        and planner_failed_rate <= args.max_planner_failed_rate
-    )
-    verdict = "PASS" if passed else "FAIL"
-    print(f"- verdict: {verdict}")
     if args.output:
         report = _build_markdown_report(
             total=total,
@@ -428,6 +514,7 @@ def main() -> int:
             top_execution_mode=top_execution_mode,
             tuning_hints=tuning_hints,
             policy_recommendations=policy_recommendations,
+            gate_reasons=gate_reasons,
             verdict=verdict,
         )
         with open(args.output, "w", encoding="utf-8") as fp:
@@ -455,6 +542,7 @@ def main() -> int:
                     "top_execution_mode": top_execution_mode,
                     "tuning_hints": tuning_hints,
                     "policy_recommendations": policy_recommendations,
+                    "gate_reasons": gate_reasons,
                     "verdict": verdict,
                 },
                 fp,
