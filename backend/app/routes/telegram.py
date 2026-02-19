@@ -188,6 +188,8 @@ def _load_notion_access_token_for_user(user_id: str) -> str:
 async def _create_notion_page_for_user(user_id: str, title: str) -> dict:
     token = _load_notion_access_token_for_user(user_id)
     settings = get_settings()
+    parent_page_id = (settings.notion_default_parent_page_id or "").strip()
+    parent = {"page_id": parent_page_id} if parent_page_id else {"workspace": True}
 
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(
@@ -198,7 +200,7 @@ async def _create_notion_page_for_user(user_id: str, title: str) -> dict:
                 "Content-Type": "application/json",
             },
             json={
-                "parent": {"workspace": True},
+                "parent": parent,
                 "properties": {
                     "title": {
                         "title": [

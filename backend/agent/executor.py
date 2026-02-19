@@ -476,6 +476,14 @@ def _is_valid_notion_id(value: str | None) -> bool:
     return bool(re.fullmatch(r"[0-9a-fA-F]{32}|[0-9a-fA-F\-]{36}", value.strip()))
 
 
+def _notion_create_parent_payload() -> dict:
+    settings = get_settings()
+    parent_page_id = (settings.notion_default_parent_page_id or "").strip()
+    if parent_page_id:
+        return {"page_id": parent_page_id}
+    return {"workspace": True}
+
+
 async def _read_page_lines_or_summary(
     *,
     user_id: str,
@@ -588,7 +596,12 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         )
         raw_pages = (search_result.get("data") or {}).get("results", [])
         normalized_pages = [
-            {"id": page.get("id"), "title": _extract_page_title(page), "url": page.get("url")}
+            {
+                "id": page.get("id"),
+                "title": _extract_page_title(page),
+                "url": page.get("url"),
+                "parent_type": ((page.get("parent") or {}).get("type") or ""),
+            }
             for page in raw_pages
         ]
         if not normalized_pages:
@@ -893,11 +906,27 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             (page for page in normalized_pages if normalized_target in _normalize_title(page["title"])),
             normalized_pages[0],
         )
+        # Prefer deletable page candidates when same-title pages include workspace-level pages.
+        if selected_page.get("parent_type") == "workspace":
+            alternative = next(
+                (
+                    page
+                    for page in normalized_pages
+                    if _normalize_title(page["title"]) == _normalize_title(selected_page["title"])
+                    and page.get("parent_type") != "workspace"
+                ),
+                None,
+            )
+            if alternative:
+                selected_page = alternative
         steps.append(
             AgentExecutionStep(
                 name="select_page",
                 status="success",
-                detail=f"선택 페이지: {selected_page['title']} ({selected_page.get('id')})",
+                detail=(
+                    f"선택 페이지: {selected_page['title']} ({selected_page.get('id')}) "
+                    f"parent={selected_page.get('parent_type') or 'unknown'}"
+                ),
             )
         )
         selected_page_id = selected_page.get("id")
@@ -948,6 +977,20 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             if page_data.get("archived") is True or page_data.get("in_trash") is True:
                 steps.append(AgentExecutionStep(name="archive_retry", status="success", detail="already_archived"))
             else:
+                if "archiving workspace level pages via api not supported" in (last_error_detail or "").lower():
+                    return AgentExecutionResult(
+                        success=False,
+                        summary="Notion 제약으로 워크스페이스 최상위 페이지를 API로 삭제할 수 없습니다.",
+                        user_message=(
+                            "선택된 페이지가 Notion 워크스페이스 최상위 페이지라 API 삭제(아카이브)가 불가합니다.\n"
+                            "- 해결 방법 1: Notion UI에서 직접 삭제\n"
+                            "- 해결 방법 2: 페이지를 상위 페이지/데이터소스 하위로 옮긴 뒤 다시 요청\n"
+                            "- 참고: 앞으로 자동 생성 페이지를 삭제 가능하게 하려면 "
+                            "`NOTION_DEFAULT_PARENT_PAGE_ID`를 설정하세요."
+                        ),
+                        artifacts={"error_code": "validation_error"},
+                        steps=steps,
+                    )
                 return AgentExecutionResult(
                     success=False,
                     summary="페이지 삭제(아카이브) 실행에 실패했습니다.",
@@ -1129,7 +1172,7 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             user_id=user_id,
             tool_name=_pick_tool(plan, "create_page", "notion_create_page"),
             payload={
-                "parent": {"workspace": True},
+                "parent": _notion_create_parent_payload(),
                 "properties": {
                     "title": {
                         "title": [

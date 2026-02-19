@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     notion_redirect_uri: str
     notion_state_secret: str
     notion_token_encryption_key: str | None = None
+    notion_default_parent_page_id: str | None = None
 
     telegram_bot_token: str | None = None
     telegram_link_secret: str | None = None
