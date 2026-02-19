@@ -292,6 +292,26 @@ def _get_connected_services_for_user(user_id: str) -> list[str]:
     return list(dict.fromkeys(services))
 
 
+def _agent_error_guide(error_code: str | None) -> str:
+    if not error_code:
+        return ""
+
+    guides = {
+        "notion_not_connected": "Notion 미연결 상태입니다. 대시보드에서 Notion 연동 후 다시 시도해주세요.",
+        "token_missing": "연동 토큰이 없거나 손상되었습니다. 연동을 해제 후 다시 연결해주세요.",
+        "auth_error": "권한이 부족하거나 만료되었습니다. Notion 권한을 다시 승인해주세요.",
+        "rate_limited": "외부 API 호출 한도를 초과했습니다. 1~2분 후 다시 시도해주세요.",
+        "validation_error": "요청 형식을 확인해주세요. 페이지 제목/데이터소스 ID/개수 형식을 점검해주세요.",
+        "not_found": "요청한 페이지 또는 데이터를 찾지 못했습니다. 제목/ID를 다시 확인해주세요.",
+        "upstream_error": "Notion 응답 처리에 실패했습니다. 잠시 후 다시 시도해주세요.",
+        "execution_error": "실행 중 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+    }
+    hint = guides.get(error_code)
+    if not hint:
+        return ""
+    return f"\n\n[오류 가이드]\n- 코드: {error_code}\n- 안내: {hint}"
+
+
 def _map_natural_text_to_command(text: str) -> tuple[str, str]:
     raw = text.strip()
     lower = raw.lower()
@@ -558,19 +578,23 @@ async def telegram_webhook(
             workflow_text = "\n".join(f"{idx}. {step}" for idx, step in enumerate(analysis.plan.workflow_steps, start=1))
             execution_steps_text = ""
             execution_message = analysis.result_summary
+            execution_error_code = None
             if analysis.execution:
                 execution_steps_text = (
                     "\n".join(f"- {step.name}: {step.status} ({step.detail})" for step in analysis.execution.steps)
                     or "- (실행 단계 없음)"
                 )
                 execution_message = analysis.execution.user_message
+                execution_error_code = analysis.execution.artifacts.get("error_code")
+                if execution_error_code:
+                    execution_message += _agent_error_guide(execution_error_code)
 
             _record_command_log(
                 user_id=user_id,
                 chat_id=chat_id,
                 command="agent_plan",
                 status="success" if analysis.ok else "error",
-                error_code=None if analysis.ok else "execution_failed",
+                error_code=None if analysis.ok else (execution_error_code or "execution_failed"),
                 detail=f"services={services_text}",
             )
 

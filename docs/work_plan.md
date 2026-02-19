@@ -49,6 +49,39 @@
 6. **그 다음 멀티서비스 확장**
    - Spotify는 Notion 에이전트 완성 후 동일 패턴으로 추가
 
+진행 메모(2026-02-19):
+- `tool_runner`에 schema 기반 입력 검증(`required/type/min/max/enum`) 추가
+- `executor`가 `plan.selected_tools` 우선 순서를 반영해 tool 선택
+- 서비스 분기 실행기 추가(Notion/Spotify 경로; Spotify는 토큰/실행기 확장 준비 단계)
+- Notion 특정 페이지 대상 시나리오 확장:
+  - `"노션에서 <페이지명>의 내용 중 상위 N줄 출력"`
+  - `"노션에서 <페이지명> 요약해줘"`
+  - `"노션에서 <페이지명>에 <내용> 추가해줘"` (append block children)
+  - `"노션에서 <페이지명> 페이지 제목을 <새 제목>으로 변경"` (update page properties)
+  - `"노션 데이터소스 <id> 최근 N개 조회"` (query data source)
+  - `"노션에서 <페이지명> 페이지 삭제해줘"` (archive page)
+- E2E 성격 테스트(모킹 기반) 추가:
+  - 제목 변경/데이터소스 조회/페이지 아카이브 실행 경로 검증
+  - 실행 오류 표준화 메시지(`auth_error` 등) 검증
+- 실패 메시지 표준화:
+  - `execute_agent_plan`에서 HTTPException detail 코드를 사용자 친화 메시지/요약/표준 오류코드로 매핑
+  - 표준 코드 예: `notion_not_connected`, `auth_error`, `rate_limited`, `validation_error`, `upstream_error`
+- 텔레그램 응답 가이드 강화:
+  - `backend/app/routes/telegram.py`에서 `analysis.execution.artifacts.error_code`를 읽어 오류 가이드 문구를 사용자 응답에 자동 첨부
+  - command log `error_code`도 표준 코드 우선 기록
+- 실제 Notion 통합 테스트 골격 추가:
+  - `backend/tests/integration/test_notion_live.py`
+  - 기본은 skip, 환경변수로 선택 실행:
+    - `RUN_NOTION_LIVE_TESTS=true`
+    - (쓰기 테스트) `RUN_NOTION_LIVE_WRITE_TESTS=true`
+    - `NOTION_LIVE_TOKEN`, `NOTION_LIVE_PAGE_ID` 등
+- 라이브 테스트 범위 확장:
+  - 읽기: `search_pages`, `retrieve_block_children`, `query_data_source`
+  - 쓰기: `update_page_title_roundtrip`, `append_block_children`
+  - 토큰 사전검증: `users/me` 호출로 invalid token 조기 진단
+- 테스트 상태:
+  - `backend` 테스트 `25 passed, 5 skipped` (live integration 스킵 포함)
+
 ## 3. 개발 단계별 상세 계획
 
 ### 3.1. Phase 1: 초기 환경 설정 및 기본 웹 서비스 구축

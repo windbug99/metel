@@ -24,10 +24,18 @@ def _extract_requirements(user_text: str) -> list[AgentRequirement]:
         requirements.append(AgentRequirement(summary="대상 콘텐츠 요약", quantity=quantity))
     if any(keyword in normalized for keyword in ("생성", "만들", "작성", "create")):
         requirements.append(AgentRequirement(summary="결과물 생성", quantity=1))
+    if any(keyword in normalized for keyword in ("추가", "업데이트", "갱신", "append", "update")):
+        requirements.append(AgentRequirement(summary="기존 결과물 수정/추가", quantity=1))
     if any(keyword in normalized for keyword in ("조회", "검색", "찾", "list", "search")):
         requirements.append(AgentRequirement(summary="대상 데이터 조회", quantity=quantity))
     if any(keyword in normalized for keyword in ("내용", "본문", "상위", "줄", "출력", "보여")):
         requirements.append(AgentRequirement(summary="페이지 본문 일부 추출", quantity=quantity))
+    if any(keyword in normalized for keyword in ("제목 변경", "제목 수정", "rename", "바꿔", "변경")) and "제목" in normalized:
+        requirements.append(AgentRequirement(summary="페이지 메타데이터 업데이트", quantity=1))
+    if any(keyword in normalized for keyword in ("삭제", "지워", "아카이브", "archive")):
+        requirements.append(AgentRequirement(summary="페이지 아카이브(삭제)", quantity=1))
+    if any(keyword in normalized for keyword in ("데이터소스", "data source", "data_source")):
+        requirements.append(AgentRequirement(summary="데이터소스 질의", quantity=quantity))
 
     if not requirements:
         requirements.append(AgentRequirement(summary="사용자 요청 분석 및 실행 계획 수립", quantity=quantity))
@@ -61,6 +69,8 @@ def _select_tools(user_text: str, tools: list[ToolDefinition], max_tools: int = 
             "search" in tool.tool_name or "get" in tool.tool_name or "retrieve" in tool.tool_name
         ):
             overlap += 1
+        if any(keyword in user_text for keyword in ("삭제", "지워", "아카이브", "archive")) and "update" in tool.tool_name:
+            overlap += 2
 
         scored.append((tool.tool_name, overlap))
 
@@ -92,11 +102,13 @@ def build_agent_plan(user_text: str, connected_services: list[str]) -> AgentPlan
         "요청문 분석 및 작업 요구사항 도출",
         "작업 요구사항 기반 타겟 서비스 선정",
         "타겟 서비스의 실행 가능한 API(tool) 선정",
-        "선정된 API로 워크플로우 생성",
+        "선정된 API 순서 기반 워크플로우 생성",
         "워크플로우 기반 작업 진행",
         "결과 정리",
         "텔레그램 사용자 결과 전달",
     ]
+    if selected_tools:
+        workflow_steps.append("실행 예정 API 순서: " + " -> ".join(selected_tools))
 
     return AgentPlan(
         user_text=user_text,

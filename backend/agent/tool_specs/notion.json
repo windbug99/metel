@@ -7,12 +7,14 @@
     "required_scopes": [
       "read_content",
       "insert_content",
-      "update_content"
+      "update_content",
+      "read_comment",
+      "insert_comment"
     ]
   },
   "limits": {
     "timeout_ms": 15000,
-    "max_calls_per_run": 10
+    "max_calls_per_run": 20
   },
   "tools": [
     {
@@ -27,19 +29,184 @@
         "type": "object",
         "properties": {
           "query": { "type": "string" },
-          "page_size": { "type": "integer", "minimum": 1, "maximum": 100 }
+          "page_size": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "start_cursor": { "type": "string" }
         },
         "required": ["query"]
       },
-      "error_map": {
-        "401": "AUTH_REQUIRED",
-        "403": "AUTH_FORBIDDEN",
-        "429": "RATE_LIMITED"
-      }
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "429": "RATE_LIMITED" }
+    },
+
+    {
+      "tool_name": "notion_retrieve_user",
+      "description": "Retrieve a user by user_id",
+      "method": "GET",
+      "path": "/v1/users/{user_id}",
+      "adapter_function": "notion_retrieve_user",
+      "required_scopes": [],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": { "user_id": { "type": "string" } },
+        "required": ["user_id"]
+      },
+      "error_map": { "401": "AUTH_REQUIRED", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_list_users",
+      "description": "List all users in workspace",
+      "method": "GET",
+      "path": "/v1/users",
+      "adapter_function": "notion_list_users",
+      "required_scopes": [],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "start_cursor": { "type": "string" },
+          "page_size": { "type": "integer", "minimum": 1, "maximum": 100 }
+        }
+      },
+      "error_map": { "401": "AUTH_REQUIRED", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_retrieve_bot_user",
+      "description": "Retrieve current bot user",
+      "method": "GET",
+      "path": "/v1/users/me",
+      "adapter_function": "notion_retrieve_bot_user",
+      "required_scopes": [],
+      "idempotency_key_policy": "none",
+      "input_schema": { "type": "object", "properties": {} },
+      "error_map": { "401": "AUTH_REQUIRED", "429": "RATE_LIMITED" }
+    },
+
+    {
+      "tool_name": "notion_retrieve_page",
+      "description": "Retrieve a page",
+      "method": "GET",
+      "path": "/v1/pages/{page_id}",
+      "adapter_function": "notion_retrieve_page",
+      "required_scopes": ["read_content"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": { "page_id": { "type": "string" } },
+        "required": ["page_id"]
+      },
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_create_page",
+      "description": "Create a new page",
+      "method": "POST",
+      "path": "/v1/pages",
+      "adapter_function": "notion_create_page",
+      "required_scopes": ["insert_content"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "parent": { "type": "object" },
+          "properties": { "type": "object" },
+          "children": { "type": "array" }
+        },
+        "required": ["parent", "properties"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_update_page",
+      "description": "Update page properties or archive status",
+      "method": "PATCH",
+      "path": "/v1/pages/{page_id}",
+      "adapter_function": "notion_update_page",
+      "required_scopes": ["update_content"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "page_id": { "type": "string" },
+          "properties": { "type": "object" },
+          "archived": { "type": "boolean" },
+          "in_trash": { "type": "boolean" }
+        },
+        "required": ["page_id"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_retrieve_page_property_item",
+      "description": "Retrieve a page property item",
+      "method": "GET",
+      "path": "/v1/pages/{page_id}/properties/{property_id}",
+      "adapter_function": "notion_retrieve_page_property_item",
+      "required_scopes": ["read_content"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "page_id": { "type": "string" },
+          "property_id": { "type": "string" },
+          "start_cursor": { "type": "string" },
+          "page_size": { "type": "integer", "minimum": 1, "maximum": 100 }
+        },
+        "required": ["page_id", "property_id"]
+      },
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+
+    {
+      "tool_name": "notion_retrieve_block",
+      "description": "Retrieve a block",
+      "method": "GET",
+      "path": "/v1/blocks/{block_id}",
+      "adapter_function": "notion_retrieve_block",
+      "required_scopes": ["read_content"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": { "block_id": { "type": "string" } },
+        "required": ["block_id"]
+      },
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_update_block",
+      "description": "Update a block",
+      "method": "PATCH",
+      "path": "/v1/blocks/{block_id}",
+      "adapter_function": "notion_update_block",
+      "required_scopes": ["update_content"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "block_id": { "type": "string" },
+          "content": { "type": "object" }
+        },
+        "required": ["block_id", "content"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_delete_block",
+      "description": "Delete (archive) a block",
+      "method": "DELETE",
+      "path": "/v1/blocks/{block_id}",
+      "adapter_function": "notion_delete_block",
+      "required_scopes": ["update_content"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": { "block_id": { "type": "string" } },
+        "required": ["block_id"]
+      },
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
     },
     {
       "tool_name": "notion_retrieve_block_children",
-      "description": "Retrieve children blocks for a given block or page",
+      "description": "Retrieve children blocks for a block/page",
       "method": "GET",
       "path": "/v1/blocks/{block_id}/children",
       "adapter_function": "notion_retrieve_block_children",
@@ -49,43 +216,16 @@
         "type": "object",
         "properties": {
           "block_id": { "type": "string" },
+          "start_cursor": { "type": "string" },
           "page_size": { "type": "integer", "minimum": 1, "maximum": 100 }
         },
         "required": ["block_id"]
       },
-      "error_map": {
-        "401": "AUTH_REQUIRED",
-        "403": "AUTH_FORBIDDEN",
-        "404": "NOT_FOUND",
-        "429": "RATE_LIMITED"
-      }
-    },
-    {
-      "tool_name": "notion_create_page",
-      "description": "Create a new page in Notion",
-      "method": "POST",
-      "path": "/v1/pages",
-      "adapter_function": "notion_create_page",
-      "required_scopes": ["insert_content"],
-      "idempotency_key_policy": "optional",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "title": { "type": "string" },
-          "parent_page_id": { "type": "string" },
-          "markdown": { "type": "string" }
-        },
-        "required": ["title"]
-      },
-      "error_map": {
-        "401": "AUTH_REQUIRED",
-        "403": "AUTH_FORBIDDEN",
-        "429": "RATE_LIMITED"
-      }
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
     },
     {
       "tool_name": "notion_append_block_children",
-      "description": "Append blocks to existing Notion page",
+      "description": "Append children blocks",
       "method": "PATCH",
       "path": "/v1/blocks/{block_id}/children",
       "adapter_function": "notion_append_block_children",
@@ -95,16 +235,356 @@
         "type": "object",
         "properties": {
           "block_id": { "type": "string" },
-          "markdown": { "type": "string" }
+          "children": { "type": "array" },
+          "after": { "type": "string" }
         },
-        "required": ["block_id", "markdown"]
+        "required": ["block_id", "children"]
       },
-      "error_map": {
-        "401": "AUTH_REQUIRED",
-        "403": "AUTH_FORBIDDEN",
-        "404": "NOT_FOUND",
-        "429": "RATE_LIMITED"
-      }
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+
+    {
+      "tool_name": "notion_create_comment",
+      "description": "Create a comment on a page or discussion",
+      "method": "POST",
+      "path": "/v1/comments",
+      "adapter_function": "notion_create_comment",
+      "required_scopes": ["insert_comment"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "parent": { "type": "object" },
+          "discussion_id": { "type": "string" },
+          "rich_text": { "type": "array" }
+        },
+        "required": ["rich_text"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_list_comments",
+      "description": "List comments for a block/page",
+      "method": "GET",
+      "path": "/v1/comments",
+      "adapter_function": "notion_list_comments",
+      "required_scopes": ["read_comment"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "block_id": { "type": "string" },
+          "start_cursor": { "type": "string" },
+          "page_size": { "type": "integer", "minimum": 1, "maximum": 100 }
+        },
+        "required": ["block_id"]
+      },
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+
+    {
+      "tool_name": "notion_query_data_source",
+      "description": "Query a data source",
+      "method": "POST",
+      "path": "/v1/data_sources/{data_source_id}/query",
+      "adapter_function": "notion_query_data_source",
+      "required_scopes": ["read_content"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "data_source_id": { "type": "string" },
+          "filter": { "type": "object" },
+          "sorts": { "type": "array" },
+          "start_cursor": { "type": "string" },
+          "page_size": { "type": "integer", "minimum": 1, "maximum": 100 }
+        },
+        "required": ["data_source_id"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_retrieve_data_source",
+      "description": "Retrieve a data source",
+      "method": "GET",
+      "path": "/v1/data_sources/{data_source_id}",
+      "adapter_function": "notion_retrieve_data_source",
+      "required_scopes": ["read_content"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": { "data_source_id": { "type": "string" } },
+        "required": ["data_source_id"]
+      },
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_update_data_source",
+      "description": "Update a data source",
+      "method": "PATCH",
+      "path": "/v1/data_sources/{data_source_id}",
+      "adapter_function": "notion_update_data_source",
+      "required_scopes": ["update_content"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "data_source_id": { "type": "string" },
+          "title": { "type": "array" },
+          "description": { "type": "array" },
+          "properties": { "type": "object" }
+        },
+        "required": ["data_source_id"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_list_data_source_templates",
+      "description": "List data source templates",
+      "method": "GET",
+      "path": "/v1/data_sources/{data_source_id}/templates",
+      "adapter_function": "notion_list_data_source_templates",
+      "required_scopes": ["read_content"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "data_source_id": { "type": "string" },
+          "start_cursor": { "type": "string" },
+          "page_size": { "type": "integer", "minimum": 1, "maximum": 100 }
+        },
+        "required": ["data_source_id"]
+      },
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_create_data_source",
+      "description": "Create a new data source",
+      "method": "POST",
+      "path": "/v1/data_sources",
+      "adapter_function": "notion_create_data_source",
+      "required_scopes": ["insert_content"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "parent": { "type": "object" },
+          "title": { "type": "array" },
+          "properties": { "type": "object" }
+        },
+        "required": ["parent", "title", "properties"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "429": "RATE_LIMITED" }
+    },
+
+    {
+      "tool_name": "notion_retrieve_database",
+      "description": "Retrieve a database (legacy endpoint)",
+      "method": "GET",
+      "path": "/v1/databases/{database_id}",
+      "adapter_function": "notion_retrieve_database",
+      "required_scopes": ["read_content"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": { "database_id": { "type": "string" } },
+        "required": ["database_id"]
+      },
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_query_database",
+      "description": "Query database (legacy endpoint)",
+      "method": "POST",
+      "path": "/v1/databases/{database_id}/query",
+      "adapter_function": "notion_query_database",
+      "required_scopes": ["read_content"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "database_id": { "type": "string" },
+          "filter": { "type": "object" },
+          "sorts": { "type": "array" },
+          "start_cursor": { "type": "string" },
+          "page_size": { "type": "integer", "minimum": 1, "maximum": 100 }
+        },
+        "required": ["database_id"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_create_database",
+      "description": "Create a database (legacy endpoint)",
+      "method": "POST",
+      "path": "/v1/databases",
+      "adapter_function": "notion_create_database",
+      "required_scopes": ["insert_content"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "parent": { "type": "object" },
+          "title": { "type": "array" },
+          "properties": { "type": "object" }
+        },
+        "required": ["parent", "title", "properties"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_update_database",
+      "description": "Update database (legacy endpoint)",
+      "method": "PATCH",
+      "path": "/v1/databases/{database_id}",
+      "adapter_function": "notion_update_database",
+      "required_scopes": ["update_content"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "database_id": { "type": "string" },
+          "title": { "type": "array" },
+          "description": { "type": "array" },
+          "properties": { "type": "object" }
+        },
+        "required": ["database_id"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+
+    {
+      "tool_name": "notion_create_file_upload",
+      "description": "Create file upload object",
+      "method": "POST",
+      "path": "/v1/file_uploads",
+      "adapter_function": "notion_create_file_upload",
+      "required_scopes": ["insert_content"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "filename": { "type": "string" },
+          "content_type": { "type": "string" }
+        },
+        "required": ["filename"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_send_file_upload",
+      "description": "Send file bytes/chunks to upload URL",
+      "method": "POST",
+      "path": "/v1/file_uploads/{file_upload_id}/send",
+      "adapter_function": "notion_send_file_upload",
+      "required_scopes": ["insert_content"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "file_upload_id": { "type": "string" },
+          "file_bytes_base64": { "type": "string" }
+        },
+        "required": ["file_upload_id", "file_bytes_base64"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_complete_file_upload",
+      "description": "Complete a file upload",
+      "method": "POST",
+      "path": "/v1/file_uploads/{file_upload_id}/complete",
+      "adapter_function": "notion_complete_file_upload",
+      "required_scopes": ["insert_content"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": { "file_upload_id": { "type": "string" } },
+        "required": ["file_upload_id"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_retrieve_file_upload",
+      "description": "Retrieve file upload metadata",
+      "method": "GET",
+      "path": "/v1/file_uploads/{file_upload_id}",
+      "adapter_function": "notion_retrieve_file_upload",
+      "required_scopes": ["read_content"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": { "file_upload_id": { "type": "string" } },
+        "required": ["file_upload_id"]
+      },
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_list_file_uploads",
+      "description": "List file uploads",
+      "method": "GET",
+      "path": "/v1/file_uploads",
+      "adapter_function": "notion_list_file_uploads",
+      "required_scopes": ["read_content"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "start_cursor": { "type": "string" },
+          "page_size": { "type": "integer", "minimum": 1, "maximum": 100 }
+        }
+      },
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "429": "RATE_LIMITED" }
+    },
+
+    {
+      "tool_name": "notion_oauth_token_exchange",
+      "description": "Exchange OAuth code for access token",
+      "method": "POST",
+      "path": "/v1/oauth/token",
+      "adapter_function": "notion_oauth_token_exchange",
+      "required_scopes": [],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "grant_type": { "type": "string" },
+          "code": { "type": "string" },
+          "redirect_uri": { "type": "string" }
+        },
+        "required": ["grant_type"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_oauth_token_introspect",
+      "description": "Introspect OAuth token",
+      "method": "POST",
+      "path": "/v1/oauth/token/introspect",
+      "adapter_function": "notion_oauth_token_introspect",
+      "required_scopes": [],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": { "token": { "type": "string" } },
+        "required": ["token"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "notion_oauth_token_revoke",
+      "description": "Revoke OAuth token",
+      "method": "POST",
+      "path": "/v1/oauth/token/revoke",
+      "adapter_function": "notion_oauth_token_revoke",
+      "required_scopes": [],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": { "token": { "type": "string" } },
+        "required": ["token"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "429": "RATE_LIMITED" }
     }
   ]
 }

@@ -122,6 +122,28 @@ Supabase SQL Editor에서 `docs/sql/001_create_users_table.sql` 실행:
 6. Command logs
    - 대시보드 `명령 로그` 최근 20건에 성공/실패 기록 표시
 
+## Notion Live Integration Tests
+
+실제 Notion API를 대상으로 통합 테스트를 실행할 수 있습니다.
+
+1. 가상환경 활성화
+   - `cd backend && source .venv/bin/activate`
+2. 필수 환경변수 설정
+   - `RUN_NOTION_LIVE_TESTS=true`
+   - `NOTION_LIVE_TOKEN=<Internal Integration Token 또는 유효한 OAuth access token>`
+   - `NOTION_LIVE_PAGE_ID=<접근 가능한 page/block id>`
+   - `NOTION_LIVE_DATA_SOURCE_ID=<접근 가능한 data source id>`
+3. 읽기 테스트 실행
+   - `python -m pytest -q tests/integration/test_notion_live.py -k "search_pages or retrieve_block_children or query_data_source"`
+4. 쓰기 테스트(주의: 실제 변경 발생) 실행
+   - `RUN_NOTION_LIVE_WRITE_TESTS=true`
+   - `NOTION_LIVE_BASE_TITLE="Metel Live Test"` (제목 변경 테스트용)
+   - `python -m pytest -q tests/integration/test_notion_live.py -k "update_page_title_roundtrip or append_block_children"`
+
+참고:
+- 테스트 토큰은 먼저 검증됩니다. `401 unauthorized`가 나오면 토큰이 잘못된 것입니다.
+- Integration 토큰을 쓸 경우 테스트할 페이지/데이터소스를 해당 Integration에 연결(Connections)해야 합니다.
+
 ## Troubleshooting
 
 - CORS 오류 (`No 'Access-Control-Allow-Origin' header`)

@@ -2,15 +2,64 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from json import JSONDecodeError
 
-import httpx
 from fastapi import HTTPException
-from supabase import create_client
 
+from agent.tool_runner import execute_tool
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan
-from app.core.config import get_settings
-from app.security.token_vault import TokenVault
+
+
+def _map_execution_error(detail: str) -> tuple[str, str, str]:
+    code = detail or "unknown_error"
+    lower = code.lower()
+
+    if "notion_not_connected" in lower:
+        return (
+            "Notion 연결이 필요합니다.",
+            "Notion이 연결되어 있지 않습니다. 대시보드에서 Notion 연동 후 다시 시도해주세요.",
+            "notion_not_connected",
+        )
+    if "token_missing" in lower:
+        return (
+            "연동 토큰을 찾지 못했습니다.",
+            "연동 토큰 정보를 찾지 못했습니다. 연동을 해제 후 다시 연결해주세요.",
+            "token_missing",
+        )
+    if "auth_required" in lower or "auth_forbidden" in lower:
+        return (
+            "외부 서비스 권한 오류가 발생했습니다.",
+            "권한이 부족하거나 만료되었습니다. 연동 권한을 다시 확인해주세요.",
+            "auth_error",
+        )
+    if "rate_limited" in lower:
+        return (
+            "요청 한도를 초과했습니다.",
+            "외부 API 호출 한도를 초과했습니다. 잠시 후 다시 시도해주세요.",
+            "rate_limited",
+        )
+    if "not_found" in lower:
+        return (
+            "요청한 대상을 찾지 못했습니다.",
+            "요청한 페이지/데이터를 찾지 못했습니다. 제목이나 ID를 확인해주세요.",
+            "not_found",
+        )
+    if "validation_" in lower or "missing_path_param" in lower:
+        return (
+            "요청 형식이 올바르지 않습니다.",
+            "요청 파라미터가 올바르지 않습니다. 제목/개수/ID 형식을 확인해주세요.",
+            "validation_error",
+        )
+    if "tool_failed" in lower or "notion_api_failed" in lower or "notion_parse_failed" in lower:
+        return (
+            "외부 서비스 처리 중 오류가 발생했습니다.",
+            "외부 서비스 응답 처리에 실패했습니다. 잠시 후 다시 시도해주세요.",
+            "upstream_error",
+        )
+    return (
+        "작업 실행 중 오류가 발생했습니다.",
+        "요청을 실행하던 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+        "execution_error",
+    )
 
 
 def _extract_page_title(page: dict) -> str:
@@ -82,6 +131,7 @@ def _extract_target_page_title(user_text: str) -> str | None:
     patterns = [
         r"(?i)(?:노션에서\s*)?(.+?)의\s*(?:내용|본문)",
         r"(?i)(?:노션에서\s*)?(.+?)\s*페이지(?:의)?\s*(?:내용|본문)",
+        r"(?i)(?:노션에서\s*)?(.+?)\s*(?:페이지)?\s*요약(?:해줘|해|해서|해봐)?",
     ]
     for pattern in patterns:
         match = re.search(pattern, user_text)
@@ -94,6 +144,67 @@ def _extract_target_page_title(user_text: str) -> str | None:
     return None
 
 
+def _extract_append_target_and_content(user_text: str) -> tuple[str | None, str | None]:
+    pattern = r"(?i)(?:노션에서\s*)?(?P<title>.+?)\s*(?:페이지)?에\s*(?P<content>.+?)\s*(?:을|를)?\s*추가(?:해줘|해|해줘요)?$"
+    match = re.search(pattern, user_text.strip())
+    if not match:
+        return None, None
+    title = match.group("title").strip(" \"'`")
+    title = re.sub(r"^(노션|notion)\s*", "", title, flags=re.IGNORECASE).strip()
+    content = match.group("content").strip(" \"'`")
+    if content.endswith(("을", "를")) and len(content) > 1:
+        content = content[:-1].strip()
+    if not title or not content:
+        return None, None
+    return title, content
+
+
+def _extract_page_rename_request(user_text: str) -> tuple[str | None, str | None]:
+    patterns = [
+        r"(?i)(?:노션에서\s*)?(?P<title>.+?)\s*(?:페이지)?\s*제목을\s*(?P<new_title>.+?)\s*로\s*(?:변경|수정|바꿔줘|바꿔|rename)",
+        r"(?i)(?:노션에서\s*)?(?P<title>.+?)의\s*제목을\s*(?P<new_title>.+?)\s*로\s*(?:변경|수정|바꿔줘|바꿔|rename)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, user_text.strip())
+        if not match:
+            continue
+        title = match.group("title").strip(" \"'`")
+        title = re.sub(r"^(노션|notion)\s*", "", title, flags=re.IGNORECASE).strip()
+        new_title = match.group("new_title").strip(" \"'`")
+        if "으로" in user_text and new_title.endswith("으"):
+            new_title = new_title[:-1].strip()
+        if title and new_title:
+            return title, new_title[:100]
+    return None, None
+
+
+def _extract_data_source_query_request(user_text: str) -> tuple[str | None, int]:
+    id_match = re.search(r"([0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12})", user_text)
+    data_source_id = id_match.group(1) if id_match else None
+    count_match = re.search(
+        r"(?i)(?:최근|상위|top)?\s*(\d{1,2})\s*(개|건|items?)\b",
+        user_text,
+    )
+    count = int(count_match.group(1)) if count_match else 5
+    return data_source_id, max(1, min(20, count))
+
+
+def _extract_page_archive_target(user_text: str) -> str | None:
+    patterns = [
+        r"(?i)(?:노션에서\s*)?(?P<title>.+?)\s*(?:페이지)?\s*(?:를|을)?\s*(?:삭제|지워줘|지워|아카이브|archive)(?:해줘|해)?",
+        r"(?i)(?:노션에서\s*)?(?P<title>.+?)의\s*(?:페이지)?\s*(?:삭제|아카이브)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, user_text.strip())
+        if not match:
+            continue
+        title = match.group("title").strip(" \"'`")
+        title = re.sub(r"^(노션|notion)\s*", "", title, flags=re.IGNORECASE).strip()
+        if title:
+            return title
+    return None
+
+
 def _extract_requested_line_count(user_text: str, default_count: int = 10) -> int:
     match = re.search(r"(\d{1,2})\s*(줄|line|lines)", user_text, flags=re.IGNORECASE)
     if match:
@@ -101,128 +212,38 @@ def _extract_requested_line_count(user_text: str, default_count: int = 10) -> in
     return default_count
 
 
-def _load_notion_access_token(user_id: str) -> str:
-    settings = get_settings()
-    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
-    token_result = (
-        supabase.table("oauth_tokens")
-        .select("access_token_encrypted")
-        .eq("user_id", user_id)
-        .eq("provider", "notion")
-        .limit(1)
-        .execute()
+def _requires_page_content_read(plan: AgentPlan) -> bool:
+    text = plan.user_text
+    return any(keyword in text for keyword in ("내용", "본문")) and any(
+        keyword in text for keyword in ("출력", "보여", "조회", "읽어")
     )
-    rows = token_result.data or []
-    if not rows:
-        raise HTTPException(status_code=400, detail="notion_not_connected")
-
-    encrypted = rows[0].get("access_token_encrypted")
-    if not encrypted:
-        raise HTTPException(status_code=500, detail="notion_token_missing")
-
-    return TokenVault(settings.notion_token_encryption_key).decrypt(encrypted)
 
 
-async def _notion_search_recent_pages(token: str, page_size: int) -> list[dict]:
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(
-            "https://api.notion.com/v1/search",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Notion-Version": "2022-06-28",
-                "Content-Type": "application/json",
-            },
-            json={
-                "filter": {"property": "object", "value": "page"},
-                "sort": {"direction": "descending", "timestamp": "last_edited_time"},
-                "page_size": page_size,
-            },
-        )
-    if response.status_code >= 400:
-        raise HTTPException(status_code=400, detail="notion_search_failed")
-    try:
-        payload = response.json()
-    except JSONDecodeError as exc:
-        raise HTTPException(status_code=502, detail="notion_parse_failed") from exc
-    return payload.get("results", [])
+def _requires_append_to_page(plan: AgentPlan) -> bool:
+    text = plan.user_text
+    return "추가" in text and any(token in text for token in ("페이지에", "에 "))
 
 
-async def _notion_search_pages_by_query(token: str, query: str, page_size: int = 10) -> list[dict]:
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(
-            "https://api.notion.com/v1/search",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Notion-Version": "2022-06-28",
-                "Content-Type": "application/json",
-            },
-            json={
-                "query": query,
-                "filter": {"property": "object", "value": "page"},
-                "sort": {"direction": "descending", "timestamp": "last_edited_time"},
-                "page_size": page_size,
-            },
-        )
-    if response.status_code >= 400:
-        raise HTTPException(status_code=400, detail="notion_search_failed")
-    try:
-        payload = response.json()
-    except JSONDecodeError as exc:
-        raise HTTPException(status_code=502, detail="notion_parse_failed") from exc
-    return payload.get("results", [])
+def _requires_page_title_update(plan: AgentPlan) -> bool:
+    text = plan.user_text
+    return "제목" in text and any(keyword in text for keyword in ("변경", "수정", "바꿔", "rename"))
 
 
-async def _notion_retrieve_page_blocks(token: str, page_id: str) -> list[dict]:
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get(
-            f"https://api.notion.com/v1/blocks/{page_id}/children",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Notion-Version": "2022-06-28",
-            },
-            params={"page_size": 20},
-        )
-    if response.status_code >= 400:
-        return []
-    try:
-        payload = response.json()
-    except JSONDecodeError:
-        return []
-    return payload.get("results", [])
+def _requires_data_source_query(plan: AgentPlan) -> bool:
+    text = plan.user_text
+    return any(keyword in text for keyword in ("데이터소스", "data source", "data_source")) and any(
+        keyword in text for keyword in ("조회", "목록", "query", "불러", "보여")
+    )
 
 
-async def _notion_create_page(token: str, title: str) -> dict:
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(
-            "https://api.notion.com/v1/pages",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Notion-Version": "2022-06-28",
-                "Content-Type": "application/json",
-            },
-            json={
-                "parent": {"workspace": True},
-                "properties": {
-                    "title": {
-                        "title": [
-                            {
-                                "type": "text",
-                                "text": {"content": title},
-                            }
-                        ]
-                    }
-                },
-            },
-        )
-    if response.status_code >= 400:
-        raise HTTPException(status_code=400, detail="notion_create_failed")
-    try:
-        return response.json()
-    except JSONDecodeError as exc:
-        raise HTTPException(status_code=502, detail="notion_parse_failed") from exc
+def _requires_page_archive(plan: AgentPlan) -> bool:
+    text = plan.user_text
+    return any(keyword in text for keyword in ("삭제", "지워", "아카이브", "archive")) and any(
+        keyword in text for keyword in ("페이지", "노션", "notion")
+    )
 
 
-async def _notion_append_summary_blocks(token: str, page_id: str, markdown: str) -> None:
+async def _notion_append_summary_blocks(user_id: str, plan: AgentPlan, page_id: str, markdown: str) -> None:
     chunks = [line for line in markdown.splitlines() if line.strip()]
     paragraphs = []
     for line in chunks[:30]:
@@ -243,18 +264,14 @@ async def _notion_append_summary_blocks(token: str, page_id: str, markdown: str)
     if not paragraphs:
         return
 
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.patch(
-            f"https://api.notion.com/v1/blocks/{page_id}/children",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Notion-Version": "2022-06-28",
-                "Content-Type": "application/json",
-            },
-            json={"children": paragraphs},
-        )
-    if response.status_code >= 400:
-        raise HTTPException(status_code=400, detail="notion_append_failed")
+    await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_tool(plan, "append_block_children", "notion_append_block_children"),
+        payload={
+            "block_id": page_id,
+            "children": paragraphs,
+        },
+    )
 
 
 def _requires_summary(plan: AgentPlan) -> bool:
@@ -275,26 +292,340 @@ def _requires_top_lines(plan: AgentPlan) -> bool:
     )
 
 
+def _requires_summary_only(plan: AgentPlan) -> bool:
+    return _requires_summary(plan) and not _requires_creation(plan)
+
+
+def _pick_tool(plan: AgentPlan, keyword: str, default_tool: str) -> str:
+    for tool in plan.selected_tools:
+        if keyword in tool:
+            return tool
+    return default_tool
+
+
 async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
     steps: list[AgentExecutionStep] = []
-    token = _load_notion_access_token(user_id)
-    steps.append(AgentExecutionStep(name="token_load", status="success", detail="Notion 토큰 로드 완료"))
+    steps.append(AgentExecutionStep(name="tool_runner_init", status="success", detail="Notion Tool Runner 준비 완료"))
 
     normalized_pages: list[dict] = []
 
-    if _requires_top_lines(plan):
-        target_title = _extract_target_page_title(plan.user_text)
+    if _requires_page_title_update(plan):
+        target_title, new_title = _extract_page_rename_request(plan.user_text)
+        if not target_title or not new_title:
+            return AgentExecutionResult(
+                success=False,
+                summary="페이지 제목 변경 요청 파싱에 실패했습니다.",
+                user_message=(
+                    "제목 변경 요청을 이해하지 못했습니다.\n"
+                    "예: '노션에서 Metel test page 페이지 제목을 주간 회의록으로 변경'"
+                ),
+                steps=steps + [AgentExecutionStep(name="parse_rename", status="error", detail="invalid_format")],
+            )
+
+        search_result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "search", "notion_search"),
+            payload={
+                "query": target_title,
+                "page_size": 10,
+                "filter": {"property": "object", "value": "page"},
+                "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+            },
+        )
+        raw_pages = (search_result.get("data") or {}).get("results", [])
+        normalized_pages = [
+            {"id": page.get("id"), "title": _extract_page_title(page), "url": page.get("url")}
+            for page in raw_pages
+        ]
+        if not normalized_pages:
+            return AgentExecutionResult(
+                success=False,
+                summary="제목 변경 대상 페이지를 찾지 못했습니다.",
+                user_message=f"'{target_title}' 페이지를 찾지 못했습니다.",
+                steps=steps + [AgentExecutionStep(name="search_pages", status="error", detail="page_not_found")],
+            )
+        normalized_target = _normalize_title(target_title)
+        selected_page = next(
+            (page for page in normalized_pages if _normalize_title(page["title"]) == normalized_target),
+            None,
+        ) or next(
+            (page for page in normalized_pages if normalized_target in _normalize_title(page["title"])),
+            normalized_pages[0],
+        )
+        steps.append(AgentExecutionStep(name="select_page", status="success", detail=f"선택 페이지: {selected_page['title']}"))
+
+        await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "update_page", "notion_update_page"),
+            payload={
+                "page_id": selected_page["id"],
+                "properties": {
+                    "title": {
+                        "title": [
+                            {
+                                "type": "text",
+                                "text": {"content": new_title},
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+        steps.append(AgentExecutionStep(name="update_page", status="success", detail=f"새 제목: {new_title}"))
+        return AgentExecutionResult(
+            success=True,
+            summary="페이지 제목 변경을 완료했습니다.",
+            user_message=(
+                "요청하신 페이지 제목을 변경했습니다.\n"
+                f"- 이전 제목: {selected_page['title']}\n"
+                f"- 새 제목: {new_title}\n"
+                f"- 페이지 링크: {selected_page['url']}"
+            ),
+            artifacts={"source_page_url": selected_page["url"], "new_title": new_title},
+            steps=steps,
+        )
+
+    if _requires_data_source_query(plan):
+        data_source_id, page_size = _extract_data_source_query_request(plan.user_text)
+        if not data_source_id:
+            return AgentExecutionResult(
+                success=False,
+                summary="데이터소스 ID를 찾지 못했습니다.",
+                user_message=(
+                    "데이터소스 조회를 위해 ID가 필요합니다.\n"
+                    "예: '노션 데이터소스 <id> 최근 5개 조회'"
+                ),
+                steps=steps + [AgentExecutionStep(name="parse_data_source_id", status="error", detail="id_missing")],
+            )
+        query_result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "query_data_source", "notion_query_data_source"),
+            payload={
+                "data_source_id": data_source_id,
+                "page_size": page_size,
+            },
+        )
+        results = (query_result.get("data") or {}).get("results", [])
+        steps.append(
+            AgentExecutionStep(
+                name="query_data_source",
+                status="success",
+                detail=f"data_source={data_source_id}, count={len(results)}",
+            )
+        )
+        if not results:
+            return AgentExecutionResult(
+                success=True,
+                summary="데이터소스 조회는 성공했지만 결과가 비어 있습니다.",
+                user_message=f"데이터소스 `{data_source_id}` 조회 결과가 없습니다.",
+                steps=steps,
+            )
+        lines = ["데이터소스 조회 결과:"]
+        for idx, item in enumerate(results[:page_size], start=1):
+            lines.append(f"{idx}. {_extract_page_title(item)}")
+            if item.get("url"):
+                lines.append(f"   {item['url']}")
+        return AgentExecutionResult(
+            success=True,
+            summary="데이터소스 조회를 완료했습니다.",
+            user_message="\n".join(lines),
+            steps=steps,
+        )
+
+    if _requires_append_to_page(plan):
+        target_title, append_content = _extract_append_target_and_content(plan.user_text)
         if not target_title:
             return AgentExecutionResult(
                 success=False,
-                summary="대상 페이지 제목을 추출하지 못했습니다.",
+                summary="추가 대상 페이지 제목을 추출하지 못했습니다.",
                 user_message=(
                     "요청은 이해했지만 대상 페이지 제목을 찾지 못했습니다.\n"
-                    "예: '노션에서 Metel test page의 내용 중 상위 10줄 출력'"
+                    "예: '노션에서 Metel test page에 액션 아이템 추가해줘'"
                 ),
                 steps=steps + [AgentExecutionStep(name="extract_title", status="error", detail="title_missing")],
             )
-        raw_pages = await _notion_search_pages_by_query(token, target_title, page_size=10)
+        if not append_content:
+            return AgentExecutionResult(
+                success=False,
+                summary="추가할 내용을 추출하지 못했습니다.",
+                user_message=(
+                    "추가할 내용을 찾지 못했습니다.\n"
+                    "예: '노션에서 Metel test page에 액션 아이템 추가해줘'"
+                ),
+                steps=steps + [AgentExecutionStep(name="extract_content", status="error", detail="content_missing")],
+            )
+
+        search_result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "search", "notion_search"),
+            payload={
+                "query": target_title,
+                "page_size": 10,
+                "filter": {"property": "object", "value": "page"},
+                "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+            },
+        )
+        raw_pages = (search_result.get("data") or {}).get("results", [])
+        normalized_pages = [
+            {"id": page.get("id"), "title": _extract_page_title(page), "url": page.get("url")}
+            for page in raw_pages
+        ]
+        steps.append(
+            AgentExecutionStep(
+                name="search_pages",
+                status="success",
+                detail=f"제목 기반 조회 '{target_title}' 결과 {len(normalized_pages)}건",
+            )
+        )
+        if not normalized_pages:
+            return AgentExecutionResult(
+                success=False,
+                summary="요청한 제목의 페이지를 찾지 못했습니다.",
+                user_message=f"'{target_title}' 페이지를 찾지 못했습니다. 제목을 다시 확인해주세요.",
+                steps=steps,
+            )
+
+        normalized_target = _normalize_title(target_title)
+        selected_page = next(
+            (page for page in normalized_pages if _normalize_title(page["title"]) == normalized_target),
+            None,
+        )
+        if not selected_page:
+            selected_page = next(
+                (page for page in normalized_pages if normalized_target in _normalize_title(page["title"])),
+                normalized_pages[0],
+            )
+        steps.append(
+            AgentExecutionStep(
+                name="select_page",
+                status="success",
+                detail=f"선택 페이지: {selected_page['title']}",
+            )
+        )
+
+        _ = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "retrieve_page", "notion_retrieve_page"),
+            payload={"page_id": selected_page["id"]},
+        )
+        steps.append(AgentExecutionStep(name="retrieve_page", status="success", detail="페이지 메타데이터 조회 완료"))
+
+        children = []
+        for line in [item.strip() for item in re.split(r"[\n,;]", append_content) if item.strip()]:
+            children.append(
+                {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [
+                            {
+                                "type": "text",
+                                "text": {"content": line[:1800]},
+                            }
+                        ]
+                    },
+                }
+            )
+        await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "append_block_children", "notion_append_block_children"),
+            payload={"block_id": selected_page["id"], "children": children},
+        )
+        steps.append(
+            AgentExecutionStep(
+                name="append_content",
+                status="success",
+                detail=f"본문 {len(children)}개 단락 추가",
+            )
+        )
+        return AgentExecutionResult(
+            success=True,
+            summary="요청한 페이지에 내용을 추가했습니다.",
+            user_message=(
+                "요청하신 내용을 페이지에 추가했습니다.\n"
+                f"- 페이지: {selected_page['title']}\n"
+                f"- 링크: {selected_page['url']}\n"
+                f"- 추가 내용: {append_content}"
+            ),
+            artifacts={"source_page_url": selected_page["url"], "source_page_title": selected_page["title"]},
+            steps=steps,
+        )
+
+    if _requires_page_archive(plan):
+        target_title = _extract_page_archive_target(plan.user_text)
+        if not target_title:
+            return AgentExecutionResult(
+                success=False,
+                summary="삭제 대상 페이지 제목을 추출하지 못했습니다.",
+                user_message=(
+                    "삭제할 페이지 제목을 찾지 못했습니다.\n"
+                    "예: '노션에서 Metel test page 페이지 삭제해줘'"
+                ),
+                steps=steps + [AgentExecutionStep(name="extract_archive_title", status="error", detail="title_missing")],
+            )
+
+        search_result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "search", "notion_search"),
+            payload={
+                "query": target_title,
+                "page_size": 10,
+                "filter": {"property": "object", "value": "page"},
+                "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+            },
+        )
+        raw_pages = (search_result.get("data") or {}).get("results", [])
+        normalized_pages = [
+            {"id": page.get("id"), "title": _extract_page_title(page), "url": page.get("url")}
+            for page in raw_pages
+        ]
+        if not normalized_pages:
+            return AgentExecutionResult(
+                success=False,
+                summary="삭제 대상 페이지를 찾지 못했습니다.",
+                user_message=f"'{target_title}' 페이지를 찾지 못했습니다.",
+                steps=steps + [AgentExecutionStep(name="search_pages", status="error", detail="page_not_found")],
+            )
+
+        normalized_target = _normalize_title(target_title)
+        selected_page = next(
+            (page for page in normalized_pages if _normalize_title(page["title"]) == normalized_target),
+            None,
+        ) or next(
+            (page for page in normalized_pages if normalized_target in _normalize_title(page["title"])),
+            normalized_pages[0],
+        )
+        await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "update_page", "notion_update_page"),
+            payload={"page_id": selected_page["id"], "archived": True},
+        )
+        steps.append(AgentExecutionStep(name="archive_page", status="success", detail=f"페이지 아카이브: {selected_page['title']}"))
+        return AgentExecutionResult(
+            success=True,
+            summary="페이지 삭제(아카이브)를 완료했습니다.",
+            user_message=(
+                "요청하신 페이지를 아카이브했습니다.\n"
+                f"- 페이지: {selected_page['title']}\n"
+                f"- 링크: {selected_page['url']}"
+            ),
+            artifacts={"source_page_url": selected_page["url"], "archived": True},
+            steps=steps,
+        )
+
+    target_title = _extract_target_page_title(plan.user_text)
+    if target_title and (_requires_top_lines(plan) or _requires_page_content_read(plan) or _requires_summary_only(plan)):
+        search_result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "search", "notion_search"),
+            payload={
+                "query": target_title,
+                "page_size": 10,
+                "filter": {"property": "object", "value": "page"},
+                "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+            },
+        )
+        raw_pages = (search_result.get("data") or {}).get("results", [])
         normalized_pages = [
             {"id": page.get("id"), "title": _extract_page_title(page), "url": page.get("url")}
             for page in raw_pages
@@ -332,21 +663,25 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
                 detail=f"선택 페이지: {selected_page['title']}",
             )
         )
+        _ = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "retrieve_page", "notion_retrieve_page"),
+            payload={"page_id": selected_page["id"]},
+        )
+        steps.append(AgentExecutionStep(name="retrieve_page", status="success", detail="페이지 메타데이터 조회 완료"))
 
-        blocks = await _notion_retrieve_page_blocks(token, selected_page["id"])
+        block_result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "retrieve_block_children", "notion_retrieve_block_children"),
+            payload={"block_id": selected_page["id"], "page_size": 20},
+        )
+        blocks = (block_result.get("data") or {}).get("results", [])
         plain = _extract_plain_text_from_blocks(blocks)
         raw_lines = [line.strip() for line in plain.splitlines() if line.strip()]
         line_count = _extract_requested_line_count(plan.user_text, default_count=10)
         top_lines = raw_lines[:line_count]
-        steps.append(
-            AgentExecutionStep(
-                name="extract_lines",
-                status="success",
-                detail=f"본문 라인 {len(raw_lines)}개 중 상위 {len(top_lines)}개 추출",
-            )
-        )
 
-        if not top_lines:
+        if not raw_lines:
             return AgentExecutionResult(
                 success=False,
                 summary="페이지 본문 텍스트를 찾지 못했습니다.",
@@ -358,6 +693,35 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
                 steps=steps,
             )
 
+        if _requires_summary_only(plan):
+            summary = _simple_korean_summary("\n".join(raw_lines), max_chars=700)
+            steps.append(
+                AgentExecutionStep(
+                    name="summarize_page",
+                    status="success",
+                    detail=f"본문 {len(raw_lines)}라인 요약",
+                )
+            )
+            return AgentExecutionResult(
+                success=True,
+                summary="요청한 특정 페이지 요약을 완료했습니다.",
+                user_message=(
+                    f"요청하신 페이지 요약입니다.\n"
+                    f"- 페이지: {selected_page['title']}\n"
+                    f"- 링크: {selected_page['url']}\n\n"
+                    f"{summary}"
+                ),
+                artifacts={"source_page_url": selected_page["url"], "source_page_title": selected_page["title"]},
+                steps=steps,
+            )
+
+        steps.append(
+            AgentExecutionStep(
+                name="extract_lines",
+                status="success",
+                detail=f"본문 라인 {len(raw_lines)}개 중 상위 {len(top_lines)}개 추출",
+            )
+        )
         output_lines = [f"{idx}. {line}" for idx, line in enumerate(top_lines, start=1)]
         return AgentExecutionResult(
             success=True,
@@ -372,8 +736,29 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             steps=steps,
         )
 
+    if _requires_top_lines(plan) or _requires_page_content_read(plan):
+        return AgentExecutionResult(
+            success=False,
+            summary="대상 페이지 제목을 추출하지 못했습니다.",
+            user_message=(
+                "요청은 이해했지만 대상 페이지 제목을 찾지 못했습니다.\n"
+                "예: '노션에서 Metel test page의 내용 중 상위 10줄 출력'"
+            ),
+            steps=steps + [AgentExecutionStep(name="extract_title", status="error", detail="title_missing")],
+        )
+
     count = _extract_requested_count(plan, default_count=3)
-    pages = await _notion_search_recent_pages(token, page_size=count)
+    search_result = await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_tool(plan, "search", "notion_search"),
+        payload={
+            "query": "",
+            "page_size": count,
+            "filter": {"property": "object", "value": "page"},
+            "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+        },
+    )
+    pages = (search_result.get("data") or {}).get("results", [])
     normalized_pages = [{"id": page.get("id"), "title": _extract_page_title(page), "url": page.get("url")} for page in pages]
     steps.append(AgentExecutionStep(name="search_pages", status="success", detail=f"최근 페이지 {len(normalized_pages)}건 조회"))
 
@@ -388,7 +773,12 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
     if _requires_summary(plan) and _requires_creation(plan):
         summary_lines = ["# 최근 페이지 요약", f"생성 시각: {datetime.now(timezone.utc).isoformat()}"]
         for idx, page in enumerate(normalized_pages, start=1):
-            blocks = await _notion_retrieve_page_blocks(token, page["id"])
+            block_result = await execute_tool(
+                user_id=user_id,
+                tool_name=_pick_tool(plan, "retrieve_block_children", "notion_retrieve_block_children"),
+                payload={"block_id": page["id"], "page_size": 20},
+            )
+            blocks = (block_result.get("data") or {}).get("results", [])
             plain = _extract_plain_text_from_blocks(blocks)
             short = _simple_korean_summary(plain)
             summary_lines.extend(
@@ -402,13 +792,30 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         steps.append(AgentExecutionStep(name="summarize_pages", status="success", detail="페이지 요약 생성"))
 
         output_title = _extract_output_title(plan.user_text)
-        created = await _notion_create_page(token, output_title)
+        create_result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "create_page", "notion_create_page"),
+            payload={
+                "parent": {"workspace": True},
+                "properties": {
+                    "title": {
+                        "title": [
+                            {
+                                "type": "text",
+                                "text": {"content": output_title},
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+        created = create_result.get("data") or {}
         created_page_id = created.get("id")
         created_page_url = created.get("url")
         steps.append(AgentExecutionStep(name="create_page", status="success", detail=f"페이지 생성: {output_title}"))
 
         if created_page_id:
-            await _notion_append_summary_blocks(token, created_page_id, "\n".join(summary_lines))
+            await _notion_append_summary_blocks(user_id, plan, created_page_id, "\n".join(summary_lines))
             steps.append(AgentExecutionStep(name="append_content", status="success", detail="요약 본문 추가 완료"))
 
         return AgentExecutionResult(
@@ -448,14 +855,12 @@ async def execute_agent_plan(user_id: str, plan: AgentPlan) -> AgentExecutionRes
             steps=[AgentExecutionStep(name="service_check", status="error", detail="지원 서비스 미매칭")],
         )
     except HTTPException as exc:
+        summary, user_message, error_code = _map_execution_error(str(exc.detail))
         return AgentExecutionResult(
             success=False,
-            summary=f"작업 실행 중 오류: {exc.detail}",
-            user_message=(
-                "요청을 실행하던 중 오류가 발생했습니다.\n"
-                f"- 오류 코드: {exc.detail}\n"
-                "잠시 후 다시 시도하거나 요청을 더 구체적으로 입력해주세요."
-            ),
+            summary=summary,
+            user_message=user_message,
+            artifacts={"error_code": error_code},
             steps=[AgentExecutionStep(name="execution", status="error", detail=str(exc.detail))],
         )
     except Exception as exc:  # pragma: no cover - defensive fallback

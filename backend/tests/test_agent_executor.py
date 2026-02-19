@@ -1,5 +1,9 @@
 from agent.executor import (
+    _extract_data_source_query_request,
+    _extract_append_target_and_content,
     _extract_output_title,
+    _extract_page_archive_target,
+    _extract_page_rename_request,
     _extract_requested_count,
     _extract_requested_line_count,
     _extract_target_page_title,
@@ -34,6 +38,36 @@ def test_extract_target_page_title():
     assert title == "Metel test page"
 
 
+def test_extract_target_page_title_summary_pattern():
+    title = _extract_target_page_title("노션에서 Metel test page 요약해줘")
+    assert title == "Metel test page"
+
+
 def test_extract_requested_line_count():
     count = _extract_requested_line_count("노션에서 Metel test page의 내용 중 상위 10줄 출력")
     assert count == 10
+
+
+def test_extract_append_target_and_content():
+    title, content = _extract_append_target_and_content("노션에서 Metel test page에 액션 아이템 추가해줘")
+    assert title == "Metel test page"
+    assert content == "액션 아이템"
+
+
+def test_extract_page_rename_request():
+    title, new_title = _extract_page_rename_request("노션에서 Metel test page 페이지 제목을 주간 회의록으로 변경")
+    assert title == "Metel test page"
+    assert new_title == "주간 회의록"
+
+
+def test_extract_data_source_query_request():
+    source_id, page_size = _extract_data_source_query_request(
+        "노션 데이터소스 12345678-1234-1234-1234-1234567890ab 최근 7개 조회"
+    )
+    assert source_id == "12345678-1234-1234-1234-1234567890ab"
+    assert page_size == 7
+
+
+def test_extract_page_archive_target():
+    title = _extract_page_archive_target("노션에서 Metel test page 페이지 삭제해줘")
+    assert title == "Metel test page"
