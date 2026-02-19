@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     llm_autonomous_max_tool_calls: int = 8
     llm_autonomous_timeout_sec: int = 45
     llm_autonomous_replan_limit: int = 1
+    llm_autonomous_strict: bool = False
+    llm_autonomous_limit_retry_once: bool = True
 
     frontend_url: str = "http://localhost:3000"
     allowed_origins: str = "http://localhost:3000"

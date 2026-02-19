@@ -238,12 +238,22 @@ async def _choose_next_action(
     return None, "|".join(errors) if errors else "llm_action_failed"
 
 
-async def run_autonomous_loop(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
+async def run_autonomous_loop(
+    user_id: str,
+    plan: AgentPlan,
+    *,
+    max_turns_override: int | None = None,
+    max_tool_calls_override: int | None = None,
+    timeout_sec_override: int | None = None,
+    replan_limit_override: int | None = None,
+) -> AgentExecutionResult:
     settings = get_settings()
-    max_turns = max(1, settings.llm_autonomous_max_turns)
-    max_tool_calls = max(1, settings.llm_autonomous_max_tool_calls)
-    timeout_sec = max(5, settings.llm_autonomous_timeout_sec)
-    replan_limit = max(0, settings.llm_autonomous_replan_limit)
+    max_turns = max(1, max_turns_override if max_turns_override is not None else settings.llm_autonomous_max_turns)
+    max_tool_calls = max(
+        1, max_tool_calls_override if max_tool_calls_override is not None else settings.llm_autonomous_max_tool_calls
+    )
+    timeout_sec = max(5, timeout_sec_override if timeout_sec_override is not None else settings.llm_autonomous_timeout_sec)
+    replan_limit = max(0, replan_limit_override if replan_limit_override is not None else settings.llm_autonomous_replan_limit)
 
     registry = load_registry()
     service_tools = []

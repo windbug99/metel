@@ -25,13 +25,17 @@
 7. **텔레그램으로 사용자에게 결과 전달**
 
 현재 구현 상태(2026-02-19 기준):
-- **1~3단계는 구현됨**: `backend/app/routes/telegram.py`에서 자연어 메시지를 `run_agent_analysis`로 전달하여 요구사항/서비스/API를 도출.
-- **4~7단계는 부분 구현(Notion 중심)**:
+- **1~3단계 구현 완료**: `backend/app/routes/telegram.py`에서 자연어 메시지를 `run_agent_analysis`로 전달하고, 요구사항/서비스/API를 도출.
+- **4~7단계 구현 진행 중(하이브리드)**:
   - 워크플로우 생성: `backend/agent/planner.py` + `backend/agent/planner_llm.py` (LLM planner + rule fallback)
-  - 워크플로우 실행: `backend/agent/executor.py` (Notion 읽기/쓰기 핵심 시나리오)
+  - 자율 실행 루프: `backend/agent/autonomous.py` (action/tool_call/final/replan, verifier, turn/tool/timeout budget)
+  - 규칙 실행기: `backend/agent/executor.py` (Notion 특화 안정 실행 경로)
   - 결과 정리/전달: `backend/app/routes/telegram.py`
-  - 제한 사항: executor 내부에 규칙/분기 로직이 아직 남아 있어, 완전한 자율 루프(max turns/replan/verifier 중심)는 미완
-- **최우선 남은 작업**: 규칙 분기 축소, LLM 중심 자율 실행 루프(계획-실행-검증-재계획) 완성.
+- **실제 동작 정리**:
+  - LLM planner가 계획을 만들고 자율 루프를 우선 시도
+  - 자율 루프 실패(`turn_limit`, `replan_limit` 등) 시 rule executor로 fallback
+  - 따라서 현재는 **완전 자율 only가 아니라 자율+규칙 하이브리드**
+- **최우선 남은 작업**: fallback 빈도 감소(자율 성공률 향상), rule 경로 축소, plan-step 실행 일관성 강화.
 
 ### 2.2 향후 구현 단계 (최우선: 자율 LLM 에이전트 루프 완성)
 
@@ -67,6 +71,15 @@
 - 텔레그램 응답 가이드 강화:
   - `backend/app/routes/telegram.py`에서 `analysis.execution.artifacts.error_code`를 읽어 오류 가이드 문구를 사용자 응답에 자동 첨부
   - command log `error_code`도 표준 코드 우선 기록
+- 실행 모드 가시성 강화:
+  - 텔레그램 응답에 `plan_source` + `execution_mode` + `autonomous_fallback_reason` 표시
+- 삭제/생성 품질 보강:
+  - 삭제 의도 판별 정규식 개선(예: "삭제 테스트 페이지"를 삭제 요청으로 오인하지 않음)
+  - 다중 제목 지정 요약 생성 지원(예: `"더 코어 3", "사이먼 블로그"` 지정 조회)
+  - 상위 페이지 하위 생성 지원(예: `"일일 회의록 페이지 아래 나의 일기 페이지 생성"`)
+- Notion 제약 대응:
+  - workspace 최상위 페이지 API 아카이브 불가(`Archiving workspace level pages via API not supported`)를 명시적으로 사용자 안내
+  - 생성 기본 parent를 제어하는 `NOTION_DEFAULT_PARENT_PAGE_ID` 도입
 - 실제 Notion 통합 테스트 골격 추가:
   - `backend/tests/integration/test_notion_live.py`
   - 기본은 skip, 환경변수로 선택 실행:
@@ -78,7 +91,7 @@
   - 쓰기: `update_page_title_roundtrip`, `append_block_children`
   - 토큰 사전검증: `users/me` 호출로 invalid token 조기 진단
 - 테스트 상태:
-  - `backend` 테스트 `25 passed, 5 skipped` (live integration 스킵 포함)
+  - 단위/시나리오 테스트 통과(최근 수정 기준 `backend/tests/test_agent_executor_e2e.py`, `test_agent_loop.py`, `test_telegram_command_mapping.py`)
 - LLM 자율 에이전트 1차 착수:
   - `backend/agent/planner_llm.py` 추가 (OpenAI chat completions 기반 planner)
   - `loop`에서 `LLM planner -> 실패 시 rule planner fallback` 적용
@@ -94,13 +107,30 @@
   - LLM planner + rule fallback 경로
   - Notion 핵심 read/write tool 호출과 에러 표준화
   - Telegram 응답에 실행 단계/오류 가이드 출력
+- 완료(최근 보강):
+  - 자율 루프 엔진(`autonomous.py`)과 fallback reason 노출
+  - 다중 제목 지정 생성/요약, 하위 페이지 생성, append/rename/archive 핵심 케이스
+  - Notion workspace-level archive 제약 감지 및 안내
 - 부분 완료:
-  - planner 출력을 executor가 일부 반영하나, 전면적인 plan-step 실행기는 미완
-  - 요약 품질 개선(LLM 사용)은 적용되었으나, 전체 실행 루프는 하이브리드
+  - planner 출력 기반 자율 실행이 동작하지만 실패 시 rule fallback 비중이 아직 높음
+  - 완전한 plan-step 범용 실행기보다 Notion 도메인 분기 코드가 여전히 존재
 - 미완:
-  - Verifier 중심 완료 검증
-  - 실패 후 자동 replan 1회 실행
-  - turn/call/time budget 강제 정책의 전 구간 적용
+  - 자율 루프 성공률 목표치 달성(현재 일부 요청에서 `turn_limit`/`replan_limit`)
+  - 멀티서비스(Spotify 등)에 Notion 수준의 실행 완성도 확장
+  - 자율 루프와 rule executor의 단일 실행 추상화(중복 분기 제거)
+
+### 2.4 텔레그램 실사용 QA 현황 (2026-02-19)
+
+- 통과:
+  - `"더 코어 3", "사이먼 블로그" 요약 -> "삭제 테스트 페이지 1" 생성`
+  - `"일일 회의록 페이지 아래 나의 일기 페이지 생성"`
+  - `"나의 일기 페이지 삭제해줘"` (하위 페이지 기준)
+  - `"노션 데이터소스 invalid-id 조회"` 입력 검증/가이드 출력
+- 제약:
+  - Notion API 정책상 **workspace 최상위 페이지 아카이브 불가**
+  - 해결: 하위 페이지로 생성/이동 후 삭제하거나 Notion UI에서 직접 삭제
+- 운영 설정 권장:
+  - `NOTION_DEFAULT_PARENT_PAGE_ID` 설정으로 생성 페이지를 기본적으로 삭제 가능한 하위 경로에 배치
 
 ## 3. 개발 단계별 상세 계획
 

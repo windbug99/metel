@@ -106,14 +106,44 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
 
     settings = get_settings()
     execution = None
-    if settings.llm_autonomous_enabled and plan_source == "llm":
+    autonomous_enabled = bool(getattr(settings, "llm_autonomous_enabled", False))
+    autonomous_strict = bool(getattr(settings, "llm_autonomous_strict", False))
+    autonomous_retry_once = bool(getattr(settings, "llm_autonomous_limit_retry_once", True))
+
+    if autonomous_enabled and plan_source == "llm":
         autonomous = await run_autonomous_loop(user_id=user_id, plan=plan)
         if autonomous.success:
             execution = autonomous
             plan.notes.append("execution=autonomous")
         else:
-            plan.notes.append("execution=autonomous_fallback")
-            plan.notes.append(f"autonomous_error={autonomous.artifacts.get('error_code', 'unknown')}")
+            error_code = str(autonomous.artifacts.get("error_code", "unknown"))
+            plan.notes.append(f"autonomous_error={error_code}")
+
+            retryable_errors = {"turn_limit", "tool_call_limit", "replan_limit", "timeout"}
+            if autonomous_retry_once and error_code in retryable_errors:
+                plan.notes.append("autonomous_retry=1")
+                retry = await run_autonomous_loop(
+                    user_id=user_id,
+                    plan=plan,
+                    max_turns_override=max(2, int(getattr(settings, "llm_autonomous_max_turns", 6)) + 2),
+                    max_tool_calls_override=max(2, int(getattr(settings, "llm_autonomous_max_tool_calls", 8)) + 2),
+                    timeout_sec_override=max(10, int(getattr(settings, "llm_autonomous_timeout_sec", 45)) + 15),
+                    replan_limit_override=max(0, int(getattr(settings, "llm_autonomous_replan_limit", 1)) + 1),
+                )
+                if retry.success:
+                    execution = retry
+                    plan.notes.append("execution=autonomous_retry")
+                else:
+                    autonomous = retry
+                    error_code = str(retry.artifacts.get("error_code", error_code))
+                    plan.notes.append(f"autonomous_retry_error={error_code}")
+
+            if execution is None and autonomous_strict:
+                execution = autonomous
+                plan.notes.append("execution=autonomous_strict")
+
+            if execution is None:
+                plan.notes.append("execution=autonomous_fallback")
 
     if execution is None:
         execution = await execute_agent_plan(user_id=user_id, plan=plan)
