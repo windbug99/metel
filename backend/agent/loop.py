@@ -188,6 +188,7 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     autonomous_enabled = bool(getattr(settings, "llm_autonomous_enabled", False))
     autonomous_strict = bool(getattr(settings, "llm_autonomous_strict", False))
     autonomous_retry_once = bool(getattr(settings, "llm_autonomous_limit_retry_once", True))
+    autonomous_rule_fallback_enabled = bool(getattr(settings, "llm_autonomous_rule_fallback_enabled", True))
 
     if autonomous_enabled:
         autonomous = await run_autonomous_loop(user_id=user_id, plan=plan)
@@ -228,6 +229,10 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             if execution is None and autonomous_strict:
                 execution = autonomous
                 plan.notes.append("execution=autonomous_strict")
+
+            if execution is None and not autonomous_rule_fallback_enabled:
+                execution = autonomous
+                plan.notes.append("execution=autonomous_no_rule_fallback")
 
             if execution is None:
                 plan.notes.append("execution=autonomous_fallback")

@@ -103,6 +103,24 @@
   - 관련 테스트: `test_run_agent_analysis_autonomous_retry_includes_last_tool_error_guidance`
   - 3차 고도화: `verification_failed`, `unsupported_action`도 자율 재시도 대상에 포함해 rule fallback 비율 감소
   - 관련 테스트: `test_run_agent_analysis_retries_on_verification_failed`
+
+### rule 의존 축소 (2단계 진행 중)
+
+- `LLM_AUTONOMOUS_RULE_FALLBACK_ENABLED` 옵션 추가
+  - `true`(기본): 자율 실패 시 rule executor fallback 수행
+  - `false`: 자율 실패를 그대로 반환(autonomous-only 검증 모드)
+- 관련 테스트: `test_run_agent_analysis_can_disable_rule_fallback`
+
+### 자율 품질 측정 운영 (1단계 구현 완료)
+
+- 최근 실행 기준 품질 판정 스크립트 추가: `backend/scripts/eval_agent_quality.py`
+- 기본 판정 기준:
+  - autonomous success rate >= 80%
+  - fallback rate <= 20%
+  - 최소 표본 20건
+- 실행 예시:
+  - `cd backend && . .venv/bin/activate && python scripts/eval_agent_quality.py --limit 30`
+  - 리포트 파일 출력: `python scripts/eval_agent_quality.py --limit 30 --output ../docs/reports/agent_quality_latest.md`
 - 삭제/생성 품질 보강:
   - 삭제 의도 판별 정규식 개선(예: "삭제 테스트 페이지"를 삭제 요청으로 오인하지 않음)
   - 다중 제목 지정 요약 생성 지원(예: `"더 코어 3", "사이먼 블로그"` 지정 조회)

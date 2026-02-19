@@ -226,6 +226,9 @@ export default function DashboardPage() {
     const rulePlan = agentLogs.filter((log) => log.plan_source === "rule").length;
     const success = agentLogs.filter((log) => log.status === "success").length;
     const error = agentLogs.filter((log) => log.status === "error").length;
+    const autonomousSuccess = agentLogs.filter(
+      (log) => log.execution_mode === "autonomous" && log.status === "success"
+    ).length;
     const fallbackLogs = agentLogs.filter((log) => Boolean(log.autonomous_fallback_reason));
     const fallbackReasonCount = fallbackLogs.reduce<Record<string, number>>((acc, log) => {
       const key = log.autonomous_fallback_reason ?? "unknown";
@@ -245,6 +248,9 @@ export default function DashboardPage() {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3);
 
+    const autonomousSuccessRate = autonomous > 0 ? autonomousSuccess / autonomous : 0;
+    const fallbackRate = total > 0 ? fallbackLogs.length / total : 0;
+
     return {
       total,
       autonomous,
@@ -253,7 +259,10 @@ export default function DashboardPage() {
       rulePlan,
       success,
       error,
+      autonomousSuccess,
+      autonomousSuccessRate,
       fallbackCount: fallbackLogs.length,
+      fallbackRate,
       topFallbackReasons,
       verificationCount: verificationLogs.length,
       topVerificationReasons
@@ -738,6 +747,46 @@ export default function DashboardPage() {
             <p className="text-xs text-gray-600">Success / Error</p>
             <p className="mt-1 text-sm font-semibold text-gray-900">
               {agentTelemetry.success} / {agentTelemetry.error}
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+            <p className="text-xs text-gray-600">Autonomous Success Rate (target 80%+)</p>
+            <p className="mt-1 text-sm font-semibold text-gray-900">
+              {(agentTelemetry.autonomousSuccessRate * 100).toFixed(1)}%
+              {" "}
+              <span
+                className={
+                  agentTelemetry.autonomousSuccessRate >= 0.8
+                    ? "text-emerald-700"
+                    : "text-amber-700"
+                }
+              >
+                {agentTelemetry.autonomousSuccessRate >= 0.8 ? "PASS" : "CHECK"}
+              </span>
+            </p>
+            <p className="mt-1 text-xs text-gray-600">
+              autonomous success {agentTelemetry.autonomousSuccess} / {agentTelemetry.autonomous}
+            </p>
+          </div>
+          <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+            <p className="text-xs text-gray-600">Fallback Rate (target 20% 이하)</p>
+            <p className="mt-1 text-sm font-semibold text-gray-900">
+              {(agentTelemetry.fallbackRate * 100).toFixed(1)}%
+              {" "}
+              <span
+                className={
+                  agentTelemetry.fallbackRate <= 0.2
+                    ? "text-emerald-700"
+                    : "text-amber-700"
+                }
+              >
+                {agentTelemetry.fallbackRate <= 0.2 ? "PASS" : "CHECK"}
+              </span>
+            </p>
+            <p className="mt-1 text-xs text-gray-600">
+              fallback {agentTelemetry.fallbackCount} / {agentTelemetry.total}
             </p>
           </div>
         </div>

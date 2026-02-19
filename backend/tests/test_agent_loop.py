@@ -163,6 +163,40 @@ def test_run_agent_analysis_autonomous_fallback_to_executor(monkeypatch):
     assert any(item == "autonomous_error=turn_limit" for item in result.plan.notes)
 
 
+def test_run_agent_analysis_can_disable_rule_fallback(monkeypatch):
+    llm_plan = _sample_plan()
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        llm_autonomous_strict = False
+        llm_autonomous_limit_retry_once = False
+        llm_autonomous_rule_fallback_enabled = False
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan, **kwargs):
+        return AgentExecutionResult(
+            success=False,
+            user_message="auto-fail",
+            summary="auto-fail",
+            artifacts={"error_code": "turn_limit"},
+        )
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        raise AssertionError("executor should not be called when rule fallback is disabled")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("text", ["notion"], "user-1"))
+    assert result.ok is False
+    assert result.result_summary == "auto-fail"
+    assert any(item == "execution=autonomous_no_rule_fallback" for item in result.plan.notes)
+
+
 def test_run_agent_analysis_validates_data_source_id_early(monkeypatch):
     called = {"llm": False, "exec": False}
 
