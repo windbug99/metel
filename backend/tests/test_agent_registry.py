@@ -6,7 +6,6 @@ def test_registry_loads_services_and_tools():
     services = registry.list_services()
     assert "notion" in services
     assert "spotify" in services
-    assert "apple_music" in services
 
     tool = registry.get_tool("notion_search")
     assert tool.service == "notion"

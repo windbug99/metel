@@ -14,16 +14,10 @@ def test_service_resolver_spotify():
     assert service == "spotify"
 
 
-def test_service_resolver_apple_music():
-    service = resolve_primary_service("애플뮤직에서 최근 들은 곡 보여줘", connected_services=["apple_music"])
-    assert service == "apple_music"
-
-
 def test_guide_retriever():
     guides = list_guide_services()
     assert "notion" in guides
     assert "spotify" in guides
-    assert "apple_music" in guides
     context = get_planning_context("spotify", max_chars=800)
     assert "인증" in context
 

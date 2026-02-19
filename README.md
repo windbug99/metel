@@ -19,7 +19,6 @@ Users connect services once on the web dashboard, then request tasks in Telegram
 ## What Works Now
 
 - Notion OAuth connect/disconnect/status
-- Apple Music account connect/disconnect/status (MusicKit)
 - Telegram connect/disconnect/status + deep link flow
 - Natural language task execution on Notion:
   - search/list pages

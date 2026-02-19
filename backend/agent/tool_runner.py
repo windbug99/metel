@@ -10,7 +10,6 @@ from supabase import create_client
 
 from agent.registry import ToolDefinition, load_registry
 from app.core.config import get_settings
-from app.integrations.apple_music import build_apple_music_headers
 from app.security.token_vault import TokenVault
 
 
@@ -225,40 +224,6 @@ async def _execute_spotify_http(user_id: str, tool: ToolDefinition, payload: dic
     return _parse_response_data(response)
 
 
-async def _execute_apple_music_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
-    music_user_token = _load_oauth_access_token(user_id=user_id, provider="apple_music")
-    path = _build_path(tool.path, payload)
-    body_or_query = _strip_path_params(tool.path, payload)
-    url = f"{tool.base_url}{path}"
-
-    headers = build_apple_music_headers(music_user_token)
-    method = tool.method.upper()
-    async with httpx.AsyncClient(timeout=20) as client:
-        if method == "GET":
-            response = await client.get(url, headers=headers, params=body_or_query)
-        elif method == "DELETE":
-            response = await client.delete(url, headers=headers)
-        else:
-            headers["Content-Type"] = "application/json"
-            response = await client.request(method, url, headers=headers, json=body_or_query)
-
-    if response.status_code >= 400:
-        mapped = tool.error_map.get(str(response.status_code), "TOOL_FAILED")
-        upstream_message = ""
-        try:
-            err_payload = response.json()
-            errors = err_payload.get("errors") or []
-            if errors and isinstance(errors[0], dict):
-                upstream_message = str(errors[0].get("detail", "") or errors[0].get("title", "") or "")
-        except JSONDecodeError:
-            upstream_message = response.text[:300]
-        raise HTTPException(
-            status_code=400,
-            detail=f"{tool.tool_name}:{mapped}|status={response.status_code}|message={upstream_message}",
-        )
-    return _parse_response_data(response)
-
-
 def _build_default_headers_for_service(user_id: str, tool: ToolDefinition) -> dict[str, str]:
     headers: dict[str, str] = {}
     if tool.service == "notion":
@@ -267,9 +232,6 @@ def _build_default_headers_for_service(user_id: str, tool: ToolDefinition) -> di
     elif tool.service == "spotify":
         token = _load_oauth_access_token(user_id=user_id, provider="spotify")
         headers["Authorization"] = f"Bearer {token}"
-    elif tool.service == "apple_music":
-        music_user_token = _load_oauth_access_token(user_id=user_id, provider="apple_music")
-        headers.update(build_apple_music_headers(music_user_token))
     elif tool.required_scopes:
         # Generic OAuth-style provider: when scopes are required, expect provider token.
         token = _load_oauth_access_token(user_id=user_id, provider=tool.service)
@@ -309,6 +271,4 @@ async def execute_tool(user_id: str, tool_name: str, payload: dict[str, Any]) ->
         return await _execute_notion_http(user_id=user_id, tool=tool, payload=payload)
     if tool.service == "spotify":
         return await _execute_spotify_http(user_id=user_id, tool=tool, payload=payload)
-    if tool.service == "apple_music":
-        return await _execute_apple_music_http(user_id=user_id, tool=tool, payload=payload)
     return await _execute_generic_http(user_id=user_id, tool=tool, payload=payload)
