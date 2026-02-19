@@ -169,6 +169,49 @@ def test_execute_notion_archive_flow_retries_with_in_trash_on_bad_request(monkey
     assert calls[2][1]["in_trash"] is True
 
 
+def test_execute_notion_archive_flow_retries_with_delete_block(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "notion_search":
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {
+                            "id": "30c50e84a3bf814d99f8d59defec4286",
+                            "url": "https://notion.so/page-2",
+                            "properties": {"title": {"type": "title", "title": [{"plain_text": "일일 회의록 테스트 2"}]}},
+                        }
+                    ]
+                },
+            }
+        if tool_name == "notion_update_page":
+            raise HTTPException(status_code=400, detail="notion_update_page:BAD_REQUEST")
+        if tool_name == "notion_delete_block":
+            assert payload.get("block_id") == "30c50e84a3bf814d99f8d59defec4286"
+            return {"ok": True, "data": {"id": payload["block_id"], "archived": True}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = _plan(
+        "일일 회의록 테스트 2 페이지 삭제해줘",
+        ["notion_delete_block"],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+
+    assert result.success is True
+    assert "아카이브" in result.summary
+    assert [item[0] for item in calls] == [
+        "notion_search",
+        "notion_update_page",
+        "notion_update_page",
+        "notion_delete_block",
+    ]
+
+
 def test_execute_notion_rename_then_top_lines_flow(monkeypatch):
     calls = []
 

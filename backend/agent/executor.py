@@ -905,17 +905,28 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
                 )
                 steps.append(AgentExecutionStep(name="archive_retry", status="success", detail="fallback=in_trash"))
             except HTTPException as retry_exc:
-                # If page is already archived, treat as success for idempotent delete UX.
-                retrieve = await execute_tool(
-                    user_id=user_id,
-                    tool_name=_pick_tool(plan, "retrieve_page", "notion_retrieve_page"),
-                    payload={"page_id": selected_page_id},
-                )
-                page_data = retrieve.get("data") or {}
-                if page_data.get("archived") is True or page_data.get("in_trash") is True:
-                    steps.append(AgentExecutionStep(name="archive_retry", status="success", detail="already_archived"))
-                else:
-                    raise retry_exc
+                try:
+                    # Some workspaces accept archive via block delete path.
+                    await execute_tool(
+                        user_id=user_id,
+                        tool_name=_pick_tool(plan, "delete_block", "notion_delete_block"),
+                        payload={"block_id": selected_page_id},
+                    )
+                    steps.append(
+                        AgentExecutionStep(name="archive_retry", status="success", detail="fallback=delete_block")
+                    )
+                except HTTPException:
+                    # If page is already archived, treat as success for idempotent delete UX.
+                    retrieve = await execute_tool(
+                        user_id=user_id,
+                        tool_name=_pick_tool(plan, "retrieve_page", "notion_retrieve_page"),
+                        payload={"page_id": selected_page_id},
+                    )
+                    page_data = retrieve.get("data") or {}
+                    if page_data.get("archived") is True or page_data.get("in_trash") is True:
+                        steps.append(AgentExecutionStep(name="archive_retry", status="success", detail="already_archived"))
+                    else:
+                        raise retry_exc
         steps.append(AgentExecutionStep(name="archive_page", status="success", detail=f"페이지 아카이브: {selected_page['title']}"))
         return AgentExecutionResult(
             success=True,
