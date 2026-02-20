@@ -9,6 +9,15 @@ from typing import Any
 import httpx
 from fastapi import HTTPException
 
+from agent.intent_keywords import (
+    is_append_intent,
+    is_create_intent,
+    is_data_source_intent,
+    is_delete_intent,
+    is_read_intent,
+    is_summary_intent,
+    is_update_intent,
+)
 from agent.registry import load_registry
 from agent.tool_runner import execute_tool
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan
@@ -71,31 +80,31 @@ def _rank_tools_by_intent(tools: list[str], plan: AgentPlan) -> list[str]:
 
         if "search" in name:
             s += 2
-        if any(token in merged for token in ("조회", "검색", "목록", "show", "list", "find")) and "search" in name:
+        if is_read_intent(merged) and "search" in name:
             s += 4
 
-        if any(token in merged for token in ("요약", "summary", "출력", "본문", "상위")) and (
+        if is_summary_intent(merged) and (
             "retrieve_page" in name or "retrieve_block_children" in name or "retrieve_page_property_item" in name
         ):
             s += 6
 
-        if any(token in merged for token in ("생성", "만들", "create")) and (
+        if is_create_intent(merged) and (
             "create" in name or "append_block_children" in name
         ):
             s += 8
 
-        if any(token in merged for token in ("추가", "append", "추가해줘")) and "append_block_children" in name:
+        if is_append_intent(merged) and "append_block_children" in name:
             s += 8
 
-        if any(token in merged for token in ("변경", "수정", "바꿔", "rename", "update")) and "update_page" in name:
+        if is_update_intent(merged) and "update_page" in name:
             s += 8
 
-        if any(token in merged for token in ("삭제", "아카이브", "archive", "delete")) and (
+        if is_delete_intent(merged) and (
             "delete_block" in name or "update_page" in name
         ):
             s += 10
 
-        if any(token in merged for token in ("데이터소스", "data source", "data_source")) and (
+        if is_data_source_intent(merged) and (
             "query_data_source" in name or "retrieve_data_source" in name
         ):
             s += 10
@@ -106,18 +115,16 @@ def _rank_tools_by_intent(tools: list[str], plan: AgentPlan) -> list[str]:
 
 
 def _plan_needs_lookup(plan: AgentPlan) -> bool:
-    text = plan.user_text
-    return any(keyword in text for keyword in ("조회", "검색", "목록", "보여", "출력", "요약"))
+    return is_read_intent(plan.user_text) or is_summary_intent(plan.user_text)
 
 
 def _plan_needs_creation(plan: AgentPlan) -> bool:
     text = plan.user_text
-    return any(keyword in text for keyword in ("생성", "만들", "작성", "추가", "변경", "수정", "삭제", "아카이브"))
+    return is_create_intent(text) or is_append_intent(text) or is_update_intent(text) or is_delete_intent(text)
 
 
 def _plan_needs_new_artifact(plan: AgentPlan) -> bool:
-    text = plan.user_text
-    return any(keyword in text for keyword in ("생성", "만들", "작성"))
+    return is_create_intent(plan.user_text)
 
 
 def _compact_tool_result(data: Any, max_chars: int = 1200) -> str:
@@ -266,7 +273,7 @@ def _plan_needs_move(plan: AgentPlan) -> bool:
 
 def _plan_needs_append(plan: AgentPlan) -> bool:
     text = plan.user_text
-    return "추가" in text and any(token in text for token in ("페이지에", "문서에"))
+    return is_append_intent(text) and any(token in text for token in ("페이지에", "문서에"))
 
 
 def _extract_quoted_targets(text: str) -> list[str]:
@@ -320,12 +327,11 @@ def _intent_support_tools(plan: AgentPlan, service_tools: list[Any]) -> list[str
 
 def _plan_needs_rename(plan: AgentPlan) -> bool:
     text = plan.user_text
-    return "제목" in text and any(token in text for token in ("변경", "수정", "바꿔", "바꾸", "rename"))
+    return "제목" in text and is_update_intent(text)
 
 
 def _plan_needs_archive(plan: AgentPlan) -> bool:
-    text = plan.user_text.lower()
-    return any(token in text for token in ("삭제", "지워", "아카이브", "archive"))
+    return is_delete_intent(plan.user_text)
 
 
 async def _request_autonomous_action(

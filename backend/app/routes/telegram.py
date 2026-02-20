@@ -13,6 +13,8 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from supabase import create_client
 
 from agent.loop import run_agent_analysis
+from agent.registry import load_registry
+from agent.service_resolver import resolve_primary_service
 from app.core.auth import get_authenticated_user_id
 from app.core.config import get_settings
 from app.security.token_vault import TokenVault
@@ -367,6 +369,60 @@ def _map_natural_text_to_command(text: str) -> tuple[str, str]:
     return "", ""
 
 
+def _is_capabilities_query(text: str) -> bool:
+    lower = (text or "").strip().lower()
+    capability_tokens = (
+        "할 수 있는 작업",
+        "할수있는작업",
+        "가능한 작업",
+        "지원 기능",
+        "무슨 기능",
+        "무엇을 할 수",
+        "뭐 할 수",
+        "what can",
+        "capability",
+        "capabilities",
+    )
+    return any(token in lower for token in capability_tokens)
+
+
+def _format_tools_for_service(service: str) -> list[str]:
+    registry = load_registry()
+    tools = registry.list_tools(service)
+    if not tools:
+        return []
+    lines = [f"[{service}] 지원 API/기능"]
+    for tool in tools:
+        lines.append(f"- {tool.tool_name}: {tool.description}")
+    return lines
+
+
+def _build_capabilities_message(text: str, connected_services: list[str]) -> tuple[str, str | None]:
+    connected = [service.strip().lower() for service in connected_services if service.strip()]
+    target = resolve_primary_service(text, connected_services=connected)
+    registry = load_registry()
+
+    if target:
+        lines = _format_tools_for_service(target)
+        if not lines:
+            return f"{target} 서비스의 지원 API 정보를 찾지 못했습니다.", target
+        return "\n".join(lines), target
+
+    services = connected or registry.list_services()
+    if not services:
+        return "현재 사용 가능한 서비스 정보가 없습니다.", None
+
+    chunks: list[str] = []
+    for service in services:
+        lines = _format_tools_for_service(service)
+        if lines:
+            chunks.append("\n".join(lines))
+    if not chunks:
+        return "현재 조회 가능한 지원 API 정보가 없습니다.", None
+
+    return "\n\n".join(chunks), None
+
+
 def _record_command_log(
     *,
     user_id: str | None,
@@ -611,13 +667,27 @@ async def telegram_webhook(
     user_id = result.get("id")
     command, _, rest = text.partition(" ")
     command = command.split("@", 1)[0].strip().lower()
+    connected_services = _get_connected_services_for_user(user_id)
     if not command.startswith("/"):
         mapped_command, mapped_rest = _map_natural_text_to_command(text)
         if mapped_command:
             command = mapped_command
             rest = mapped_rest
         else:
-            connected_services = _get_connected_services_for_user(user_id)
+            if _is_capabilities_query(text):
+                capabilities_message, target_service = _build_capabilities_message(text, connected_services)
+                _record_command_log(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    command="capabilities",
+                    status="success",
+                    detail=f"target_service={target_service or 'all'}",
+                )
+                await _telegram_api(
+                    "sendMessage",
+                    {"chat_id": chat_id, "text": capabilities_message, "disable_web_page_preview": True},
+                )
+                return {"ok": True}
             analysis = await run_agent_analysis(text, connected_services, user_id)
 
             requirements_text = "\n".join(f"- {item.summary}" for item in analysis.plan.requirements) or "- (없음)"

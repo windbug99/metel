@@ -4,6 +4,15 @@ import re
 
 from agent.autonomous import run_autonomous_loop
 from agent.executor import execute_agent_plan
+from agent.intent_keywords import (
+    is_append_intent,
+    is_create_intent,
+    is_data_source_intent,
+    is_delete_intent as _is_delete_intent_shared,
+    is_read_intent,
+    is_summary_intent,
+    is_update_intent,
+)
 from agent.planner import build_agent_plan
 from agent.planner_llm import try_build_agent_plan_with_llm
 from agent.registry import load_registry
@@ -42,7 +51,7 @@ def _is_delete_intent(text: str) -> bool:
         r"(?i)\b페이지\s*삭제\b",
         r"(?i)\barchive\b",
     ]
-    return any(re.search(pattern, text) for pattern in patterns)
+    return _is_delete_intent_shared(text) or any(re.search(pattern, text) for pattern in patterns)
 
 
 def _plan_consistency_reason(user_text: str, selected_tools: list[str]) -> str | None:
@@ -60,22 +69,20 @@ def _plan_consistency_reason(user_text: str, selected_tools: list[str]) -> str |
     if _is_delete_intent(text) and not _has_any_tool(tools, "delete_block", "update_page", "archive"):
         return "missing_delete_tool"
 
-    if ("데이터소스" in text or "data source" in lower or "data_source" in lower) and any(
-        token in text for token in ("조회", "목록", "query", "불러", "보여")
-    ):
+    if is_data_source_intent(text) and is_read_intent(text):
         if not _has_any_tool(tools, "query_data_source", "retrieve_data_source"):
             return "missing_data_source_tool"
 
-    if ("추가" in text and "페이지" in text) and not _has_any_tool(tools, "append_block_children"):
+    if is_append_intent(text) and "페이지" in text and not _has_any_tool(tools, "append_block_children"):
         return "missing_append_tool"
 
-    if any(token in text for token in ("생성", "만들", "작성", "create")) and not _has_any_tool(tools, "create_page"):
+    if is_create_intent(text) and not _has_any_tool(tools, "create_page", "create_issue", "create_"):
         return "missing_create_tool"
 
-    if "요약" in text and not _has_any_tool(tools, "retrieve_block_children", "retrieve_page"):
+    if is_summary_intent(text) and not _has_any_tool(tools, "retrieve_block_children", "retrieve_page"):
         return "missing_summary_read_tool"
 
-    if any(token in text for token in ("조회", "검색", "목록", "출력", "보여")) and not _has_any_tool(tools, "search"):
+    if is_read_intent(text) and not _has_any_tool(tools, "search"):
         return "missing_search_tool"
 
     return None
@@ -86,7 +93,7 @@ def _required_tokens_for_consistency_error(reason: str) -> tuple[str, ...]:
         "missing_delete_tool": ("delete_block", "update_page", "archive"),
         "missing_data_source_tool": ("query_data_source", "retrieve_data_source"),
         "missing_append_tool": ("append_block_children",),
-        "missing_create_tool": ("create_page",),
+        "missing_create_tool": ("create_", "append_block_children"),
         "missing_summary_read_tool": ("retrieve_block_children", "retrieve_page"),
         "missing_search_tool": ("search",),
         "cross_service_tool_leak_notion": (),
@@ -133,10 +140,9 @@ def _enrich_plan_tools_with_registry(
 
 def _parse_data_source_query_state(user_text: str) -> tuple[bool, str]:
     text = user_text or ""
-    lower = text.lower()
-    if not (("데이터소스" in text) or ("data source" in lower) or ("data_source" in lower)):
+    if not is_data_source_intent(text):
         return False, "none"
-    if not any(keyword in text for keyword in ("조회", "목록", "query", "불러", "보여")):
+    if not is_read_intent(text):
         return False, "none"
 
     id_match = re.search(r"([0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12})", text)
@@ -154,28 +160,15 @@ def _parse_data_source_query_state(user_text: str) -> tuple[bool, str]:
 
 
 def _is_mutation_intent(user_text: str) -> bool:
-    text = (user_text or "").strip().lower()
-    mutation_keywords = (
-        "생성",
-        "만들",
-        "작성",
-        "추가",
-        "변경",
-        "수정",
-        "삭제",
-        "지워",
-        "아카이브",
-        "이동",
-        "옮겨",
-        "rename",
-        "create",
-        "update",
-        "delete",
-        "archive",
-        "move",
-        "append",
+    text = (user_text or "").strip()
+    lower = text.lower()
+    return (
+        is_create_intent(text)
+        or is_append_intent(text)
+        or is_update_intent(text)
+        or _is_delete_intent_shared(text)
+        or any(keyword in lower for keyword in ("이동", "옮겨", "rename", "move"))
     )
-    return any(keyword in text for keyword in mutation_keywords)
 
 
 def _is_multi_target_intent(user_text: str) -> bool:

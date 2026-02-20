@@ -1,4 +1,11 @@
-from app.routes.telegram import _agent_error_guide, _autonomous_fallback_hint
+from types import SimpleNamespace
+
+from app.routes.telegram import (
+    _agent_error_guide,
+    _autonomous_fallback_hint,
+    _build_capabilities_message,
+    _is_capabilities_query,
+)
 
 
 def test_agent_error_guide_auth_error():
@@ -38,3 +45,51 @@ def test_autonomous_fallback_hint_multiple_targets():
 def test_autonomous_fallback_hint_unknown_reason():
     hint = _autonomous_fallback_hint("unknown_reason")
     assert hint == ""
+
+
+def test_is_capabilities_query_matches_korean_and_english():
+    assert _is_capabilities_query("Notion으로 할 수 있는 작업이 뭐야?")
+    assert _is_capabilities_query("linear capabilities")
+    assert _is_capabilities_query("지원 기능 알려줘")
+
+
+def test_build_capabilities_message_single_target(monkeypatch):
+    registry = SimpleNamespace(
+        list_tools=lambda service: [
+            SimpleNamespace(tool_name="notion_search", description="Search pages"),
+            SimpleNamespace(tool_name="notion_create_page", description="Create page"),
+        ]
+        if service == "notion"
+        else [],
+        list_services=lambda: ["notion", "linear"],
+    )
+    monkeypatch.setattr("app.routes.telegram.load_registry", lambda: registry)
+    monkeypatch.setattr("app.routes.telegram.resolve_primary_service", lambda text, connected_services: "notion")
+
+    msg, target = _build_capabilities_message("Notion으로 할 수 있는 작업이 뭐야?", ["notion", "linear"])
+    assert target == "notion"
+    assert "[notion] 지원 API/기능" in msg
+    assert "notion_search" in msg
+    assert "notion_create_page" in msg
+
+
+def test_build_capabilities_message_all_connected_services(monkeypatch):
+    def _list_tools(service):
+        if service == "notion":
+            return [SimpleNamespace(tool_name="notion_search", description="Search pages")]
+        if service == "linear":
+            return [SimpleNamespace(tool_name="linear_create_issue", description="Create issue")]
+        return []
+
+    registry = SimpleNamespace(
+        list_tools=_list_tools,
+        list_services=lambda: ["notion", "linear", "spotify"],
+    )
+    monkeypatch.setattr("app.routes.telegram.load_registry", lambda: registry)
+    monkeypatch.setattr("app.routes.telegram.resolve_primary_service", lambda text, connected_services: None)
+
+    msg, target = _build_capabilities_message("할 수 있는 작업 알려줘", ["notion", "linear"])
+    assert target is None
+    assert "[notion] 지원 API/기능" in msg
+    assert "[linear] 지원 API/기능" in msg
+    assert "linear_create_issue" in msg

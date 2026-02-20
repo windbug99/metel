@@ -3,6 +3,15 @@ from __future__ import annotations
 import re
 
 from agent.guide_retriever import GuideNotFoundError, get_planning_context
+from agent.intent_keywords import (
+    is_create_intent,
+    is_data_source_intent,
+    is_delete_intent,
+    is_read_intent,
+    is_summary_intent,
+    is_update_intent,
+    is_linear_issue_create_intent,
+)
 from agent.registry import ToolDefinition, load_registry
 from agent.service_resolver import resolve_services
 from agent.types import AgentPlan, AgentRequirement, AgentTask
@@ -20,21 +29,21 @@ def _extract_requirements(user_text: str) -> list[AgentRequirement]:
     quantity = _extract_quantity(normalized)
 
     requirements: list[AgentRequirement] = []
-    if any(keyword in normalized for keyword in ("요약", "summary", "정리")):
+    if is_summary_intent(normalized):
         requirements.append(AgentRequirement(summary="대상 콘텐츠 요약", quantity=quantity))
-    if any(keyword in normalized for keyword in ("생성", "만들", "작성", "create")):
+    if is_create_intent(normalized):
         requirements.append(AgentRequirement(summary="결과물 생성", quantity=1))
-    if any(keyword in normalized for keyword in ("추가", "업데이트", "갱신", "append", "update")):
+    if any(keyword in normalized for keyword in ("추가", "append")) or is_update_intent(normalized):
         requirements.append(AgentRequirement(summary="기존 결과물 수정/추가", quantity=1))
-    if any(keyword in normalized for keyword in ("조회", "검색", "찾", "list", "search")):
+    if is_read_intent(normalized):
         requirements.append(AgentRequirement(summary="대상 데이터 조회", quantity=quantity))
     if any(keyword in normalized for keyword in ("내용", "본문", "상위", "줄", "출력", "보여")):
         requirements.append(AgentRequirement(summary="페이지 본문 일부 추출", quantity=quantity))
-    if any(keyword in normalized for keyword in ("제목 변경", "제목 수정", "rename", "바꿔", "변경")) and "제목" in normalized:
+    if any(keyword in normalized for keyword in ("제목 변경", "제목 수정", "rename")) and "제목" in normalized:
         requirements.append(AgentRequirement(summary="페이지 메타데이터 업데이트", quantity=1))
-    if any(keyword in normalized for keyword in ("삭제", "지워", "아카이브", "archive")):
+    if is_delete_intent(normalized):
         requirements.append(AgentRequirement(summary="페이지 아카이브(삭제)", quantity=1))
-    if any(keyword in normalized for keyword in ("데이터소스", "data source", "data_source")):
+    if is_data_source_intent(normalized):
         requirements.append(AgentRequirement(summary="데이터소스 질의", quantity=quantity))
 
     if not requirements:
@@ -61,15 +70,15 @@ def _select_tools(user_text: str, tools: list[ToolDefinition], max_tools: int = 
         # Lightweight verb heuristics to better map Korean natural language.
         if "요약" in user_text and ("retrieve" in tool.tool_name or "search" in tool.tool_name):
             overlap += 1
-        if any(keyword in user_text for keyword in ("생성", "만들", "작성")) and (
+        if is_create_intent(user_text) and (
             "create" in tool.tool_name or "append" in tool.tool_name
         ):
             overlap += 2
-        if any(keyword in user_text for keyword in ("조회", "검색", "목록", "최근")) and (
+        if is_read_intent(user_text) and (
             "search" in tool.tool_name or "get" in tool.tool_name or "retrieve" in tool.tool_name
         ):
             overlap += 1
-        if any(keyword in user_text for keyword in ("삭제", "지워", "아카이브", "archive")) and "update" in tool.tool_name:
+        if is_delete_intent(user_text) and "update" in tool.tool_name:
             overlap += 2
 
         scored.append((tool.tool_name, overlap))
@@ -129,13 +138,13 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
     if not target_services:
         return []
 
-    need_summary = any(keyword in user_text for keyword in ("요약", "summary", "정리"))
-    need_creation = any(keyword in user_text for keyword in ("생성", "만들", "작성", "저장", "create", "save"))
+    need_summary = is_summary_intent(user_text)
+    need_creation = is_create_intent(user_text)
     sentence_count = _extract_summary_sentence_count(user_text) or 3
 
     tasks: list[AgentTask] = []
 
-    if "notion" in target_services and any(token in user_text for token in ("데이터소스", "data source", "data_source")):
+    if "notion" in target_services and is_data_source_intent(user_text):
         query_tool = _pick_tool_name(selected_tools, "notion", "query", "data_source") or "notion_query_data_source"
         data_source_id = _extract_data_source_id_from_text(user_text)
         if data_source_id:
@@ -152,25 +161,39 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
             )
 
     if "linear" in target_services:
-        search_tool = _pick_tool_name(selected_tools, "linear", "search", "issues")
-        if not search_tool:
-            search_tool = _pick_tool_name(selected_tools, "linear", "list", "issues")
-        query = _extract_linear_query_from_text(user_text)
-        linear_tool_name = search_tool or ("linear_search_issues" if query else "linear_list_issues")
-        payload = {"first": 5}
-        if "search" in linear_tool_name and query:
-            payload["query"] = query
-        tasks.append(
-            AgentTask(
-                id="task_linear_issues",
-                title="Linear 이슈 조회",
-                task_type="TOOL",
-                service="linear",
-                tool_name=linear_tool_name,
-                payload=payload,
-                output_schema={"type": "tool_result", "service": "linear", "tool": linear_tool_name},
+        if is_linear_issue_create_intent(user_text):
+            create_tool = _pick_tool_name(selected_tools, "linear", "create", "issue") or "linear_create_issue"
+            tasks.append(
+                AgentTask(
+                    id="task_linear_create_issue",
+                    title="Linear 이슈 생성",
+                    task_type="TOOL",
+                    service="linear",
+                    tool_name=create_tool,
+                    payload={},
+                    output_schema={"type": "tool_result", "service": "linear", "tool": create_tool},
+                )
             )
-        )
+        else:
+            search_tool = _pick_tool_name(selected_tools, "linear", "search", "issues")
+            if not search_tool:
+                search_tool = _pick_tool_name(selected_tools, "linear", "list", "issues")
+            query = _extract_linear_query_from_text(user_text)
+            linear_tool_name = search_tool or ("linear_search_issues" if query else "linear_list_issues")
+            payload = {"first": 5}
+            if "search" in linear_tool_name and query:
+                payload["query"] = query
+            tasks.append(
+                AgentTask(
+                    id="task_linear_issues",
+                    title="Linear 이슈 조회",
+                    task_type="TOOL",
+                    service="linear",
+                    tool_name=linear_tool_name,
+                    payload=payload,
+                    output_schema={"type": "tool_result", "service": "linear", "tool": linear_tool_name},
+                )
+            )
 
     if need_summary:
         summary_depends = [tasks[-1].id] if tasks else []
@@ -186,7 +209,7 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
             )
         )
 
-    if "notion" in target_services and need_creation:
+    if "notion" in target_services and need_creation and not is_linear_issue_create_intent(user_text):
         create_tool = _pick_tool_name(selected_tools, "notion", "create", "page")
         depends = [tasks[-1].id] if tasks else []
         tasks.append(

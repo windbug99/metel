@@ -8,6 +8,14 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import HTTPException
 
+from agent.intent_keywords import (
+    contains_any,
+    is_create_intent,
+    is_linear_issue_create_intent,
+    is_read_intent,
+    is_summary_intent,
+    is_update_intent,
+)
 from agent.tool_runner import execute_tool
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentTask
 from app.core.config import get_settings
@@ -996,7 +1004,7 @@ async def _notion_append_summary_blocks(user_id: str, plan: AgentPlan, page_id: 
 
 
 def _requires_summary(plan: AgentPlan) -> bool:
-    return any("요약" in req.summary for req in plan.requirements) or "요약" in plan.user_text
+    return any("요약" in req.summary for req in plan.requirements) or is_summary_intent(plan.user_text)
 
 
 def _requires_spotify_recent_tracks_to_notion(plan: AgentPlan) -> bool:
@@ -1150,7 +1158,7 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             steps=steps,
         )
 
-    if any(token in text for token in ("수정", "변경", "update")) and "이슈" in text:
+    if is_update_intent(text) and "이슈" in text:
         issue_id = _extract_linear_issue_id(plan.user_text)
         update_fields = _extract_linear_update_fields(plan.user_text)
         if not issue_id or not update_fields:
@@ -1184,7 +1192,7 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             steps=steps,
         )
 
-    if any(token in text for token in ("생성", "create", "이슈 만들", "issue 만들")):
+    if is_linear_issue_create_intent(text) or any(token in text for token in ("이슈 만들", "issue 만들")):
         team_match = re.search(r"([0-9a-fA-F\-]{8,})", plan.user_text)
         title_match = re.search(r'(?i)(?:제목|title)\s*[:：]\s*(.+)$', plan.user_text)
         team_id = team_match.group(1).strip() if team_match else ""
@@ -1221,7 +1229,7 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             steps=steps,
         )
 
-    if any(token in text for token in ("검색", "search")):
+    if contains_any(text, ("검색", "search")):
         query = _extract_linear_search_query(plan.user_text)
         if query:
             result = await execute_tool(
@@ -1249,7 +1257,7 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
                 steps=steps,
             )
 
-    if any(token in text for token in ("이슈", "issues", "목록", "최근", "조회", "list")):
+    if contains_any(text, ("이슈", "issues")) and is_read_intent(text):
         result = await execute_tool(
             user_id=user_id,
             tool_name=_pick_tool(plan, "linear_list_issues", "linear_list_issues"),
@@ -1409,9 +1417,7 @@ async def _execute_spotify_recent_tracks_to_notion(user_id: str, plan: AgentPlan
 def _requires_creation(plan: AgentPlan) -> bool:
     if _requires_append_to_page(plan):
         return False
-    return any("생성" in req.summary for req in plan.requirements) or any(
-        keyword in plan.user_text for keyword in ("생성", "만들", "작성", "create")
-    )
+    return any("생성" in req.summary for req in plan.requirements) or is_create_intent(plan.user_text)
 
 
 def _requires_top_lines(plan: AgentPlan) -> bool:

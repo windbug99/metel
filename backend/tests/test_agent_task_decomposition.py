@@ -25,6 +25,17 @@ def test_build_agent_plan_includes_llm_task_for_cross_service_summary_flow():
     assert llm_task.payload.get("sentences") == 3
 
 
+def test_build_agent_plan_maps_register_intent_to_linear_create_issue():
+    plan = build_agent_plan(
+        "노션의 구글로그인 구현 페이지를 linear의 새로운 이슈로 등록하세요.",
+        connected_services=["notion", "linear"],
+    )
+
+    assert any("생성" in req.summary for req in plan.requirements)
+    assert any(task.tool_name == "linear_create_issue" for task in plan.tasks)
+    assert not any(task.tool_name == "notion_create_page" for task in plan.tasks)
+
+
 def test_execute_agent_plan_runs_linear_llm_notion_bridge(monkeypatch):
     calls = []
 
