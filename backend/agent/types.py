@@ -17,7 +17,20 @@ class AgentPlan:
     target_services: list[str]
     selected_tools: list[str]
     workflow_steps: list[str]
+    tasks: list["AgentTask"] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AgentTask:
+    id: str
+    title: str
+    task_type: str  # TOOL | LLM
+    depends_on: list[str] = field(default_factory=list)
+    service: str | None = None
+    tool_name: str | None = None
+    payload: dict = field(default_factory=dict)
+    instruction: str | None = None
 
 
 @dataclass

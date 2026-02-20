@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from html import unescape
 from datetime import datetime, timezone
@@ -8,7 +9,7 @@ import httpx
 from fastapi import HTTPException
 
 from agent.tool_runner import execute_tool
-from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan
+from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentTask
 from app.core.config import get_settings
 
 
@@ -229,6 +230,372 @@ def _extract_requested_count(plan: AgentPlan, default_count: int = 3) -> int:
         if req.quantity and req.quantity > 0:
             return max(1, min(10, req.quantity))
     return default_count
+
+
+def _normalize_issue_nodes_from_result(result: dict) -> list[dict]:
+    data = result.get("data") or {}
+    nodes = (((data.get("issues") or {}).get("nodes")) or [])
+    normalized: list[dict] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        normalized.append(
+            {
+                "id": node.get("id") or "",
+                "identifier": node.get("identifier") or "",
+                "title": node.get("title") or "(제목 없음)",
+                "url": node.get("url") or "",
+                "state": ((node.get("state") or {}).get("name")) or "",
+            }
+        )
+    return normalized
+
+
+def _format_issue_text_for_summary(issues: list[dict]) -> str:
+    if not issues:
+        return "요약할 이슈가 없습니다."
+    lines: list[str] = []
+    for idx, issue in enumerate(issues, start=1):
+        lines.append(
+            f"{idx}. [{issue.get('identifier') or '-'}] {issue.get('title') or '(제목 없음)'} "
+            f"(상태: {issue.get('state') or '-'})"
+        )
+    return "\n".join(lines)
+
+
+def _split_summary_sentences(text: str) -> list[str]:
+    stripped = re.sub(r"^\s*\d+\.\s*", "", text.strip(), flags=re.MULTILINE)
+    by_lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    if len(by_lines) >= 2:
+        return by_lines
+    compact = re.sub(r"\s+", " ", stripped).strip()
+    if not compact:
+        return []
+    parts = re.split(r"(?<=[\.\?\!])\s+", compact)
+    parts = [part.strip() for part in parts if part.strip()]
+    return parts or [compact]
+
+
+def _enforce_sentence_count(text: str, sentence_count: int) -> str:
+    sentences = _split_summary_sentences(text)
+    if not sentences:
+        return "요약 결과가 비어 있습니다."
+
+    clipped = sentences[: max(1, sentence_count)]
+    normalized: list[str] = []
+    for sentence in clipped:
+        item = sentence.strip()
+        if not item:
+            continue
+        if item[-1] not in ".!?":
+            item = f"{item}."
+        normalized.append(item)
+    return " ".join(normalized).strip()
+
+
+def _find_task(tasks: list[AgentTask], *, task_type: str, service: str | None = None, tool_token: str | None = None) -> AgentTask | None:
+    for task in tasks:
+        if task.task_type.upper() != task_type.upper():
+            continue
+        if service and (task.service or "").lower() != service.lower():
+            continue
+        if tool_token and tool_token.lower() not in (task.tool_name or "").lower():
+            continue
+        return task
+    return None
+
+
+def _supports_linear_summary_to_notion_flow(plan: AgentPlan) -> bool:
+    tasks = plan.tasks or []
+    if not tasks:
+        return False
+    linear_task = _find_task(tasks, task_type="TOOL", service="linear", tool_token="issues")
+    llm_task = _find_task(tasks, task_type="LLM")
+    notion_task = _find_task(tasks, task_type="TOOL", service="notion", tool_token="create_page")
+    if not linear_task or not llm_task or not notion_task:
+        return False
+    task_ids = [item.id for item in tasks]
+    try:
+        return task_ids.index(linear_task.id) < task_ids.index(llm_task.id) < task_ids.index(notion_task.id)
+    except ValueError:
+        return False
+
+
+def _is_tool_task(task: AgentTask) -> bool:
+    return task.task_type.upper() == "TOOL"
+
+
+def _is_llm_task(task: AgentTask) -> bool:
+    return task.task_type.upper() == "LLM"
+
+
+def _has_task_orchestration_candidate(plan: AgentPlan) -> bool:
+    tasks = plan.tasks or []
+    if not tasks:
+        return False
+    return any(_is_llm_task(task) for task in tasks) and any(_is_tool_task(task) for task in tasks)
+
+
+def _extract_page_url_from_tool_result(result: dict) -> str:
+    data = result.get("data")
+    if isinstance(data, dict):
+        return str(data.get("url") or "")
+    return ""
+
+
+def _task_output_as_text(value: dict) -> str:
+    if "summary_text" in value:
+        return str(value.get("summary_text") or "")
+    result = value.get("tool_result")
+    if not isinstance(result, dict):
+        return ""
+    issues = _normalize_issue_nodes_from_result(result)
+    if issues:
+        return _format_issue_text_for_summary(issues)
+    notion_results = ((result.get("data") or {}).get("results") or [])
+    if isinstance(notion_results, list) and notion_results:
+        lines: list[str] = []
+        for idx, item in enumerate(notion_results[:20], start=1):
+            if not isinstance(item, dict):
+                continue
+            title = _extract_page_title(item)
+            url = item.get("url") or ""
+            lines.append(f"{idx}. {title}")
+            if url:
+                lines.append(f"   {url}")
+        if lines:
+            return "\n".join(lines)
+    data = result.get("data")
+    if isinstance(data, dict):
+        try:
+            return json.dumps(data, ensure_ascii=False)
+        except TypeError:
+            return str(data)
+    return ""
+
+
+def _collect_dependency_text(task: AgentTask, task_outputs: dict[str, dict]) -> str:
+    chunks: list[str] = []
+    for dep in task.depends_on:
+        output = task_outputs.get(dep)
+        if not output:
+            continue
+        text = _task_output_as_text(output).strip()
+        if text:
+            chunks.append(text)
+    return "\n\n".join(chunks).strip()
+
+
+def _build_task_tool_payload(
+    *,
+    plan: AgentPlan,
+    task: AgentTask,
+    task_outputs: dict[str, dict],
+) -> dict:
+    tool_name = (task.tool_name or "").strip()
+    payload = dict(task.payload or {})
+
+    if "linear_search_issues" in tool_name:
+        payload.setdefault("first", 5)
+        payload.setdefault("query", _extract_linear_search_query(plan.user_text) or "")
+        if not payload["query"]:
+            payload.pop("query", None)
+        return payload
+
+    if "linear_list_issues" in tool_name:
+        payload.setdefault("first", 5)
+        return payload
+
+    if "notion_create_page" in tool_name:
+        title_hint = str(payload.get("title_hint") or _extract_output_title(plan.user_text, "Metel 자동 요약")).strip()[:100]
+        dependency_text = _collect_dependency_text(task, task_outputs)
+        children = []
+        if dependency_text:
+            children = [
+                {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {"rich_text": [{"type": "text", "text": {"content": line[:1800]}}]},
+                }
+                for line in dependency_text.splitlines()
+                if line.strip()
+            ][:80]
+        return {
+            "parent": _notion_create_parent_payload(),
+            "properties": {
+                "title": {"title": [{"type": "text", "text": {"content": title_hint}}]},
+            },
+            **({"children": children} if children else {}),
+        }
+
+    if "notion_query_data_source" in tool_name:
+        parsed_id, parsed_page_size, _ = _extract_data_source_query_request(plan.user_text)
+        data_source_id = str(payload.get("data_source_id") or parsed_id or "").strip()
+        page_size = int(payload.get("page_size") or parsed_page_size or 5)
+        return {
+            "data_source_id": data_source_id,
+            "page_size": max(1, min(20, page_size)),
+        }
+
+    return payload
+
+
+async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExecutionResult | None:
+    if not _has_task_orchestration_candidate(plan):
+        return None
+
+    tasks = plan.tasks or []
+    task_outputs: dict[str, dict] = {}
+    steps: list[AgentExecutionStep] = []
+
+    for task in tasks:
+        missing_deps = [dep for dep in task.depends_on if dep not in task_outputs]
+        if missing_deps:
+            return None
+
+        if _is_tool_task(task):
+            tool_name = (task.tool_name or "").strip()
+            if not tool_name:
+                return None
+            payload = _build_task_tool_payload(plan=plan, task=task, task_outputs=task_outputs)
+            tool_result = await execute_tool(user_id=user_id, tool_name=tool_name, payload=payload)
+            task_outputs[task.id] = {"kind": "tool", "tool_name": tool_name, "tool_result": tool_result}
+            steps.append(AgentExecutionStep(name=task.id, status="success", detail=f"tool={tool_name}"))
+            continue
+
+        if _is_llm_task(task):
+            dependency_text = _collect_dependency_text(task, task_outputs)
+            if not dependency_text:
+                dependency_text = plan.user_text
+            sentence_count = max(1, min(10, int((task.payload or {}).get("sentences", 3))))
+            summary_raw, summarize_mode = await _summarize_text_with_llm(dependency_text, f"{sentence_count}문장 요약")
+            summary_text = _enforce_sentence_count(summary_raw, sentence_count)
+            task_outputs[task.id] = {
+                "kind": "llm",
+                "summary_text": summary_text,
+                "sentence_count": sentence_count,
+                "mode": summarize_mode,
+            }
+            steps.append(
+                AgentExecutionStep(
+                    name=task.id,
+                    status="success",
+                    detail=f"llm_summary sentences={sentence_count} mode={summarize_mode}",
+                )
+            )
+            continue
+
+        return None
+
+    final_summary = "Task 기반 오케스트레이션 실행을 완료했습니다."
+    final_user_message = "요청하신 작업을 완료했습니다."
+    artifacts: dict[str, str] = {}
+
+    for output in task_outputs.values():
+        if output.get("kind") != "tool":
+            continue
+        page_url = _extract_page_url_from_tool_result(output.get("tool_result") or {})
+        if page_url:
+            artifacts["created_page_url"] = page_url
+            final_user_message = f"{final_user_message}\n- 생성 페이지: {page_url}"
+
+    llm_outputs = [output for output in task_outputs.values() if output.get("kind") == "llm"]
+    if llm_outputs:
+        last_summary = str(llm_outputs[-1].get("summary_text") or "").strip()
+        if last_summary:
+            final_user_message = f"{final_user_message}\n\n[요약]\n{last_summary}"
+            artifacts["summary_sentence_count"] = str(llm_outputs[-1].get("sentence_count") or 0)
+            final_summary = "TOOL/LLM 작업 오케스트레이션을 완료했습니다."
+
+    return AgentExecutionResult(
+        success=True,
+        summary=final_summary,
+        user_message=final_user_message,
+        artifacts=artifacts,
+        steps=steps,
+    )
+
+
+async def _execute_linear_summary_to_notion_flow(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
+    tasks = plan.tasks
+    linear_task = _find_task(tasks, task_type="TOOL", service="linear", tool_token="issues")
+    llm_task = _find_task(tasks, task_type="LLM")
+    notion_task = _find_task(tasks, task_type="TOOL", service="notion", tool_token="create_page")
+    if not linear_task or not llm_task or not notion_task:
+        raise HTTPException(status_code=400, detail="validation_plan_tasks_missing")
+
+    steps: list[AgentExecutionStep] = []
+    linear_payload = dict(linear_task.payload or {})
+    if not linear_payload:
+        linear_payload = {"first": 5}
+    linear_result = await execute_tool(
+        user_id=user_id,
+        tool_name=linear_task.tool_name or _pick_tool(plan, "linear_search_issues", "linear_search_issues"),
+        payload=linear_payload,
+    )
+    issues = _normalize_issue_nodes_from_result(linear_result)
+    steps.append(AgentExecutionStep(name=linear_task.id, status="success", detail=f"issues={len(issues)}"))
+    if not issues:
+        return AgentExecutionResult(
+            success=True,
+            summary="Linear 이슈를 찾지 못해 요약/저장을 진행하지 않았습니다.",
+            user_message="요청 조건에 맞는 Linear 이슈가 없어 Notion 페이지를 생성하지 않았습니다.",
+            steps=steps,
+        )
+
+    sentence_count = max(1, min(10, int((llm_task.payload or {}).get("sentences", 3))))
+    summary_source = _format_issue_text_for_summary(issues)
+    llm_summary_raw, summarize_mode = await _summarize_text_with_llm(summary_source, f"{sentence_count}문장 요약")
+    llm_summary = _enforce_sentence_count(llm_summary_raw, sentence_count)
+    steps.append(
+        AgentExecutionStep(
+            name=llm_task.id,
+            status="success",
+            detail=f"sentences={sentence_count} mode={summarize_mode}",
+        )
+    )
+
+    title_hint = str((notion_task.payload or {}).get("title_hint") or "Linear 기획 이슈 요약").strip()[:100]
+    created = await execute_tool(
+        user_id=user_id,
+        tool_name=notion_task.tool_name or _pick_tool(plan, "create_page", "notion_create_page"),
+        payload={
+            "parent": _notion_create_parent_payload(),
+            "properties": {
+                "title": {
+                    "title": [{"type": "text", "text": {"content": title_hint}}],
+                }
+            },
+            "children": [
+                {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {"rich_text": [{"type": "text", "text": {"content": llm_summary[:1800]}}]},
+                }
+            ],
+        },
+    )
+    page_data = created.get("data") or {}
+    page_url = page_data.get("url") or ""
+    steps.append(AgentExecutionStep(name=notion_task.id, status="success", detail=f"url={page_url or '-'}"))
+
+    return AgentExecutionResult(
+        success=True,
+        summary="Linear 이슈 조회, LLM 요약, Notion 저장을 완료했습니다.",
+        user_message=(
+            "요청하신 작업을 완료했습니다.\n"
+            f"- 조회 이슈 수: {len(issues)}\n"
+            f"- 요약 문장 수: {sentence_count}\n"
+            f"- Notion 페이지: {page_url or '-'}\n\n"
+            f"[요약]\n{llm_summary}"
+        ),
+        artifacts={
+            "issue_count": str(len(issues)),
+            "summary_sentence_count": str(sentence_count),
+            "created_page_url": page_url,
+        },
+        steps=steps,
+    )
 
 
 def _extract_output_title(user_text: str, default_title: str = "Metel 자동 요약 회의록") -> str:
@@ -472,7 +839,7 @@ def _requires_page_title_update(plan: AgentPlan) -> bool:
 def _requires_data_source_query(plan: AgentPlan) -> bool:
     text = plan.user_text
     return any(keyword in text for keyword in ("데이터소스", "data source", "data_source")) and any(
-        keyword in text for keyword in ("조회", "목록", "query", "불러", "보여")
+        keyword in text for keyword in ("조회", "목록", "query", "불러", "보여", "요약", "정리")
     )
 
 
@@ -584,11 +951,136 @@ def _extract_linear_search_query(user_text: str) -> str | None:
     return candidate or None
 
 
+def _extract_linear_issue_id(user_text: str) -> str | None:
+    match = re.search(r"([0-9a-fA-F]{8,}-[0-9a-fA-F-]{8,})", user_text)
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+def _extract_linear_comment_body(user_text: str) -> str | None:
+    patterns = [
+        r'(?is)(?:댓글|코멘트|comment)\s*(?:내용)?\s*[:：]\s*(.+)$',
+        r'(?is)(?:댓글|코멘트|comment)\s*(?:을|를)?\s*(?:생성|추가|작성)\s*[:：]?\s*(.+)$',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, user_text.strip())
+        if not match:
+            continue
+        body = match.group(1).strip(" \"'`")
+        if body:
+            return body
+    return None
+
+
+def _extract_linear_update_fields(user_text: str) -> dict:
+    fields: dict[str, str] = {}
+    title_match = re.search(r'(?i)(?:제목|title)\s*[:：]\s*(.+?)(?:\s+(?:설명|description|상태|state_id)\s*[:：]|$)', user_text)
+    if title_match:
+        fields["title"] = title_match.group(1).strip(" \"'`")
+    description_match = re.search(r'(?i)(?:설명|description)\s*[:：]\s*(.+?)(?:\s+(?:제목|title|상태|state_id)\s*[:：]|$)', user_text)
+    if description_match:
+        fields["description"] = description_match.group(1).strip(" \"'`")
+    state_match = re.search(r'(?i)(?:상태|state_id)\s*[:：]\s*([0-9a-fA-F\-]{8,})', user_text)
+    if state_match:
+        fields["state_id"] = state_match.group(1).strip()
+    return {k: v for k, v in fields.items() if v}
+
+
 async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
     steps: list[AgentExecutionStep] = []
     steps.append(AgentExecutionStep(name="tool_runner_init", status="success", detail="Linear Tool Runner 준비 완료"))
 
     text = (plan.user_text or "").lower()
+    if any(token in text for token in ("팀", "team", "teams")) and any(token in text for token in ("조회", "목록", "list", "보여")):
+        result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "linear_list_teams", "linear_list_teams"),
+            payload={"first": 10},
+        )
+        nodes = (((result.get("data") or {}).get("teams") or {}).get("nodes") or [])
+        steps.append(AgentExecutionStep(name="linear_list_teams", status="success", detail=f"count={len(nodes)}"))
+        if not nodes:
+            return AgentExecutionResult(
+                success=True,
+                summary="Linear 팀 목록이 비어 있습니다.",
+                user_message="조회 가능한 Linear 팀이 없습니다.",
+                steps=steps,
+            )
+        lines = ["Linear 팀 목록입니다:"]
+        for idx, node in enumerate(nodes[:10], start=1):
+            lines.append(f"{idx}. {node.get('key') or '-'} {node.get('name') or '(이름 없음)'}")
+        return AgentExecutionResult(
+            success=True,
+            summary="Linear 팀 목록 조회를 완료했습니다.",
+            user_message="\n".join(lines),
+            steps=steps,
+        )
+
+    if any(token in text for token in ("댓글", "코멘트", "comment")) and any(token in text for token in ("생성", "추가", "작성", "create")):
+        issue_id = _extract_linear_issue_id(plan.user_text)
+        body = _extract_linear_comment_body(plan.user_text)
+        if not issue_id or not body:
+            return AgentExecutionResult(
+                success=False,
+                summary="Linear 댓글 생성 입력이 부족합니다.",
+                user_message="`issue_id`와 댓글 본문이 필요합니다. 예: `Linear issue_id <ID> 댓글: 확인 부탁드립니다`",
+                artifacts={"error_code": "validation_error"},
+                steps=steps + [AgentExecutionStep(name="extract_comment_input", status="error", detail="missing_issue_or_body")],
+            )
+        created = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "linear_create_comment", "linear_create_comment"),
+            payload={"issue_id": issue_id, "body": body},
+        )
+        comment = ((created.get("data") or {}).get("commentCreate") or {}).get("comment") or {}
+        steps.append(AgentExecutionStep(name="linear_create_comment", status="success", detail=f"id={comment.get('id')}"))
+        return AgentExecutionResult(
+            success=True,
+            summary="Linear 댓글 생성을 완료했습니다.",
+            user_message=(
+                "Linear 이슈 댓글을 생성했습니다.\n"
+                f"- 댓글 ID: {comment.get('id') or '-'}\n"
+                f"- 링크: {comment.get('url') or '-'}"
+            ),
+            artifacts={"created_comment_id": comment.get("id") or "", "created_comment_url": comment.get("url") or ""},
+            steps=steps,
+        )
+
+    if any(token in text for token in ("수정", "변경", "update")) and "이슈" in text:
+        issue_id = _extract_linear_issue_id(plan.user_text)
+        update_fields = _extract_linear_update_fields(plan.user_text)
+        if not issue_id or not update_fields:
+            return AgentExecutionResult(
+                success=False,
+                summary="Linear 이슈 수정 입력이 부족합니다.",
+                user_message=(
+                    "`issue_id`와 변경 필드가 필요합니다.\n"
+                    "예: `Linear 이슈 수정 issue_id <ID> 제목: 새 제목`"
+                ),
+                artifacts={"error_code": "validation_error"},
+                steps=steps + [AgentExecutionStep(name="extract_update_issue_input", status="error", detail="missing_issue_or_fields")],
+            )
+        updated = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "linear_update_issue", "linear_update_issue"),
+            payload={"issue_id": issue_id, **update_fields},
+        )
+        issue = ((updated.get("data") or {}).get("issueUpdate") or {}).get("issue") or {}
+        steps.append(AgentExecutionStep(name="linear_update_issue", status="success", detail=f"id={issue.get('id')}"))
+        return AgentExecutionResult(
+            success=True,
+            summary="Linear 이슈 수정을 완료했습니다.",
+            user_message=(
+                "Linear 이슈를 수정했습니다.\n"
+                f"- 식별자: {issue.get('identifier') or '-'}\n"
+                f"- 제목: {issue.get('title') or '-'}\n"
+                f"- 링크: {issue.get('url') or '-'}"
+            ),
+            artifacts={"updated_issue_id": issue.get("id") or "", "updated_issue_url": issue.get("url") or ""},
+            steps=steps,
+        )
+
     if any(token in text for token in ("생성", "create", "이슈 만들", "issue 만들")):
         team_match = re.search(r"([0-9a-fA-F\-]{8,})", plan.user_text)
         title_match = re.search(r'(?i)(?:제목|title)\s*[:：]\s*(.+)$', plan.user_text)
@@ -1828,6 +2320,11 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
 
 async def execute_agent_plan(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
     try:
+        task_orchestration_result = await _execute_task_orchestration(user_id=user_id, plan=plan)
+        if task_orchestration_result is not None:
+            return task_orchestration_result
+        if _supports_linear_summary_to_notion_flow(plan):
+            return await _execute_linear_summary_to_notion_flow(user_id, plan)
         if _requires_spotify_recent_tracks_to_notion(plan):
             return await _execute_spotify_recent_tracks_to_notion(user_id, plan)
         if "linear" in plan.target_services:

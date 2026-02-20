@@ -5,9 +5,9 @@ import re
 
 import httpx
 
-from agent.planner import build_agent_plan
+from agent.planner import build_agent_plan, build_execution_tasks
 from agent.registry import load_registry
-from agent.types import AgentPlan, AgentRequirement
+from agent.types import AgentPlan, AgentRequirement, AgentTask
 from app.core.config import get_settings
 
 
@@ -42,6 +42,38 @@ def _normalize_list(value: object) -> list[str]:
     return result
 
 
+def _normalize_tasks(value: object) -> list[AgentTask]:
+    if not isinstance(value, list):
+        return []
+    tasks: list[AgentTask] = []
+    for idx, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            continue
+        task_type = str(item.get("task_type", "")).strip().upper()
+        if task_type not in {"TOOL", "LLM"}:
+            continue
+        task_id = str(item.get("id") or f"task_{idx}").strip()
+        title = str(item.get("title") or task_id).strip()
+        depends_on = [dep.strip() for dep in _normalize_list(item.get("depends_on")) if dep.strip()]
+        service = str(item.get("service", "")).strip() or None
+        tool_name = str(item.get("tool_name", "")).strip() or None
+        payload = item.get("payload")
+        instruction = str(item.get("instruction", "")).strip() or None
+        tasks.append(
+            AgentTask(
+                id=task_id,
+                title=title,
+                task_type=task_type,
+                depends_on=depends_on,
+                service=service,
+                tool_name=tool_name,
+                payload=payload if isinstance(payload, dict) else {},
+                instruction=instruction,
+            )
+        )
+    return tasks
+
+
 def _to_agent_plan(
     *,
     user_text: str,
@@ -73,12 +105,27 @@ def _to_agent_plan(
     workflow_steps = _normalize_list(payload.get("workflow_steps")) or _default_workflow_steps(selected_tools)
     notes = _normalize_list(payload.get("notes"))
     notes.append("planner=llm")
+    tasks = _normalize_tasks(payload.get("tasks"))
+    synthesized_tasks = build_execution_tasks(
+        user_text=user_text,
+        target_services=target_services,
+        selected_tools=selected_tools,
+    )
+    if not tasks:
+        tasks = synthesized_tasks
+    else:
+        has_llm = any(task.task_type == "LLM" for task in tasks)
+        synthesized_has_llm = any(task.task_type == "LLM" for task in synthesized_tasks)
+        if not has_llm and synthesized_has_llm:
+            tasks = synthesized_tasks
+            notes.append("tasks_rehydrated_with_rule_synthesis")
     return AgentPlan(
         user_text=user_text,
         requirements=requirements,
         target_services=target_services,
         selected_tools=selected_tools,
         workflow_steps=workflow_steps,
+        tasks=tasks,
         notes=notes,
     )
 
@@ -115,6 +162,7 @@ async def try_build_agent_plan_with_llm(
         '  "requirements": ["요구사항1", "요구사항2"],\n'
         '  "target_services": ["notion"],\n'
         '  "selected_tools": ["notion_search", "notion_retrieve_block_children"],\n'
+        '  "tasks": [{"id":"task1","title":"작업","task_type":"TOOL","service":"notion","tool_name":"notion_search","depends_on":[],"payload":{"query":"최근"}}],\n'
         '  "workflow_steps": ["1단계", "2단계"],\n'
         '  "notes": ["주의사항"]\n'
         "}\n"

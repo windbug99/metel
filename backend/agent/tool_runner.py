@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import re
 from json import JSONDecodeError
 from typing import Any
@@ -43,6 +44,20 @@ def _notion_headers(token: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
         "Notion-Version": settings.notion_api_version,
+    }
+
+
+def _notion_oauth_headers() -> dict[str, str]:
+    settings = get_settings()
+    client_id = (settings.notion_client_id or "").strip()
+    client_secret = (settings.notion_client_secret or "").strip()
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=500, detail="notion_oauth_config_missing")
+    raw = f"{client_id}:{client_secret}".encode("utf-8")
+    encoded = base64.b64encode(raw).decode("ascii")
+    return {
+        "Authorization": f"Basic {encoded}",
+        "Content-Type": "application/json",
     }
 
 
@@ -190,6 +205,17 @@ async def _execute_notion_http(user_id: str, tool: ToolDefinition, payload: dict
     return _parse_response_data(response)
 
 
+async def _execute_notion_oauth_http(tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
+    url = f"{tool.base_url}{tool.path}"
+    headers = _notion_oauth_headers()
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.post(url, headers=headers, json=payload)
+    if response.status_code >= 400:
+        mapped = tool.error_map.get(str(response.status_code), "TOOL_FAILED")
+        raise HTTPException(status_code=400, detail=f"{tool.tool_name}:{mapped}|status={response.status_code}")
+    return _parse_response_data(response)
+
+
 async def _execute_spotify_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
     token = _load_oauth_access_token(user_id=user_id, provider="spotify")
     path = _build_path(tool.path, payload)
@@ -312,6 +338,71 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
                 }
             },
         )
+    if tool_name == "linear_list_teams":
+        first = int(payload.get("first", 10))
+        return (
+            """
+            query Teams($first: Int!) {
+              teams(first: $first) {
+                nodes {
+                  id
+                  key
+                  name
+                }
+              }
+            }
+            """,
+            {"first": max(1, min(20, first))},
+        )
+    if tool_name == "linear_update_issue":
+        issue_id = str(payload.get("issue_id", "")).strip()
+        input_data: dict[str, Any] = {"id": issue_id}
+        if payload.get("title") is not None:
+            input_data["title"] = str(payload.get("title", ""))
+        if payload.get("description") is not None:
+            input_data["description"] = str(payload.get("description", ""))
+        if payload.get("state_id") is not None:
+            input_data["stateId"] = str(payload.get("state_id", ""))
+        return (
+            """
+            mutation UpdateIssue($input: IssueUpdateInput!) {
+              issueUpdate(input: $input) {
+                success
+                issue {
+                  id
+                  identifier
+                  title
+                  url
+                  state {
+                    name
+                  }
+                }
+              }
+            }
+            """,
+            {"input": input_data},
+        )
+    if tool_name == "linear_create_comment":
+        return (
+            """
+            mutation CreateComment($input: CommentCreateInput!) {
+              commentCreate(input: $input) {
+                success
+                comment {
+                  id
+                  body
+                  url
+                }
+              }
+            }
+            """,
+            {
+                "input": {
+                    "issueId": str(payload.get("issue_id", "")),
+                    "body": str(payload.get("body", "")),
+                }
+            },
+        )
     raise HTTPException(status_code=400, detail=f"{tool_name}:NOT_IMPLEMENTED")
 
 
@@ -389,6 +480,8 @@ async def execute_tool(user_id: str, tool_name: str, payload: dict[str, Any]) ->
         payload = _normalize_notion_create_page_payload(dict(payload))
     _validate_payload_by_schema(tool, payload)
     if tool.service == "notion":
+        if tool.tool_name.startswith("notion_oauth_token_"):
+            return await _execute_notion_oauth_http(tool=tool, payload=payload)
         return await _execute_notion_http(user_id=user_id, tool=tool, payload=payload)
     if tool.service == "spotify":
         return await _execute_spotify_http(user_id=user_id, tool=tool, payload=payload)

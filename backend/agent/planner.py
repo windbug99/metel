@@ -5,7 +5,7 @@ import re
 from agent.guide_retriever import GuideNotFoundError, get_planning_context
 from agent.registry import ToolDefinition, load_registry
 from agent.service_resolver import resolve_services
-from agent.types import AgentPlan, AgentRequirement
+from agent.types import AgentPlan, AgentRequirement, AgentTask
 
 
 def _extract_quantity(text: str) -> int | None:
@@ -81,6 +81,141 @@ def _select_tools(user_text: str, tools: list[ToolDefinition], max_tools: int = 
     return [tool.tool_name for tool in tools[: min(max_tools, len(tools))]]
 
 
+def _pick_tool_name(selected_tools: list[str], *tokens: str) -> str | None:
+    for tool_name in selected_tools:
+        lower = tool_name.lower()
+        if all(token.lower() in lower for token in tokens):
+            return tool_name
+    return None
+
+
+def _extract_linear_query_from_text(user_text: str) -> str | None:
+    quoted = re.findall(r'"([^"]+)"|\'([^\']+)\'', user_text)
+    for a, b in quoted:
+        candidate = (a or b or "").strip()
+        if candidate:
+            return candidate
+    match = re.search(r"(?i)(?:linear|리니어)(?:의|에서)?\s*(.+?)\s*(?:의)?\s*이슈", user_text.strip())
+    if not match:
+        return None
+    candidate = match.group(1).strip(" \"'`")
+    return candidate or None
+
+
+def _extract_summary_sentence_count(user_text: str) -> int | None:
+    match = re.search(r"(\d{1,2})\s*(?:문장|sentence|sentences)", user_text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return max(1, min(10, int(match.group(1))))
+
+
+def _extract_output_title_hint(user_text: str) -> str | None:
+    match = re.search(r"(?i)(?:notion|노션)(?:의)?\s*(.+?)\s*(?:새로운|신규|new)\s*페이지", user_text)
+    if match:
+        candidate = match.group(1).strip(" \"'`")
+        if candidate:
+            return candidate[:100]
+    return None
+
+
+def _extract_data_source_id_from_text(user_text: str) -> str | None:
+    match = re.search(r"([0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12})", user_text)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def build_execution_tasks(user_text: str, target_services: list[str], selected_tools: list[str]) -> list[AgentTask]:
+    if not target_services:
+        return []
+
+    need_summary = any(keyword in user_text for keyword in ("요약", "summary", "정리"))
+    need_creation = any(keyword in user_text for keyword in ("생성", "만들", "작성", "저장", "create", "save"))
+    sentence_count = _extract_summary_sentence_count(user_text) or 3
+
+    tasks: list[AgentTask] = []
+
+    if "notion" in target_services and any(token in user_text for token in ("데이터소스", "data source", "data_source")):
+        query_tool = _pick_tool_name(selected_tools, "notion", "query", "data_source") or "notion_query_data_source"
+        data_source_id = _extract_data_source_id_from_text(user_text)
+        if data_source_id:
+            tasks.append(
+                AgentTask(
+                    id="task_notion_data_source_query",
+                    title="Notion 데이터소스 조회",
+                    task_type="TOOL",
+                    service="notion",
+                    tool_name=query_tool,
+                    payload={"data_source_id": data_source_id, "page_size": 5},
+                )
+            )
+
+    if "linear" in target_services:
+        search_tool = _pick_tool_name(selected_tools, "linear", "search", "issues")
+        if not search_tool:
+            search_tool = _pick_tool_name(selected_tools, "linear", "list", "issues")
+        query = _extract_linear_query_from_text(user_text)
+        linear_tool_name = search_tool or ("linear_search_issues" if query else "linear_list_issues")
+        payload = {"first": 5}
+        if "search" in linear_tool_name and query:
+            payload["query"] = query
+        tasks.append(
+            AgentTask(
+                id="task_linear_issues",
+                title="Linear 이슈 조회",
+                task_type="TOOL",
+                service="linear",
+                tool_name=linear_tool_name,
+                payload=payload,
+            )
+        )
+
+    if need_summary:
+        summary_depends = [tasks[-1].id] if tasks else []
+        tasks.append(
+            AgentTask(
+                id="task_llm_summary",
+                title=f"{sentence_count}문장 요약",
+                task_type="LLM",
+                depends_on=summary_depends,
+                instruction=f"주어진 입력을 한국어 {sentence_count}문장으로 요약하세요. 사실만 유지하고 추측하지 마세요.",
+                payload={"sentences": sentence_count},
+            )
+        )
+
+    if "notion" in target_services and need_creation:
+        create_tool = _pick_tool_name(selected_tools, "notion", "create", "page")
+        depends = [tasks[-1].id] if tasks else []
+        tasks.append(
+            AgentTask(
+                id="task_notion_create_page",
+                title="Notion 페이지 생성/저장",
+                task_type="TOOL",
+                service="notion",
+                tool_name=create_tool or "notion_create_page",
+                depends_on=depends,
+                payload={"title_hint": _extract_output_title_hint(user_text) or "Metel 자동 요약"},
+            )
+        )
+
+    if tasks:
+        return tasks
+
+    # Fallback: preserve legacy execution by exposing selected tools as TOOL tasks.
+    fallback_tasks: list[AgentTask] = []
+    for idx, tool_name in enumerate(selected_tools, start=1):
+        fallback_tasks.append(
+            AgentTask(
+                id=f"task_tool_{idx}",
+                title=f"도구 실행: {tool_name}",
+                task_type="TOOL",
+                service=tool_name.split("_", 1)[0] if "_" in tool_name else None,
+                tool_name=tool_name,
+            )
+        )
+    return fallback_tasks
+
+
 def build_agent_plan(user_text: str, connected_services: list[str]) -> AgentPlan:
     requirements = _extract_requirements(user_text)
     target_services = resolve_services(user_text, connected_services)
@@ -109,6 +244,9 @@ def build_agent_plan(user_text: str, connected_services: list[str]) -> AgentPlan
     ]
     if selected_tools:
         workflow_steps.append("실행 예정 API 순서: " + " -> ".join(selected_tools))
+    tasks = build_execution_tasks(user_text=user_text, target_services=target_services, selected_tools=selected_tools)
+    if any(task.task_type == "LLM" for task in tasks):
+        workflow_steps.append("API 비의존 작업은 LLM 작업으로 분류하여 실행")
 
     return AgentPlan(
         user_text=user_text,
@@ -116,5 +254,6 @@ def build_agent_plan(user_text: str, connected_services: list[str]) -> AgentPlan
         target_services=target_services,
         selected_tools=selected_tools,
         workflow_steps=workflow_steps,
+        tasks=tasks,
         notes=notes,
     )

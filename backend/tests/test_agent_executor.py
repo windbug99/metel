@@ -6,6 +6,7 @@ from agent.executor import (
     _extract_page_rename_request,
     _extract_requested_count,
     _extract_requested_line_count,
+    _requires_data_source_query,
     _extract_summary_line_count,
     _extract_target_page_title,
     _requires_spotify_recent_tracks_to_notion,
@@ -82,6 +83,11 @@ def test_extract_data_source_query_request_invalid_id():
     assert source_id is None
     assert page_size == 5
     assert parse_error == "invalid"
+
+
+def test_requires_data_source_query_with_summary_intent():
+    plan = _build_plan("노션 데이터소스 12345678-1234-1234-1234-1234567890ab 최근 5개를 요약해서 저장")
+    assert _requires_data_source_query(plan) is True
 
 
 def test_extract_summary_line_count():

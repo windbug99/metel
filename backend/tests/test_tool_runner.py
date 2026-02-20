@@ -2,8 +2,10 @@ from fastapi import HTTPException
 
 from agent.registry import ToolDefinition
 from agent.tool_runner import _build_path, _extract_path_params, _strip_path_params, execute_tool
+from agent.tool_runner import _linear_query_and_variables
 from agent.tool_runner import _validate_payload_by_schema
 import asyncio
+from types import SimpleNamespace
 
 
 def test_extract_path_params():
@@ -161,5 +163,126 @@ def test_execute_tool_generic_adapter_maps_http_error(monkeypatch):
     except HTTPException as exc:
         assert exc.status_code == 400
         assert exc.detail == "mockdocs_list_items:AUTH_ERROR"
+    else:
+        assert False, "expected HTTPException"
+
+
+def test_linear_query_and_variables_list_teams():
+    query, variables = _linear_query_and_variables("linear_list_teams", {"first": 7})
+    assert "query Teams" in query
+    assert variables == {"first": 7}
+
+
+def test_linear_query_and_variables_update_issue():
+    query, variables = _linear_query_and_variables(
+        "linear_update_issue",
+        {"issue_id": "issue-1", "title": "Updated", "state_id": "state-1"},
+    )
+    assert "mutation UpdateIssue" in query
+    assert variables["input"]["id"] == "issue-1"
+    assert variables["input"]["title"] == "Updated"
+    assert variables["input"]["stateId"] == "state-1"
+
+
+def test_linear_query_and_variables_create_comment():
+    query, variables = _linear_query_and_variables(
+        "linear_create_comment",
+        {"issue_id": "issue-1", "body": "Need review"},
+    )
+    assert "mutation CreateComment" in query
+    assert variables["input"]["issueId"] == "issue-1"
+    assert variables["input"]["body"] == "Need review"
+
+
+def test_execute_tool_notion_oauth_token_introspect_uses_basic_auth(monkeypatch):
+    tool = ToolDefinition(
+        service="notion",
+        base_url="https://api.notion.com",
+        tool_name="notion_oauth_token_introspect",
+        description="introspect token",
+        method="POST",
+        path="/v1/oauth/token/introspect",
+        adapter_function="notion_oauth_token_introspect",
+        input_schema={"type": "object", "properties": {"token": {"type": "string"}}, "required": ["token"]},
+        required_scopes=(),
+        idempotency_key_policy="none",
+        error_map={"401": "AUTH_REQUIRED"},
+    )
+
+    class _Registry:
+        def get_tool(self, tool_name: str):
+            assert tool_name == "notion_oauth_token_introspect"
+            return tool
+
+    class _FakeResponse:
+        status_code = 200
+        text = '{"active":true}'
+
+        def json(self):
+            return {"active": True}
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            assert headers.get("Authorization", "").startswith("Basic ")
+            assert json == {"token": "abc"}
+            return _FakeResponse()
+
+    monkeypatch.setattr("agent.tool_runner.load_registry", lambda: _Registry())
+    monkeypatch.setattr(
+        "agent.tool_runner.get_settings",
+        lambda: SimpleNamespace(
+            notion_client_id="cid",
+            notion_client_secret="csecret",
+            notion_api_version="2025-09-03",
+        ),
+    )
+    monkeypatch.setattr("agent.tool_runner.httpx.AsyncClient", lambda *args, **kwargs: _FakeClient())
+
+    result = asyncio.run(execute_tool("user-1", "notion_oauth_token_introspect", {"token": "abc"}))
+    assert result["ok"] is True
+    assert result["data"]["active"] is True
+
+
+def test_execute_tool_notion_oauth_token_exchange_requires_oauth_config(monkeypatch):
+    tool = ToolDefinition(
+        service="notion",
+        base_url="https://api.notion.com",
+        tool_name="notion_oauth_token_exchange",
+        description="exchange token",
+        method="POST",
+        path="/v1/oauth/token",
+        adapter_function="notion_oauth_token_exchange",
+        input_schema={"type": "object", "properties": {"grant_type": {"type": "string"}}, "required": ["grant_type"]},
+        required_scopes=(),
+        idempotency_key_policy="none",
+        error_map={"401": "AUTH_REQUIRED"},
+    )
+
+    class _Registry:
+        def get_tool(self, tool_name: str):
+            assert tool_name == "notion_oauth_token_exchange"
+            return tool
+
+    monkeypatch.setattr("agent.tool_runner.load_registry", lambda: _Registry())
+    monkeypatch.setattr(
+        "agent.tool_runner.get_settings",
+        lambda: SimpleNamespace(
+            notion_client_id="",
+            notion_client_secret="",
+            notion_api_version="2025-09-03",
+        ),
+    )
+
+    try:
+        asyncio.run(execute_tool("user-1", "notion_oauth_token_exchange", {"grant_type": "authorization_code"}))
+    except HTTPException as exc:
+        assert exc.status_code == 500
+        assert exc.detail == "notion_oauth_config_missing"
     else:
         assert False, "expected HTTPException"

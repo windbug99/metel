@@ -770,3 +770,112 @@ def test_execute_notion_append_with_url_summary(monkeypatch):
 
     assert result.success is True
     assert "내용을 추가" in result.summary
+
+
+def test_execute_linear_list_teams(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "linear_list_teams":
+            return {
+                "ok": True,
+                "data": {
+                    "teams": {
+                        "nodes": [
+                            {"id": "team-1", "key": "MET", "name": "Metel Team"},
+                            {"id": "team-2", "key": "OPS", "name": "Ops Team"},
+                        ]
+                    }
+                },
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    plan = AgentPlan(
+        user_text="Linear 팀 목록 조회해줘",
+        requirements=[AgentRequirement(summary="대상 데이터 조회")],
+        target_services=["linear"],
+        selected_tools=["linear_list_teams"],
+        workflow_steps=[],
+        notes=[],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+
+    assert result.success is True
+    assert "팀 목록" in result.summary
+    assert calls[0][0] == "linear_list_teams"
+
+
+def test_execute_linear_create_comment(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "linear_create_comment":
+            return {
+                "ok": True,
+                "data": {
+                    "commentCreate": {
+                        "comment": {
+                            "id": "comment-1",
+                            "url": "https://linear.app/comment/1",
+                        }
+                    }
+                },
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    plan = AgentPlan(
+        user_text="Linear 이슈 댓글 생성 issue_id 12345678-1234-1234-1234-1234567890ab 댓글: 확인 부탁드립니다",
+        requirements=[AgentRequirement(summary="결과물 생성")],
+        target_services=["linear"],
+        selected_tools=["linear_create_comment"],
+        workflow_steps=[],
+        notes=[],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+
+    assert result.success is True
+    assert "댓글" in result.summary
+    assert calls[0][0] == "linear_create_comment"
+    assert calls[0][1]["issue_id"] == "12345678-1234-1234-1234-1234567890ab"
+
+
+def test_execute_linear_update_issue(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "linear_update_issue":
+            return {
+                "ok": True,
+                "data": {
+                    "issueUpdate": {
+                        "issue": {
+                            "id": "issue-1",
+                            "identifier": "MET-201",
+                            "title": "새 제목",
+                            "url": "https://linear.app/issue/MET-201",
+                        }
+                    }
+                },
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    plan = AgentPlan(
+        user_text="Linear 이슈 수정 issue_id 12345678-1234-1234-1234-1234567890ab 제목: 새 제목",
+        requirements=[AgentRequirement(summary="기존 결과물 수정/추가")],
+        target_services=["linear"],
+        selected_tools=["linear_update_issue"],
+        workflow_steps=[],
+        notes=[],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+
+    assert result.success is True
+    assert "수정" in result.summary
+    assert calls[0][0] == "linear_update_issue"
+    assert calls[0][1]["title"] == "새 제목"

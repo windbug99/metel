@@ -96,7 +96,72 @@
         "403": "AUTH_FORBIDDEN",
         "429": "RATE_LIMITED"
       }
+    },
+    {
+      "tool_name": "linear_list_teams",
+      "description": "List teams in connected Linear workspace",
+      "method": "POST",
+      "path": "/graphql",
+      "adapter_function": "linear_list_teams",
+      "required_scopes": ["read"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "first": { "type": "integer", "minimum": 1, "maximum": 20 }
+        }
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "linear_update_issue",
+      "description": "Update an existing issue in Linear",
+      "method": "POST",
+      "path": "/graphql",
+      "adapter_function": "linear_update_issue",
+      "required_scopes": ["write"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "issue_id": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "state_id": { "type": "string" }
+        },
+        "required": ["issue_id"]
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "linear_create_comment",
+      "description": "Create a comment for a Linear issue",
+      "method": "POST",
+      "path": "/graphql",
+      "adapter_function": "linear_create_comment",
+      "required_scopes": ["write"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "issue_id": { "type": "string" },
+          "body": { "type": "string" }
+        },
+        "required": ["issue_id", "body"]
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
     }
   ]
 }
-

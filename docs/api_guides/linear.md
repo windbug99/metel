@@ -20,6 +20,9 @@
 - `linear_list_issues`
 - `linear_search_issues`
 - `linear_create_issue`
+- `linear_list_teams`
+- `linear_update_issue`
+- `linear_create_comment`
 
 ## 제한 사항
 - GraphQL 응답에서 `errors`가 반환되면 실행 실패로 처리
@@ -38,4 +41,3 @@
 ## 참고 문서
 - https://linear.app/developers/graphql
 - https://linear.app/developers/oauth-2-0-authentication
-

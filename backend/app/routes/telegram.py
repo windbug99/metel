@@ -625,6 +625,17 @@ async def telegram_webhook(
                 else "- (선정된 API 없음)"
             )
             workflow_text = "\n".join(f"{idx}. {step}" for idx, step in enumerate(analysis.plan.workflow_steps, start=1))
+            tasks_text = (
+                "\n".join(
+                    f"- [{task.task_type}] {task.id}: {task.title}"
+                    + (f" | service={task.service}" if task.service else "")
+                    + (f" | tool={task.tool_name}" if task.tool_name else "")
+                    + (f" | depends_on={','.join(task.depends_on)}" if task.depends_on else "")
+                    for task in analysis.plan.tasks
+                )
+                if analysis.plan.tasks
+                else "- (분해된 작업 없음)"
+            )
             execution_steps_text = ""
             execution_message = analysis.result_summary
             execution_error_code = None
@@ -697,6 +708,7 @@ async def telegram_webhook(
                         f"[2-3] 타겟 서비스 및 필요 API\n"
                         f"- 서비스: {services_text}\n"
                         f"- API/Tool:\n{tools_text}\n\n"
+                        f"[3.5] 작업 분해(TOOL/LLM)\n{tasks_text}\n\n"
                         f"[4] 생성된 워크플로우\n{workflow_text}\n\n"
                         f"[실행 모드]\n- plan_source: {analysis.plan_source}\n- execution_mode: {execution_mode}{mode_extra}\n\n"
                         f"[5-6] 실행/결과 정리\n{execution_message}\n\n"
