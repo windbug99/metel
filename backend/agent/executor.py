@@ -1098,6 +1098,66 @@ def _extract_linear_update_fields(user_text: str) -> dict:
     return {k: v for k, v in fields.items() if v}
 
 
+def _extract_linear_team_reference(user_text: str) -> str | None:
+    patterns = [
+        r"(?i)(?:team_id|teamid|team|팀(?:_id)?)\s*[:=]?\s*([^\s,]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, user_text.strip())
+        if not match:
+            continue
+        ref = match.group(1).strip(" \"'`")
+        if ref:
+            return ref
+    return None
+
+
+def _looks_like_linear_team_id(value: str) -> bool:
+    normalized = (value or "").strip()
+    # Linear IDs are opaque; accept UUID-like values or long id-like tokens.
+    return bool(re.fullmatch(r"[0-9a-fA-F\-]{8,}", normalized))
+
+
+async def _resolve_linear_team_id_from_reference(
+    *,
+    user_id: str,
+    plan: AgentPlan,
+    team_reference: str,
+    steps: list[AgentExecutionStep],
+) -> str:
+    ref = (team_reference or "").strip()
+    if not ref:
+        return ""
+    if _looks_like_linear_team_id(ref):
+        return ref
+
+    result = await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_tool(plan, "linear_list_teams", "linear_list_teams"),
+        payload={"first": 50},
+    )
+    nodes = (((result.get("data") or {}).get("teams") or {}).get("nodes") or [])
+    steps.append(AgentExecutionStep(name="linear_list_teams_for_create", status="success", detail=f"count={len(nodes)}"))
+    ref_lower = ref.lower()
+    for node in nodes:
+        node_id = str(node.get("id") or "").strip()
+        key = str(node.get("key") or "").strip()
+        name = str(node.get("name") or "").strip()
+        if not node_id:
+            continue
+        if ref_lower in {node_id.lower(), key.lower(), name.lower()}:
+            return node_id
+    for node in nodes:
+        node_id = str(node.get("id") or "").strip()
+        key = str(node.get("key") or "").strip().lower()
+        name = str(node.get("name") or "").strip().lower()
+        if not node_id:
+            continue
+        if ref_lower in key or ref_lower in name:
+            return node_id
+    return ""
+
+
 async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
     steps: list[AgentExecutionStep] = []
     steps.append(AgentExecutionStep(name="tool_runner_init", status="success", detail="Linear Tool Runner 준비 완료"))
@@ -1193,20 +1253,26 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         )
 
     if is_linear_issue_create_intent(text) or any(token in text for token in ("이슈 만들", "issue 만들")):
-        team_match = re.search(r"([0-9a-fA-F\-]{8,})", plan.user_text)
+        team_reference = _extract_linear_team_reference(plan.user_text) or ""
         title_match = re.search(r'(?i)(?:제목|title)\s*[:：]\s*(.+)$', plan.user_text)
-        team_id = team_match.group(1).strip() if team_match else ""
+        team_id = await _resolve_linear_team_id_from_reference(
+            user_id=user_id,
+            plan=plan,
+            team_reference=team_reference,
+            steps=steps,
+        )
         title = title_match.group(1).strip(" \"'`") if title_match else ""
         if not team_id or not title:
+            reason = "missing_team_or_title" if not team_reference else "invalid_team_or_title"
             return AgentExecutionResult(
                 success=False,
                 summary="Linear 이슈 생성 입력이 부족합니다.",
                 user_message=(
-                    "Linear 이슈 생성을 위해 `team_id`와 `title`이 필요합니다.\n"
-                    "예: `Linear team_id <TEAM_ID> 제목: 로그인 오류 수정 이슈 생성`"
+                    "Linear 이슈 생성을 위해 `team`(ID/키/이름)과 `title`이 필요합니다.\n"
+                    "예: `Linear team_id OPERATE 제목: 로그인 오류 수정 이슈 생성`"
                 ),
                 artifacts={"error_code": "validation_error"},
-                steps=steps + [AgentExecutionStep(name="extract_create_issue_input", status="error", detail="missing_team_or_title")],
+                steps=steps + [AgentExecutionStep(name="extract_create_issue_input", status="error", detail=reason)],
             )
         created = await execute_tool(
             user_id=user_id,

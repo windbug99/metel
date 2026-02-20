@@ -879,3 +879,55 @@ def test_execute_linear_update_issue(monkeypatch):
     assert "수정" in result.summary
     assert calls[0][0] == "linear_update_issue"
     assert calls[0][1]["title"] == "새 제목"
+
+
+def test_execute_linear_create_issue_with_team_key(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "linear_list_teams":
+            return {
+                "ok": True,
+                "data": {
+                    "teams": {
+                        "nodes": [
+                            {"id": "team-operate-id", "key": "OPERATE", "name": "Operate Team"},
+                            {"id": "team-other-id", "key": "OTHER", "name": "Other Team"},
+                        ]
+                    }
+                },
+            }
+        if tool_name == "linear_create_issue":
+            assert payload["team_id"] == "team-operate-id"
+            assert payload["title"] == "구글로그인 구현"
+            return {
+                "ok": True,
+                "data": {
+                    "issueCreate": {
+                        "issue": {
+                            "id": "issue-1",
+                            "identifier": "OPS-10",
+                            "title": "구글로그인 구현",
+                            "url": "https://linear.app/issue/OPS-10",
+                        }
+                    }
+                },
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    plan = AgentPlan(
+        user_text="노션의 구글로그인 구현 페이지를 linear의 새로운 이슈로 등록하세요. Linear team_id operate 제목: 구글로그인 구현",
+        requirements=[AgentRequirement(summary="결과물 생성")],
+        target_services=["linear"],
+        selected_tools=["linear_create_issue", "linear_list_teams"],
+        workflow_steps=[],
+        notes=[],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+
+    assert result.success is True
+    assert "생성" in result.summary
+    assert calls[0][0] == "linear_list_teams"
+    assert calls[1][0] == "linear_create_issue"
