@@ -1123,6 +1123,21 @@ async def _resolve_linear_issue_id_from_reference(
     )
     nodes = (((result.get("data") or {}).get("issues") or {}).get("nodes") or [])
     steps.append(AgentExecutionStep(name=step_name, status="success", detail=f"count={len(nodes)}"))
+    if not nodes and _looks_like_linear_identifier(ref):
+        # Fallback for environments where search filter may not match identifier directly.
+        listed = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "linear_list_issues", "linear_list_issues"),
+            payload={"first": 20},
+        )
+        nodes = (((listed.get("data") or {}).get("issues") or {}).get("nodes") or [])
+        steps.append(
+            AgentExecutionStep(
+                name=f"{step_name}_fallback_list",
+                status="success",
+                detail=f"count={len(nodes)}",
+            )
+        )
     ref_lower = ref.lower()
     for node in nodes:
         issue_id = str(node.get("id") or "").strip()

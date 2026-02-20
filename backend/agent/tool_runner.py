@@ -312,6 +312,32 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
     if tool_name == "linear_search_issues":
         first = int(payload.get("first", 5))
         query = str(payload.get("query", "")).strip()
+        is_identifier_query = bool(re.fullmatch(r"[A-Za-z]{2,10}-\d{1,6}", query))
+        if is_identifier_query:
+            return (
+                """
+                query SearchIssuesByIdentifier($query: String!, $first: Int!) {
+                  issues(
+                    first: $first,
+                    orderBy: updatedAt,
+                    filter: {
+                      identifier: { eq: $query }
+                    }
+                  ) {
+                    nodes {
+                      id
+                      identifier
+                      title
+                      url
+                      state {
+                        name
+                      }
+                    }
+                  }
+                }
+                """,
+                {"query": query, "first": max(1, min(20, first))},
+            )
         return (
             """
             query SearchIssues($query: String!, $first: Int!) {

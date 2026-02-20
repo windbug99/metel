@@ -194,6 +194,14 @@ def test_linear_query_and_variables_create_comment():
     assert variables["input"]["body"] == "Need review"
 
 
+def test_linear_query_and_variables_search_by_identifier():
+    query, variables = _linear_query_and_variables("linear_search_issues", {"query": "OPT-35", "first": 7})
+    assert "SearchIssuesByIdentifier" in query
+    assert "identifier: { eq: $query }" in query
+    assert variables["query"] == "OPT-35"
+    assert variables["first"] == 7
+
+
 def test_execute_tool_notion_oauth_token_introspect_uses_basic_auth(monkeypatch):
     tool = ToolDefinition(
         service="notion",

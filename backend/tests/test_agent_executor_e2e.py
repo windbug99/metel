@@ -1092,6 +1092,99 @@ def test_execute_linear_update_issue_description_from_notion_page_content(monkey
     ]
 
 
+def test_execute_linear_update_issue_with_identifier_fallback_to_list(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "linear_search_issues":
+            return {"ok": True, "data": {"issues": {"nodes": []}}}
+        if tool_name == "linear_list_issues":
+            return {
+                "ok": True,
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "issue-internal-id-35",
+                                "identifier": "OPT-35",
+                                "title": "구글로그인 구현",
+                                "url": "https://linear.app/issue/OPT-35",
+                            }
+                        ]
+                    }
+                },
+            }
+        if tool_name == "notion_search":
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {
+                            "id": "notion-page-1",
+                            "url": "https://notion.so/page-1",
+                            "properties": {
+                                "title": {
+                                    "type": "title",
+                                    "title": [{"plain_text": "구글로그인 구현"}],
+                                }
+                            },
+                        }
+                    ]
+                },
+            }
+        if tool_name == "notion_retrieve_block_children":
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {
+                            "type": "paragraph",
+                            "paragraph": {"rich_text": [{"plain_text": "노션 본문"}]},
+                        }
+                    ]
+                },
+            }
+        if tool_name == "linear_update_issue":
+            assert payload["issue_id"] == "issue-internal-id-35"
+            assert payload["description"] == "노션 본문"
+            return {
+                "ok": True,
+                "data": {
+                    "issueUpdate": {
+                        "issue": {
+                            "id": "issue-internal-id-35",
+                            "identifier": "OPT-35",
+                            "title": "구글로그인 구현",
+                            "url": "https://linear.app/issue/OPT-35",
+                        }
+                    }
+                },
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    plan = AgentPlan(
+        user_text="Linear 이슈 수정, 이슈제목: 구글로그인 구현(OPT-35), 설명: notion 구글로그인 구현 페이지 내용",
+        requirements=[AgentRequirement(summary="기존 결과물 수정/추가")],
+        target_services=["notion", "linear"],
+        selected_tools=[
+            "linear_search_issues",
+            "linear_list_issues",
+            "linear_update_issue",
+            "notion_search",
+            "notion_retrieve_block_children",
+        ],
+        workflow_steps=[],
+        notes=[],
+    )
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+
+    assert result.success is True
+    assert any(name == "linear_list_issues" for name, _ in calls)
+    assert any(name == "linear_update_issue" for name, _ in calls)
+
+
 def test_execute_linear_create_issue_with_team_key(monkeypatch):
     calls = []
 
