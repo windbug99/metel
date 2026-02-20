@@ -41,10 +41,21 @@ class Settings(BaseSettings):
     llm_autonomous_timeout_sec: int = 45
     llm_autonomous_replan_limit: int = 1
     llm_autonomous_strict: bool = False
+    llm_autonomous_strict_tool_scope: bool = True
     llm_autonomous_limit_retry_once: bool = True
     llm_autonomous_rule_fallback_enabled: bool = True
     llm_autonomous_rule_fallback_mutation_enabled: bool = False
     llm_autonomous_progressive_no_fallback_enabled: bool = True
+    llm_autonomous_verifier_enabled: bool = False
+    llm_autonomous_verifier_fail_closed: bool = False
+    llm_autonomous_verifier_max_history: int = 8
+    llm_autonomous_verifier_require_tool_evidence: bool = True
+    llm_autonomous_guardrail_enabled: bool = True
+    llm_autonomous_guardrail_tool_error_rate_threshold: float = 0.6
+    llm_autonomous_guardrail_replan_ratio_threshold: float = 0.5
+    llm_autonomous_guardrail_cross_service_block_threshold: int = 1
+    llm_hybrid_executor_first: bool = False
+    llm_response_finalizer_enabled: bool = False
     tool_specs_validate_on_startup: bool = True
 
     frontend_url: str = "http://localhost:3000"

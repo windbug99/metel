@@ -15,6 +15,25 @@ def _has_any_tool(selected_tools: list[str], *tokens: str) -> bool:
     return any(any(token in tool for token in tokens) for tool in selected_tools)
 
 
+def _tool_service(tool_name: str) -> str:
+    return (tool_name or "").split("_", 1)[0].strip().lower()
+
+
+def _realign_selected_tools_from_tasks(plan) -> list[str]:
+    tasks = getattr(plan, "tasks", None) or []
+    task_tools = [str(task.tool_name).strip() for task in tasks if getattr(task, "task_type", "") == "TOOL" and getattr(task, "tool_name", "")]
+    if not task_tools:
+        return plan.selected_tools
+    seen: set[str] = set()
+    realigned: list[str] = []
+    for name in task_tools:
+        if name in seen:
+            continue
+        seen.add(name)
+        realigned.append(name)
+    return realigned
+
+
 def _is_delete_intent(text: str) -> bool:
     patterns = [
         r"(?i)(?:페이지|문서)?\s*(?:를|을)?\s*삭제(?:해줘|해|해주세요)\b",
@@ -30,6 +49,13 @@ def _plan_consistency_reason(user_text: str, selected_tools: list[str]) -> str |
     text = (user_text or "").strip()
     lower = text.lower()
     tools = selected_tools or []
+    has_linear = ("linear" in lower) or ("리니어" in text)
+    has_notion = ("notion" in lower) or ("노션" in text)
+
+    if has_linear and not has_notion and any(_tool_service(tool) == "notion" for tool in tools):
+        return "cross_service_tool_leak_notion"
+    if has_notion and not has_linear and any(_tool_service(tool) == "linear" for tool in tools):
+        return "cross_service_tool_leak_linear"
 
     if _is_delete_intent(text) and not _has_any_tool(tools, "delete_block", "update_page", "archive"):
         return "missing_delete_tool"
@@ -63,6 +89,8 @@ def _required_tokens_for_consistency_error(reason: str) -> tuple[str, ...]:
         "missing_create_tool": ("create_page",),
         "missing_summary_read_tool": ("retrieve_block_children", "retrieve_page"),
         "missing_search_tool": ("search",),
+        "cross_service_tool_leak_notion": (),
+        "cross_service_tool_leak_linear": (),
     }
     return mapping.get(reason, ())
 
@@ -297,6 +325,77 @@ def _autonomous_successful_tool_calls(autonomous: AgentExecutionResult | None) -
     return count
 
 
+def _autonomous_metrics(autonomous: AgentExecutionResult, plan) -> dict[str, float]:
+    steps = autonomous.steps or []
+    turn_actions = sum(1 for step in steps if "_action" in step.name)
+    tool_steps = [step for step in steps if "_tool" in step.name]
+    tool_errors = sum(1 for step in tool_steps if step.status == "error")
+    replan_steps = sum(1 for step in steps if "_replan" in step.name)
+    plan_services = {str(service).strip().lower() for service in (plan.target_services or [])}
+
+    cross_service_blocks = 0
+    for step in tool_steps:
+        detail = str(step.detail or "")
+        if not detail.startswith("tool_not_allowed:"):
+            continue
+        tool_name = detail.split(":", 1)[1].strip()
+        service = tool_name.split("_", 1)[0].lower() if "_" in tool_name else ""
+        if service and service not in plan_services:
+            cross_service_blocks += 1
+
+    tool_error_rate = float(tool_errors) / float(max(1, len(tool_steps)))
+    replan_ratio = float(replan_steps) / float(max(1, turn_actions))
+    return {
+        "tool_error_rate": tool_error_rate,
+        "replan_ratio": replan_ratio,
+        "cross_service_blocks": float(cross_service_blocks),
+    }
+
+
+def _autonomous_guardrail_degrade_reason(settings, metrics: dict[str, float]) -> str | None:
+    if not bool(getattr(settings, "llm_autonomous_guardrail_enabled", True)):
+        return None
+    tool_error_rate_threshold = float(getattr(settings, "llm_autonomous_guardrail_tool_error_rate_threshold", 0.6))
+    replan_ratio_threshold = float(getattr(settings, "llm_autonomous_guardrail_replan_ratio_threshold", 0.5))
+    cross_service_threshold = int(getattr(settings, "llm_autonomous_guardrail_cross_service_block_threshold", 1))
+
+    if int(metrics.get("cross_service_blocks", 0.0)) >= cross_service_threshold:
+        return "cross_service_blocks"
+    if float(metrics.get("tool_error_rate", 0.0)) >= tool_error_rate_threshold:
+        return "tool_error_rate"
+    if float(metrics.get("replan_ratio", 0.0)) >= replan_ratio_threshold:
+        return "replan_ratio"
+    return None
+
+
+def _finalizer_evidence_lines(execution: AgentExecutionResult, limit: int = 3) -> list[str]:
+    lines: list[str] = []
+    for step in execution.steps:
+        if step.status != "success":
+            continue
+        if "_tool:" in step.name or step.name.endswith("_verify") or step.name.endswith("_verify_llm"):
+            lines.append(f"- {step.name}: {step.detail}")
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def _apply_response_finalizer_template(
+    *,
+    execution: AgentExecutionResult,
+    settings,
+) -> tuple[str, str]:
+    if not bool(getattr(settings, "llm_response_finalizer_enabled", False)):
+        return execution.user_message, "disabled"
+    base = (execution.user_message or "").strip() or execution.summary
+    evidence = _finalizer_evidence_lines(execution)
+    if evidence:
+        final = f"{base}\n\n[근거]\n" + "\n".join(evidence)
+    else:
+        final = base
+    return final.strip(), "template"
+
+
 async def run_agent_analysis(user_text: str, connected_services: list[str], user_id: str) -> AgentRunResult:
     """Run the agent flow with planning + execution.
 
@@ -353,6 +452,10 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     if llm_plan:
         plan = llm_plan
         plan_source = "llm"
+        realigned_tools = _realign_selected_tools_from_tasks(plan)
+        if realigned_tools != plan.selected_tools:
+            plan.selected_tools = realigned_tools
+            plan.notes.append("plan_tools_aligned_to_tasks")
         enriched_tools, post_enrich_error = _enrich_plan_tools_with_registry(
             user_text=user_text,
             selected_tools=plan.selected_tools,
@@ -410,6 +513,7 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
 
     execution = None
     autonomous_enabled = bool(getattr(settings, "llm_autonomous_enabled", False))
+    hybrid_executor_first = bool(getattr(settings, "llm_hybrid_executor_first", False))
     autonomous_strict = bool(getattr(settings, "llm_autonomous_strict", False))
     autonomous_retry_once = bool(getattr(settings, "llm_autonomous_limit_retry_once", True))
     autonomous_rule_fallback_enabled = bool(getattr(settings, "llm_autonomous_rule_fallback_enabled", True))
@@ -421,7 +525,7 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     )
     autonomous: AgentExecutionResult | None = None
 
-    if autonomous_enabled:
+    if autonomous_enabled and not hybrid_executor_first:
         autonomous = await run_autonomous_loop(user_id=user_id, plan=plan)
         if autonomous.success:
             execution = autonomous
@@ -429,6 +533,16 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
         else:
             error_code = str(autonomous.artifacts.get("error_code", "unknown"))
             plan.notes.append(f"autonomous_error={error_code}")
+            metrics = _autonomous_metrics(autonomous, plan)
+            plan.notes.append(
+                "autonomous_metrics="
+                f"tool_error_rate:{metrics['tool_error_rate']:.2f},"
+                f"replan_ratio:{metrics['replan_ratio']:.2f},"
+                f"cross_service_blocks:{int(metrics['cross_service_blocks'])}"
+            )
+            guardrail_reason = _autonomous_guardrail_degrade_reason(settings, metrics)
+            if guardrail_reason:
+                plan.notes.append(f"autonomous_guardrail_degrade:{guardrail_reason}")
 
             retryable_errors = {
                 "turn_limit",
@@ -438,7 +552,7 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
                 "verification_failed",
                 "unsupported_action",
             }
-            if autonomous_retry_once and error_code in retryable_errors:
+            if autonomous_retry_once and error_code in retryable_errors and not guardrail_reason:
                 plan.notes.append("autonomous_retry=1")
                 verification_reason = str(autonomous.artifacts.get("verification_reason", "") or "").strip() or None
                 plan.notes.append(f"autonomous_retry_tuning_rule={_retry_tuning_rule(error_code, verification_reason)}")
@@ -507,9 +621,16 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
 
             if execution is None:
                 plan.notes.append("execution=autonomous_fallback")
+    elif hybrid_executor_first:
+        plan.notes.append("execution=deterministic_first")
 
     if execution is None:
         execution = await execute_agent_plan(user_id=user_id, plan=plan)
+
+    finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
+    execution.user_message = finalized_message
+    if finalizer_mode != "disabled":
+        plan.notes.append(f"response_finalizer={finalizer_mode}")
 
     summary = execution.summary
     return AgentRunResult(

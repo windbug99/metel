@@ -56,6 +56,13 @@ def test_build_markdown_report_includes_new_sections():
         planner_failed_count=1,
         planner_failed_rate=0.033,
         max_planner_failed_rate=0.2,
+        verification_failed_count=2,
+        verification_failed_rate=0.066,
+        max_verification_failed_rate=0.25,
+        guardrail_degrade_count=3,
+        guardrail_degrade_rate=0.10,
+        max_guardrail_degrade_rate=0.40,
+        top_guardrail_degrade=[("tool_error_rate", 2)],
         top_plan_source=[("llm", 18), ("rule", 12)],
         top_execution_mode=[("autonomous", 20), ("rule", 10)],
         tuning_hints=["turn_limit 비중이 높습니다."],
@@ -71,6 +78,7 @@ def test_build_markdown_report_includes_new_sections():
     )
     assert "## Plan Source Distribution" in report
     assert "## Execution Mode Distribution" in report
+    assert "## Top Guardrail Degrade Reasons" in report
     assert "## Tuning Hints" in report
     assert "## Policy Recommendations" in report
     assert "## Gate Reasons" in report
@@ -87,6 +95,10 @@ def test_evaluate_gate_fail_on_insufficient_sample():
         max_fallback_rate=0.2,
         planner_failed_rate=0.0,
         max_planner_failed_rate=0.2,
+        verification_failed_rate=0.0,
+        max_verification_failed_rate=0.25,
+        guardrail_degrade_rate=0.0,
+        max_guardrail_degrade_rate=0.4,
         autonomous_attempt_rate=1.0,
         min_autonomous_attempt_rate=0.5,
         autonomous_success_over_attempt_rate=1.0,
@@ -108,6 +120,10 @@ def test_evaluate_gate_pass_when_all_thresholds_met():
         max_fallback_rate=0.2,
         planner_failed_rate=0.05,
         max_planner_failed_rate=0.2,
+        verification_failed_rate=0.05,
+        max_verification_failed_rate=0.25,
+        guardrail_degrade_rate=0.10,
+        max_guardrail_degrade_rate=0.4,
         autonomous_attempt_rate=0.75,
         min_autonomous_attempt_rate=0.5,
         autonomous_success_over_attempt_rate=0.8,
@@ -116,3 +132,28 @@ def test_evaluate_gate_pass_when_all_thresholds_met():
     assert verdict == "PASS"
     assert passed is True
     assert reasons == []
+
+
+def test_evaluate_gate_fail_on_guardrail_degrade_rate():
+    verdict, reasons, passed = _evaluate_gate(
+        total=30,
+        min_sample=20,
+        fail_on_insufficient_sample=True,
+        autonomous_success_rate=0.9,
+        target_autonomous_success=0.8,
+        fallback_rate=0.1,
+        max_fallback_rate=0.2,
+        planner_failed_rate=0.05,
+        max_planner_failed_rate=0.2,
+        verification_failed_rate=0.1,
+        max_verification_failed_rate=0.25,
+        guardrail_degrade_rate=0.5,
+        max_guardrail_degrade_rate=0.4,
+        autonomous_attempt_rate=0.75,
+        min_autonomous_attempt_rate=0.5,
+        autonomous_success_over_attempt_rate=0.8,
+        min_autonomous_success_over_attempt_rate=0.7,
+    )
+    assert verdict == "FAIL"
+    assert passed is False
+    assert any("guardrail_degrade_rate_above_target" in reason for reason in reasons)

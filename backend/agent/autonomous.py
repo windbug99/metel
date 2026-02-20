@@ -228,6 +228,34 @@ def _has_same_successful_mutation_call(
     return False
 
 
+def _has_same_failed_validation_call(
+    history: list[dict[str, Any]],
+    *,
+    tool_name: str,
+    tool_input: dict[str, Any],
+) -> bool:
+    try:
+        needle = json.dumps(tool_input, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        needle = str(tool_input)
+
+    for item in history:
+        if item.get("action") != "tool_call" or item.get("status") != "error":
+            continue
+        if item.get("tool_name") != tool_name:
+            continue
+        err = str(item.get("error", "") or "")
+        if "VALIDATION_" not in err:
+            continue
+        try:
+            prev = json.dumps(item.get("tool_input", {}), ensure_ascii=False, sort_keys=True)
+        except TypeError:
+            prev = str(item.get("tool_input", {}))
+        if prev == needle:
+            return True
+    return False
+
+
 def _plan_needs_move(plan: AgentPlan) -> bool:
     text = plan.user_text
     return any(token in text for token in ("이동", "옮겨", "옮기", "이동시키")) and any(
@@ -426,6 +454,85 @@ async def _choose_next_action(
     return None, "|".join(errors) if errors else "llm_action_failed"
 
 
+async def _llm_verify_completion(
+    *,
+    plan: AgentPlan,
+    history: list[dict[str, Any]],
+    final_response: str,
+) -> tuple[str, str, str]:
+    settings = get_settings()
+    if not bool(getattr(settings, "llm_autonomous_verifier_enabled", False)):
+        return "skipped", "disabled", ""
+    fail_closed = bool(getattr(settings, "llm_autonomous_verifier_fail_closed", False))
+    require_tool_evidence = bool(getattr(settings, "llm_autonomous_verifier_require_tool_evidence", True))
+    history_limit = max(3, min(20, int(getattr(settings, "llm_autonomous_verifier_max_history", 8))))
+
+    attempts: list[tuple[str, str]] = []
+    primary_provider = (settings.llm_planner_provider or "openai").strip().lower()
+    primary_model = (settings.llm_planner_model or "gpt-4o-mini").strip()
+    if primary_provider and primary_model:
+        attempts.append((primary_provider, primary_model))
+    fallback_provider = (settings.llm_planner_fallback_provider or "").strip().lower()
+    fallback_model = (settings.llm_planner_fallback_model or "").strip()
+    if fallback_provider and fallback_model:
+        attempts.append((fallback_provider, fallback_model))
+    if not attempts:
+        attempts = [("openai", "gpt-4o-mini"), ("gemini", "gemini-2.5-flash-lite")]
+
+    compact_history = []
+    for item in history[-history_limit:]:
+        compact_history.append(
+            {
+                "turn": item.get("turn"),
+                "action": item.get("action"),
+                "tool_name": item.get("tool_name"),
+                "status": item.get("status"),
+                "error": item.get("error"),
+                "tool_result_summary": item.get("tool_result_summary"),
+            }
+        )
+
+    system_prompt = (
+        "당신은 실행 결과 검증기입니다. 반드시 JSON object만 출력하세요. "
+        "tool 실행 근거와 final 응답 일치 여부만 판정하세요."
+    )
+    if require_tool_evidence:
+        system_prompt += " final 응답의 핵심 주장마다 tool 근거가 없으면 fail로 판정하세요."
+    user_prompt = (
+        f"사용자 요청: {plan.user_text}\n"
+        f"요구사항: {[item.summary for item in plan.requirements]}\n"
+        f"도구 실행 요약(JSON): {json.dumps(compact_history, ensure_ascii=False)}\n"
+        f"최종 응답: {final_response}\n\n"
+        "JSON 형식:\n"
+        "{\n"
+        '  "verdict": "pass|fail",\n'
+        '  "reason": "짧은 사유"\n'
+        "}\n"
+    )
+
+    errors: list[str] = []
+    for provider, model in attempts:
+        payload, err = await _request_autonomous_action(
+            provider=provider,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            openai_api_key=settings.openai_api_key,
+            google_api_key=settings.google_api_key,
+        )
+        if not payload:
+            errors.append(f"{provider}:{err}")
+            continue
+        verdict = str(payload.get("verdict", "")).strip().lower()
+        reason = str(payload.get("reason", "")).strip() or "llm_verifier_no_reason"
+        if verdict in {"pass", "fail"}:
+            return verdict, reason, f"{provider}:{model}"
+        errors.append(f"{provider}:invalid_verdict")
+    if fail_closed:
+        return "fail", "verifier_unavailable_fail_closed", ""
+    return "skipped", "|".join(errors) if errors else "llm_verifier_unavailable", ""
+
+
 async def run_autonomous_loop(
     user_id: str,
     plan: AgentPlan,
@@ -438,6 +545,7 @@ async def run_autonomous_loop(
     extra_guidance: str | None = None,
 ) -> AgentExecutionResult:
     settings = get_settings()
+    strict_tool_scope = bool(getattr(settings, "llm_autonomous_strict_tool_scope", True))
     max_turns = max(1, max_turns_override if max_turns_override is not None else settings.llm_autonomous_max_turns)
     max_tool_calls = max(
         1, max_tool_calls_override if max_tool_calls_override is not None else settings.llm_autonomous_max_tool_calls
@@ -453,17 +561,22 @@ async def run_autonomous_loop(
         service_tools = [registry.get_tool(name) for name in plan.selected_tools]
 
     selected_known = [name for name in plan.selected_tools if any(tool.tool_name == name for tool in service_tools)]
+    selected_tools_lock = set(selected_known)
     if selected_known:
-        # Keep planner tools primary, but add minimal mutation fallback tools when request clearly needs mutation.
-        mutation_fallback = []
-        if _plan_needs_creation(plan):
-            mutation_fallback = [
-                tool.tool_name
-                for tool in service_tools
-                if any(token in tool.tool_name for token in ("create", "append", "update", "delete", "archive"))
-            ]
-        support_tools = _intent_support_tools(plan, service_tools)
-        allowed_tools = _dedupe_keep_order(selected_known + support_tools + mutation_fallback)
+        if strict_tool_scope:
+            # Hybrid mode default: execute only planner-approved tools.
+            allowed_tools = _dedupe_keep_order(selected_known)
+        else:
+            # Keep planner tools primary, but add minimal mutation fallback tools when request clearly needs mutation.
+            mutation_fallback = []
+            if _plan_needs_creation(plan):
+                mutation_fallback = [
+                    tool.tool_name
+                    for tool in service_tools
+                    if any(token in tool.tool_name for token in ("create", "append", "update", "delete", "archive"))
+                ]
+            support_tools = _intent_support_tools(plan, service_tools)
+            allowed_tools = _dedupe_keep_order(selected_known + support_tools + mutation_fallback)
     else:
         support_tools = _intent_support_tools(plan, service_tools)
         allowed_tools = _dedupe_keep_order(support_tools + [tool.tool_name for tool in service_tools])
@@ -577,6 +690,37 @@ async def run_autonomous_loop(
                     },
                     steps=steps,
                 )
+            llm_verdict, llm_reason, llm_verifier_meta = await _llm_verify_completion(
+                plan=plan,
+                history=history,
+                final_response=final_response,
+            )
+            if llm_verdict == "fail":
+                verify_reason = f"llm_verifier_rejected:{llm_reason}"
+                steps.append(AgentExecutionStep(name=f"turn_{turn}_verify_llm", status="error", detail=verify_reason))
+                history.append({"turn": turn, "action": "verify_llm", "status": "error", "detail": verify_reason})
+                if replan_count < replan_limit:
+                    replan_count += 1
+                    history.append({"turn": turn, "action": "replan", "status": "forced", "reason": verify_reason})
+                    continue
+                return AgentExecutionResult(
+                    success=False,
+                    summary="자율 루프 완료 검증 실패",
+                    user_message="요청 처리 결과를 검증하지 못했습니다. 요청을 조금 더 구체적으로 입력해주세요.",
+                    artifacts={
+                        "error_code": "verification_failed",
+                        "verification_reason": verify_reason,
+                        "autonomous": "true",
+                        "llm_provider": llm_provider or "",
+                        "llm_model": llm_model or "",
+                        "llm_verifier": llm_verifier_meta,
+                    },
+                    steps=steps,
+                )
+            if llm_verdict == "pass":
+                steps.append(AgentExecutionStep(name=f"turn_{turn}_verify_llm", status="success", detail=llm_reason))
+            elif llm_verdict == "skipped":
+                steps.append(AgentExecutionStep(name=f"turn_{turn}_verify_llm", status="success", detail=f"skipped:{llm_reason}"))
             steps.append(AgentExecutionStep(name=f"turn_{turn}_verify", status="success", detail="completion_verified"))
             return AgentExecutionResult(
                 success=True,
@@ -588,6 +732,7 @@ async def run_autonomous_loop(
                     "tool_calls": str(tool_calls),
                     "llm_provider": llm_provider or "",
                     "llm_model": llm_model or "",
+                    "llm_verifier": llm_verifier_meta if llm_verdict != "skipped" else "",
                 },
                 steps=steps,
             )
@@ -606,6 +751,16 @@ async def run_autonomous_loop(
             if isinstance(suggested, list):
                 normalized = [str(item).strip() for item in suggested if isinstance(item, str)]
                 normalized = [name for name in normalized if name in allowed_tools]
+                blocked = [name for name in normalized if name not in selected_tools_lock]
+                if blocked:
+                    normalized = [name for name in normalized if name in selected_tools_lock]
+                    steps.append(
+                        AgentExecutionStep(
+                            name=f"turn_{turn}_replan",
+                            status="error",
+                            detail=f"replan_tool_expansion_blocked:{','.join(blocked)}",
+                        )
+                    )
                 if normalized:
                     plan.selected_tools = normalized
                     allowed_tools = normalized
@@ -641,6 +796,37 @@ async def run_autonomous_loop(
             if invalid_action_count >= 2 and replan_count < replan_limit:
                 replan_count += 1
                 history.append({"turn": turn, "action": "replan", "status": "forced", "reason": "invalid_tool_input"})
+            continue
+
+        if _has_same_failed_validation_call(history, tool_name=tool_name, tool_input=tool_input):
+            steps.append(
+                AgentExecutionStep(
+                    name=f"turn_{turn}_tool:{tool_name}",
+                    status="error",
+                    detail="duplicate_validation_error_call_blocked",
+                )
+            )
+            history.append(
+                {
+                    "turn": turn,
+                    "action": "tool_call",
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
+                    "status": "skipped",
+                    "error": "duplicate_validation_error_call_blocked",
+                }
+            )
+            invalid_action_count += 1
+            if invalid_action_count >= 2 and replan_count < replan_limit:
+                replan_count += 1
+                history.append(
+                    {
+                        "turn": turn,
+                        "action": "replan",
+                        "status": "forced",
+                        "reason": "duplicate_validation_error_call_blocked",
+                    }
+                )
             continue
 
         if _has_same_successful_mutation_call(history, tool_name=tool_name, tool_input=tool_input):

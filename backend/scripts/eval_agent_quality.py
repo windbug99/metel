@@ -45,6 +45,9 @@ def _build_tuning_hints(
         "archive_requires_archive_tool": "삭제 요청에서 archive 도구 누락이 있습니다. delete intent일 때 update_page/delete_block 포함을 강제하세요.",
         "missing_search_tool": "조회성 요청에서 search 도구 누락이 있습니다. LLM plan 보강 단계에서 search 도구 자동 추가를 강화하세요.",
         "llm_planner_failed": "LLM planner 실패가 높습니다. 모델/프롬프트/타임아웃을 점검하고 fallback 없이도 plan 생성이 되는지 확인하세요.",
+        "cross_service_blocks": "cross-service 차단 비중이 높습니다. strict tool scope를 유지하고 planner 서비스 정합성 보정을 강화하세요.",
+        "tool_error_rate": "도구 오류율 기반 강등이 잦습니다. payload 정규화와 스키마 자동보정 정책을 강화하세요.",
+        "replan_ratio": "replan 비율 기반 강등이 잦습니다. 초기 plan 도구 선택 정확도를 개선하세요.",
     }
 
     for reason, _count in top_fallback + top_verification + top_error_codes:
@@ -125,6 +128,18 @@ def _build_policy_recommendations(
                 "true",
                 "초기 검증/구성 점검을 강화해 인증 관련 실패를 조기 탐지하세요.",
             )
+        elif reason == "cross_service_blocks":
+            _add(
+                "LLM_AUTONOMOUS_STRICT_TOOL_SCOPE",
+                "true",
+                "서비스 범위 외 도구 호출 차단 비중이 높아 strict tool scope 유지가 필요합니다.",
+            )
+        elif reason in {"tool_error_rate", "replan_ratio"}:
+            _add(
+                "LLM_HYBRID_EXECUTOR_FIRST",
+                "true",
+                "가드레일 강등 비중이 높아 안정 구간에서 deterministic-first 운용이 필요합니다.",
+            )
 
     return recommendations[:6]
 
@@ -149,6 +164,13 @@ def _build_markdown_report(
     planner_failed_count: int,
     planner_failed_rate: float,
     max_planner_failed_rate: float,
+    verification_failed_count: int,
+    verification_failed_rate: float,
+    max_verification_failed_rate: float,
+    guardrail_degrade_count: int,
+    guardrail_degrade_rate: float,
+    max_guardrail_degrade_rate: float,
+    top_guardrail_degrade: list[tuple[str, int]],
     top_plan_source: list[tuple[str, int]],
     top_execution_mode: list[tuple[str, int]],
     tuning_hints: list[str],
@@ -176,6 +198,14 @@ def _build_markdown_report(
             f"- llm planner failed rate: {planner_failed_rate * 100:.1f}% "
             f"({planner_failed_count}/{total}, target <= {max_planner_failed_rate * 100:.1f}%)"
         ),
+        (
+            f"- verification failed rate: {verification_failed_rate * 100:.1f}% "
+            f"({verification_failed_count}/{total}, target <= {max_verification_failed_rate * 100:.1f}%)"
+        ),
+        (
+            f"- guardrail degrade rate: {guardrail_degrade_rate * 100:.1f}% "
+            f"({guardrail_degrade_count}/{total}, target <= {max_guardrail_degrade_rate * 100:.1f}%)"
+        ),
         f"- fallback rate: {fallback_rate * 100:.1f}% ({fallback_count}/{total}, target <= {max_fallback_rate * 100:.1f}%)",
         f"- verdict: {verdict}",
         "",
@@ -199,6 +229,10 @@ def _build_markdown_report(
     if top_error_codes:
         lines.append("## Top Error Codes")
         lines.extend([f"- {code}: {count}" for code, count in top_error_codes])
+        lines.append("")
+    if top_guardrail_degrade:
+        lines.append("## Top Guardrail Degrade Reasons")
+        lines.extend([f"- {reason}: {count}" for reason, count in top_guardrail_degrade])
         lines.append("")
     if tuning_hints:
         lines.append("## Tuning Hints")
@@ -229,6 +263,10 @@ def _evaluate_gate(
     max_fallback_rate: float,
     planner_failed_rate: float,
     max_planner_failed_rate: float,
+    verification_failed_rate: float,
+    max_verification_failed_rate: float,
+    guardrail_degrade_rate: float,
+    max_guardrail_degrade_rate: float,
     autonomous_attempt_rate: float,
     min_autonomous_attempt_rate: float,
     autonomous_success_over_attempt_rate: float,
@@ -251,6 +289,14 @@ def _evaluate_gate(
     if planner_failed_rate > max_planner_failed_rate:
         gate_reasons.append(
             f"planner_failed_rate_above_target: {planner_failed_rate:.3f} > {max_planner_failed_rate:.3f}"
+        )
+    if verification_failed_rate > max_verification_failed_rate:
+        gate_reasons.append(
+            f"verification_failed_rate_above_target: {verification_failed_rate:.3f} > {max_verification_failed_rate:.3f}"
+        )
+    if guardrail_degrade_rate > max_guardrail_degrade_rate:
+        gate_reasons.append(
+            f"guardrail_degrade_rate_above_target: {guardrail_degrade_rate:.3f} > {max_guardrail_degrade_rate:.3f}"
         )
     if autonomous_attempt_rate < min_autonomous_attempt_rate:
         gate_reasons.append(
@@ -278,6 +324,18 @@ def main() -> int:
         type=float,
         default=0.20,
         help="Maximum llm planner failed rate",
+    )
+    parser.add_argument(
+        "--max-verification-failed-rate",
+        type=float,
+        default=0.25,
+        help="Maximum verification failed rate",
+    )
+    parser.add_argument(
+        "--max-guardrail-degrade-rate",
+        type=float,
+        default=0.40,
+        help="Maximum guardrail degrade rate",
     )
     parser.add_argument(
         "--min-autonomous-attempt-rate",
@@ -328,16 +386,21 @@ def main() -> int:
     fallback_rate = _pct(fallback_count, total)
     planner_failed_count = len([row for row in rows if (row.get("error_code") or "").strip() == "llm_planner_failed"])
     planner_failed_rate = _pct(planner_failed_count, total)
+    verification_failed_count = len([row for row in rows if (row.get("error_code") or "").strip() == "verification_failed"])
+    verification_failed_rate = _pct(verification_failed_count, total)
 
     fallback_reason_count: dict[str, int] = {}
     verification_reason_count: dict[str, int] = {}
     error_code_count: dict[str, int] = {}
+    guardrail_degrade_reason_count: dict[str, int] = {}
     plan_source_count: dict[str, int] = {}
     execution_mode_count: dict[str, int] = {}
     for row in rows:
         fallback_reason = (row.get("autonomous_fallback_reason") or "").strip()
         if fallback_reason:
             fallback_reason_count[fallback_reason] = fallback_reason_count.get(fallback_reason, 0) + 1
+            if fallback_reason in {"cross_service_blocks", "tool_error_rate", "replan_ratio"}:
+                guardrail_degrade_reason_count[fallback_reason] = guardrail_degrade_reason_count.get(fallback_reason, 0) + 1
         verification_reason = (row.get("verification_reason") or "").strip()
         if verification_reason:
             verification_reason_count[verification_reason] = verification_reason_count.get(verification_reason, 0) + 1
@@ -352,6 +415,7 @@ def main() -> int:
     top_fallback = _top_items(fallback_reason_count)
     top_verification = _top_items(verification_reason_count)
     top_error_codes = _top_items(error_code_count)
+    top_guardrail_degrade = _top_items(guardrail_degrade_reason_count)
     top_plan_source = _top_items(plan_source_count)
     top_execution_mode = _top_items(execution_mode_count)
     tuning_hints = _build_tuning_hints(
@@ -383,6 +447,16 @@ def main() -> int:
         f"- llm planner failed rate: {planner_failed_rate * 100:.1f}% "
         f"({planner_failed_count}/{total}, target <= {args.max_planner_failed_rate * 100:.1f}%)"
     )
+    guardrail_degrade_count = sum(guardrail_degrade_reason_count.values())
+    guardrail_degrade_rate = _pct(guardrail_degrade_count, total)
+    print(
+        f"- verification failed rate: {verification_failed_rate * 100:.1f}% "
+        f"({verification_failed_count}/{total}, target <= {args.max_verification_failed_rate * 100:.1f}%)"
+    )
+    print(
+        f"- guardrail degrade rate: {guardrail_degrade_rate * 100:.1f}% "
+        f"({guardrail_degrade_count}/{total}, target <= {args.max_guardrail_degrade_rate * 100:.1f}%)"
+    )
     print(f"- fallback rate: {fallback_rate * 100:.1f}% ({fallback_count}/{total}, target <= {args.max_fallback_rate * 100:.1f}%)")
 
     if top_fallback:
@@ -397,6 +471,10 @@ def main() -> int:
         print("- top error codes:")
         for code, count in top_error_codes:
             print(f"  - {code}: {count}")
+    if top_guardrail_degrade:
+        print("- top guardrail degrade reasons:")
+        for reason, count in top_guardrail_degrade:
+            print(f"  - {reason}: {count}")
     if tuning_hints:
         print("- tuning hints:")
         for hint in tuning_hints:
@@ -416,6 +494,10 @@ def main() -> int:
         max_fallback_rate=args.max_fallback_rate,
         planner_failed_rate=planner_failed_rate,
         max_planner_failed_rate=args.max_planner_failed_rate,
+        verification_failed_rate=verification_failed_rate,
+        max_verification_failed_rate=args.max_verification_failed_rate,
+        guardrail_degrade_rate=guardrail_degrade_rate,
+        max_guardrail_degrade_rate=args.max_guardrail_degrade_rate,
         autonomous_attempt_rate=autonomous_attempt_rate,
         min_autonomous_attempt_rate=args.min_autonomous_attempt_rate,
         autonomous_success_over_attempt_rate=autonomous_success_over_attempt_rate,
@@ -449,6 +531,13 @@ def main() -> int:
                 planner_failed_count=planner_failed_count,
                 planner_failed_rate=planner_failed_rate,
                 max_planner_failed_rate=args.max_planner_failed_rate,
+                verification_failed_count=verification_failed_count,
+                verification_failed_rate=verification_failed_rate,
+                max_verification_failed_rate=args.max_verification_failed_rate,
+                guardrail_degrade_count=guardrail_degrade_count,
+                guardrail_degrade_rate=guardrail_degrade_rate,
+                max_guardrail_degrade_rate=args.max_guardrail_degrade_rate,
+                top_guardrail_degrade=top_guardrail_degrade,
                 top_plan_source=top_plan_source,
                 top_execution_mode=top_execution_mode,
                 tuning_hints=tuning_hints,
@@ -472,11 +561,16 @@ def main() -> int:
                         "autonomous_success_over_attempt_rate": autonomous_success_over_attempt_rate,
                         "planner_failed_count": planner_failed_count,
                         "planner_failed_rate": planner_failed_rate,
+                        "verification_failed_count": verification_failed_count,
+                        "verification_failed_rate": verification_failed_rate,
+                        "guardrail_degrade_count": guardrail_degrade_count,
+                        "guardrail_degrade_rate": guardrail_degrade_rate,
                         "fallback_count": fallback_count,
                         "fallback_rate": fallback_rate,
                         "top_fallback": top_fallback,
                         "top_verification": top_verification,
                         "top_error_codes": top_error_codes,
+                        "top_guardrail_degrade": top_guardrail_degrade,
                         "top_plan_source": top_plan_source,
                         "top_execution_mode": top_execution_mode,
                         "tuning_hints": tuning_hints,
@@ -510,6 +604,13 @@ def main() -> int:
             planner_failed_count=planner_failed_count,
             planner_failed_rate=planner_failed_rate,
             max_planner_failed_rate=args.max_planner_failed_rate,
+            verification_failed_count=verification_failed_count,
+            verification_failed_rate=verification_failed_rate,
+            max_verification_failed_rate=args.max_verification_failed_rate,
+            guardrail_degrade_count=guardrail_degrade_count,
+            guardrail_degrade_rate=guardrail_degrade_rate,
+            max_guardrail_degrade_rate=args.max_guardrail_degrade_rate,
+            top_guardrail_degrade=top_guardrail_degrade,
             top_plan_source=top_plan_source,
             top_execution_mode=top_execution_mode,
             tuning_hints=tuning_hints,
@@ -533,11 +634,16 @@ def main() -> int:
                     "autonomous_success_over_attempt_rate": autonomous_success_over_attempt_rate,
                     "planner_failed_count": planner_failed_count,
                     "planner_failed_rate": planner_failed_rate,
+                    "verification_failed_count": verification_failed_count,
+                    "verification_failed_rate": verification_failed_rate,
+                    "guardrail_degrade_count": guardrail_degrade_count,
+                    "guardrail_degrade_rate": guardrail_degrade_rate,
                     "fallback_count": fallback_count,
                     "fallback_rate": fallback_rate,
                     "top_fallback": top_fallback,
                     "top_verification": top_verification,
                     "top_error_codes": top_error_codes,
+                    "top_guardrail_degrade": top_guardrail_degrade,
                     "top_plan_source": top_plan_source,
                     "top_execution_mode": top_execution_mode,
                     "tuning_hints": tuning_hints,

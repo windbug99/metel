@@ -162,6 +162,27 @@ def _normalize_notion_create_page_payload(payload: dict[str, Any]) -> dict[str, 
     return payload
 
 
+def _normalize_notion_payload(tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+
+    # LLM often emits `sort` while Notion query endpoints expect `sorts`.
+    if tool_name in {"notion_query_data_source", "notion_query_database"}:
+        sort_alias = normalized.pop("sort", None)
+        if "sorts" not in normalized and sort_alias is not None:
+            if isinstance(sort_alias, list):
+                normalized["sorts"] = sort_alias
+            elif isinstance(sort_alias, dict):
+                normalized["sorts"] = [sort_alias]
+
+    # Invalid/empty cursors frequently cause repetitive autonomous failures.
+    if "start_cursor" in normalized:
+        cursor = normalized.get("start_cursor")
+        if not isinstance(cursor, str) or not cursor.strip():
+            normalized.pop("start_cursor", None)
+
+    return normalized
+
+
 async def _execute_notion_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
     token = _load_oauth_access_token(user_id=user_id, provider="notion")
     path = _build_path(tool.path, payload)
@@ -476,8 +497,10 @@ async def _execute_generic_http(user_id: str, tool: ToolDefinition, payload: dic
 async def execute_tool(user_id: str, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     registry = load_registry()
     tool = registry.get_tool(tool_name)
-    if tool.tool_name == "notion_create_page":
-        payload = _normalize_notion_create_page_payload(dict(payload))
+    if tool.service == "notion":
+        payload = _normalize_notion_payload(tool.tool_name, dict(payload))
+        if tool.tool_name == "notion_create_page":
+            payload = _normalize_notion_create_page_payload(payload)
     _validate_payload_by_schema(tool, payload)
     if tool.service == "notion":
         if tool.tool_name.startswith("notion_oauth_token_"):

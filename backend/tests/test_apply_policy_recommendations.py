@@ -30,6 +30,19 @@ def test_apply_recommendations_skips_non_allowlisted_keys():
     assert lines[0] == "LLM_AUTONOMOUS_MAX_TURNS=8"
 
 
+def test_apply_recommendations_accepts_hybrid_allowlisted_keys():
+    lines = ["LLM_HYBRID_EXECUTOR_FIRST=false"]
+    recs = [
+        {"env_key": "LLM_HYBRID_EXECUTOR_FIRST", "suggested_value": "true", "reason": "stability"},
+        {"env_key": "LLM_AUTONOMOUS_STRICT_TOOL_SCOPE", "suggested_value": "true", "reason": "scope"},
+    ]
+    result = _apply_recommendations_to_lines(lines, recs)
+
+    assert "LLM_HYBRID_EXECUTOR_FIRST" in result.updated
+    assert any(line == "LLM_HYBRID_EXECUTOR_FIRST=true" for line in lines)
+    assert any(line == "LLM_AUTONOMOUS_STRICT_TOOL_SCOPE=true" for line in lines)
+
+
 def test_apply_recommendations_no_change_when_same_value():
     lines = ["LLM_AUTONOMOUS_MAX_TURNS=8"]
     recs = [{"env_key": "LLM_AUTONOMOUS_MAX_TURNS", "suggested_value": "8", "reason": "same"}]

@@ -286,3 +286,90 @@ def test_execute_tool_notion_oauth_token_exchange_requires_oauth_config(monkeypa
         assert exc.detail == "notion_oauth_config_missing"
     else:
         assert False, "expected HTTPException"
+
+
+def test_execute_tool_notion_query_data_source_normalizes_sort_alias_and_cursor(monkeypatch):
+    tool = ToolDefinition(
+        service="notion",
+        base_url="https://api.notion.com",
+        tool_name="notion_query_data_source",
+        description="query data source",
+        method="POST",
+        path="/v1/data_sources/{data_source_id}/query",
+        adapter_function="notion_query_data_source",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "data_source_id": {"type": "string"},
+                "sorts": {"type": "array"},
+                "start_cursor": {"type": "string"},
+            },
+            "required": ["data_source_id"],
+        },
+        required_scopes=(),
+        idempotency_key_policy="none",
+        error_map={},
+    )
+
+    class _Registry:
+        def get_tool(self, tool_name: str):
+            assert tool_name == "notion_query_data_source"
+            return tool
+
+    class _FakeResponse:
+        status_code = 200
+        text = '{"results":[]}'
+
+        def json(self):
+            return {"results": []}
+
+    captured = {"json": None}
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def request(self, method, url, headers=None, json=None):
+            assert method == "POST"
+            captured["json"] = json
+            return _FakeResponse()
+
+        async def get(self, url, headers=None, params=None):
+            raise AssertionError("unexpected get call")
+
+        async def delete(self, url, headers=None):
+            raise AssertionError("unexpected delete call")
+
+    monkeypatch.setattr("agent.tool_runner.load_registry", lambda: _Registry())
+    monkeypatch.setattr("agent.tool_runner._load_oauth_access_token", lambda user_id, provider: "notion-token")
+    monkeypatch.setattr(
+        "agent.tool_runner.get_settings",
+        lambda: SimpleNamespace(
+            notion_api_version="2025-09-03",
+            notion_client_id="cid",
+            notion_client_secret="sec",
+            notion_default_parent_page_id=None,
+        ),
+    )
+    monkeypatch.setattr("agent.tool_runner.httpx.AsyncClient", lambda *args, **kwargs: _FakeClient())
+
+    result = asyncio.run(
+        execute_tool(
+            "user-1",
+            "notion_query_data_source",
+            {
+                "data_source_id": "ds-1",
+                "sort": {"timestamp": "last_edited_time", "direction": "descending"},
+                "start_cursor": {"bad": "cursor"},
+            },
+        )
+    )
+
+    assert result["ok"] is True
+    assert isinstance(captured["json"].get("sorts"), list)
+    assert captured["json"]["sorts"][0]["timestamp"] == "last_edited_time"
+    assert "sort" not in captured["json"]
+    assert "start_cursor" not in captured["json"]

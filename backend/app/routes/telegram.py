@@ -339,6 +339,9 @@ def _autonomous_fallback_hint(reason: str | None) -> str:
         "tool_call_limit": "자율 루프 도구 호출 한도에 도달했습니다. 대상 페이지/개수를 명시해보세요.",
         "timeout": "자율 실행 시간 제한에 도달했습니다. 더 짧은 요청으로 재시도해주세요.",
         "replan_limit": "재계획 한도를 초과했습니다. 요청을 두 단계로 나눠서 시도해주세요.",
+        "cross_service_blocks": "서비스 범위를 벗어난 도구 호출이 차단되어 안정 모드로 전환되었습니다. 대상 서비스를 명확히 지정해주세요.",
+        "tool_error_rate": "도구 오류율이 높아 안정 모드로 전환되었습니다. 입력 파라미터를 더 구체화해주세요.",
+        "replan_ratio": "재계획 비율이 높아 안정 모드로 전환되었습니다. 요청을 더 단순한 단계로 나눠주세요.",
         "verification_failed": "실행은 되었지만 요청 조건 충족 검증에 실패했습니다. 결과 조건을 더 구체화해주세요.",
         "move_requires_update_page": "이동 요청의 핵심 단계(update_page)가 실행되지 않았습니다. 원본/상위 페이지를 명확히 지정해주세요.",
         "append_requires_append_block_children": "추가 요청의 핵심 단계(append_block_children)가 실행되지 않았습니다. 대상 페이지 제목을 명시해주세요.",
@@ -644,9 +647,12 @@ async def telegram_webhook(
             verification_reason = None
             llm_provider = None
             llm_model = None
+            guardrail_degrade_reason = None
             for note in analysis.plan.notes:
                 if note.startswith("autonomous_error="):
                     autonomous_fallback_reason = note.split("=", 1)[1]
+                if note.startswith("autonomous_guardrail_degrade:"):
+                    guardrail_degrade_reason = note.split(":", 1)[1]
                 if note.startswith("llm_provider="):
                     llm_provider = note.split("=", 1)[1]
                 if note.startswith("llm_model="):
@@ -676,6 +682,8 @@ async def telegram_webhook(
                     autonomous_fallback_reason = execution_error_code
                 if execution_error_code:
                     execution_message += _agent_error_guide(execution_error_code, verification_reason)
+            if execution_mode == "rule" and guardrail_degrade_reason:
+                autonomous_fallback_reason = guardrail_degrade_reason
             mode_extra = ""
             if execution_mode == "rule" and autonomous_fallback_reason:
                 hint = _autonomous_fallback_hint(autonomous_fallback_reason)

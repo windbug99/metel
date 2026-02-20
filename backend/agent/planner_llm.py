@@ -59,6 +59,7 @@ def _normalize_tasks(value: object) -> list[AgentTask]:
         tool_name = str(item.get("tool_name", "")).strip() or None
         payload = item.get("payload")
         instruction = str(item.get("instruction", "")).strip() or None
+        output_schema = item.get("output_schema")
         tasks.append(
             AgentTask(
                 id=task_id,
@@ -69,9 +70,61 @@ def _normalize_tasks(value: object) -> list[AgentTask]:
                 tool_name=tool_name,
                 payload=payload if isinstance(payload, dict) else {},
                 instruction=instruction,
+                output_schema=output_schema if isinstance(output_schema, dict) else {},
             )
         )
     return tasks
+
+
+def _validate_task_contract(
+    *,
+    tasks: list[AgentTask],
+    target_services: list[str],
+    available_tool_names: set[str],
+) -> tuple[bool, str | None]:
+    if not tasks:
+        return True, None
+
+    ids = [task.id for task in tasks]
+    if len(set(ids)) != len(ids):
+        return False, "duplicate_task_id"
+
+    id_set = set(ids)
+    target_set = {service.lower().strip() for service in target_services}
+
+    for task in tasks:
+        if not task.id.strip():
+            return False, "missing_task_id"
+        if task.task_type not in {"TOOL", "LLM"}:
+            return False, "invalid_task_type"
+        if not task.title.strip():
+            return False, "missing_task_title"
+        if not isinstance(task.payload, dict):
+            return False, f"invalid_payload:{task.id}"
+        if not isinstance(task.output_schema, dict) or not task.output_schema:
+            return False, f"missing_output_schema:{task.id}"
+        for dep in task.depends_on:
+            if dep not in id_set:
+                return False, f"depends_on_not_found:{task.id}:{dep}"
+
+        if task.task_type == "TOOL":
+            service = (task.service or "").strip().lower()
+            tool_name = (task.tool_name or "").strip()
+            if not service:
+                return False, f"missing_service:{task.id}"
+            if service not in target_set:
+                return False, f"service_not_in_target:{task.id}:{service}"
+            if not tool_name:
+                return False, f"missing_tool_name:{task.id}"
+            if tool_name not in available_tool_names:
+                return False, f"unknown_tool:{task.id}:{tool_name}"
+            if not tool_name.startswith(f"{service}_"):
+                return False, f"tool_service_mismatch:{task.id}:{tool_name}"
+        else:
+            if not (task.instruction or "").strip():
+                return False, f"missing_instruction:{task.id}"
+
+    return True, None
 
 
 def _to_agent_plan(
@@ -114,11 +167,20 @@ def _to_agent_plan(
     if not tasks:
         tasks = synthesized_tasks
     else:
-        has_llm = any(task.task_type == "LLM" for task in tasks)
-        synthesized_has_llm = any(task.task_type == "LLM" for task in synthesized_tasks)
-        if not has_llm and synthesized_has_llm:
+        valid_contract, reason = _validate_task_contract(
+            tasks=tasks,
+            target_services=target_services,
+            available_tool_names=available_tool_names,
+        )
+        if not valid_contract:
             tasks = synthesized_tasks
-            notes.append("tasks_rehydrated_with_rule_synthesis")
+            notes.append(f"tasks_contract_rejected:{reason}")
+        else:
+            has_llm = any(task.task_type == "LLM" for task in tasks)
+            synthesized_has_llm = any(task.task_type == "LLM" for task in synthesized_tasks)
+            if not has_llm and synthesized_has_llm:
+                tasks = synthesized_tasks
+                notes.append("tasks_rehydrated_with_rule_synthesis")
     return AgentPlan(
         user_text=user_text,
         requirements=requirements,

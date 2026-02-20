@@ -32,6 +32,7 @@ SCENARIOS = [
         prompt="노션 데이터소스 {data_source_id} 최근 5개를 3문장으로 요약해서 새 페이지에 저장하세요",
     ),
 ]
+FALLBACK_DATA_SOURCE_PROMPT = "노션 데이터소스 최근 5개를 찾아 3문장으로 요약해서 새 페이지에 저장하세요"
 
 
 def _connected_services_for_user(user_id: str) -> list[str]:
@@ -105,8 +106,8 @@ async def _run(user_id: str, data_source_id: str | None, *, dry_run: bool) -> in
     for scenario in SCENARIOS:
         prompt = scenario.prompt.format(data_source_id=(data_source_id or ""))
         if "{data_source_id}" in scenario.prompt and not data_source_id:
-            print(f"scenario={scenario.name} skipped (data_source_id missing)")
-            continue
+            prompt = FALLBACK_DATA_SOURCE_PROMPT
+            print(f"scenario={scenario.name} fallback (data_source_id missing)")
 
         print(f"scenario={scenario.name} running")
         result = await run_agent_analysis(prompt, connected_services, user_id)

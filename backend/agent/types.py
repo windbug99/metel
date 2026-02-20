@@ -31,6 +31,7 @@ class AgentTask:
     tool_name: str | None = None
     payload: dict = field(default_factory=dict)
     instruction: str | None = None
+    output_schema: dict = field(default_factory=dict)
 
 
 @dataclass

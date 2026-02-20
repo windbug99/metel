@@ -147,6 +147,7 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
                     service="notion",
                     tool_name=query_tool,
                     payload={"data_source_id": data_source_id, "page_size": 5},
+                    output_schema={"type": "tool_result", "service": "notion", "tool": query_tool},
                 )
             )
 
@@ -167,6 +168,7 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
                 service="linear",
                 tool_name=linear_tool_name,
                 payload=payload,
+                output_schema={"type": "tool_result", "service": "linear", "tool": linear_tool_name},
             )
         )
 
@@ -180,6 +182,7 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
                 depends_on=summary_depends,
                 instruction=f"주어진 입력을 한국어 {sentence_count}문장으로 요약하세요. 사실만 유지하고 추측하지 마세요.",
                 payload={"sentences": sentence_count},
+                output_schema={"type": "text", "sentences": sentence_count},
             )
         )
 
@@ -195,6 +198,7 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
                 tool_name=create_tool or "notion_create_page",
                 depends_on=depends,
                 payload={"title_hint": _extract_output_title_hint(user_text) or "Metel 자동 요약"},
+                output_schema={"type": "tool_result", "service": "notion", "tool": create_tool or "notion_create_page"},
             )
         )
 
@@ -211,6 +215,11 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
                 task_type="TOOL",
                 service=tool_name.split("_", 1)[0] if "_" in tool_name else None,
                 tool_name=tool_name,
+                output_schema={
+                    "type": "tool_result",
+                    "service": (tool_name.split("_", 1)[0] if "_" in tool_name else ""),
+                    "tool": tool_name,
+                },
             )
         )
     return fallback_tasks

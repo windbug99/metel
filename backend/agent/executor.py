@@ -115,6 +115,36 @@ def _extract_summary_line_count(user_text: str) -> int | None:
     return max(1, min(10, int(match.group(1))))
 
 
+def _split_sentences_for_format(text: str) -> list[str]:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not compact:
+        return []
+    parts = re.split(r"(?<=[\.\?\!])\s+", compact)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _split_into_chunks(text: str, target_count: int) -> list[str]:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not compact:
+        return []
+    if target_count <= 1:
+        return [compact]
+    words = compact.split(" ")
+    if len(words) <= target_count:
+        return [word for word in words if word]
+    chunk_size = max(1, len(words) // target_count)
+    chunks: list[str] = []
+    current: list[str] = []
+    for word in words:
+        current.append(word)
+        if len(current) >= chunk_size and len(chunks) < target_count - 1:
+            chunks.append(" ".join(current).strip())
+            current = []
+    if current:
+        chunks.append(" ".join(current).strip())
+    return [chunk for chunk in chunks if chunk]
+
+
 def _format_summary_output(text: str, requested_lines: int | None) -> str:
     cleaned = text.strip()
     if not cleaned:
@@ -127,8 +157,63 @@ def _format_summary_output(text: str, requested_lines: int | None) -> str:
     lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
     if not lines:
         lines = [compact]
+    if len(lines) < requested_lines:
+        sentence_lines = _split_sentences_for_format(compact)
+        if len(sentence_lines) >= requested_lines:
+            lines = sentence_lines[:requested_lines]
+        else:
+            chunked = _split_into_chunks(compact, requested_lines)
+            if chunked:
+                lines = chunked
+    if len(lines) < requested_lines:
+        filler = lines[-1] if lines else compact
+        while len(lines) < requested_lines:
+            lines.append(filler)
     lines = lines[:requested_lines]
     return "\n".join(f"{idx}. {line}" for idx, line in enumerate(lines, start=1))
+
+
+def _validate_summary_output(summary: str, user_text: str, requested_lines: int | None) -> tuple[bool, str]:
+    cleaned = (summary or "").strip()
+    if not cleaned:
+        return False, "empty_summary"
+
+    compact = re.sub(r"\s+", " ", cleaned).strip()
+    char_limit = _extract_summary_char_limit(user_text)
+    if char_limit and len(compact) > char_limit:
+        return False, "char_limit_exceeded"
+
+    lower = compact.lower()
+    forbidden_tokens = (
+        "ignore previous",
+        "system prompt",
+        "developer message",
+        "<script",
+        "</script>",
+    )
+    if any(token in lower for token in forbidden_tokens):
+        return False, "forbidden_token_detected"
+
+    if requested_lines and requested_lines > 1:
+        line_count = len([line for line in cleaned.splitlines() if line.strip()])
+        if line_count != requested_lines:
+            return False, "line_count_mismatch"
+        line_pattern = re.compile(r"^\s*\d+\.\s+.+$")
+        for line in cleaned.splitlines():
+            if line.strip() and not line_pattern.match(line):
+                return False, "line_format_invalid"
+
+    return True, "ok"
+
+
+def _clip_summary_to_char_limit(summary: str, user_text: str) -> str:
+    char_limit = _extract_summary_char_limit(user_text)
+    if not char_limit:
+        return summary
+    compact = re.sub(r"\s+", " ", summary).strip()
+    if len(compact) <= char_limit:
+        return compact
+    return compact[:char_limit].rstrip()
 
 
 async def _request_summary_with_provider(
@@ -207,22 +292,40 @@ async def _summarize_text_with_llm(text: str, user_text: str) -> tuple[str, str]
         attempts = [("openai", "gpt-4o-mini"), ("gemini", "gemini-2.5-flash-lite")]
 
     for provider, model in attempts:
-        try:
-            summary = await _request_summary_with_provider(
-                provider=provider,
-                model=model,
-                text=text,
-                line_count=line_count,
-                openai_api_key=settings.openai_api_key,
-                google_api_key=settings.google_api_key,
-            )
-            if summary:
-                return _format_summary_output(summary, line_count), f"llm:{provider}:{model}"
-        except Exception:
-            continue
+        for attempt_idx in range(2):
+            try:
+                summary = await _request_summary_with_provider(
+                    provider=provider,
+                    model=model,
+                    text=text,
+                    line_count=line_count,
+                    openai_api_key=settings.openai_api_key,
+                    google_api_key=settings.google_api_key,
+                )
+                if not summary:
+                    continue
+                formatted = _format_summary_output(summary, line_count)
+                formatted = _clip_summary_to_char_limit(formatted, user_text)
+                ok, reason = _validate_summary_output(formatted, user_text, line_count)
+                if ok:
+                    mode = f"llm:{provider}:{model}"
+                    if attempt_idx == 1:
+                        mode += ":retry1"
+                    return formatted, mode
+                if attempt_idx == 1:
+                    break
+                continue
+            except Exception:
+                continue
 
-    fallback = _simple_korean_summary(text, max_chars=700)
-    return _format_summary_output(fallback, line_count), "fallback"
+    fallback_char_limit = _extract_summary_char_limit(user_text) or 700
+    fallback = _simple_korean_summary(text, max_chars=max(50, min(700, fallback_char_limit)))
+    formatted_fallback = _format_summary_output(fallback, line_count)
+    formatted_fallback = _clip_summary_to_char_limit(formatted_fallback, user_text)
+    ok, reason = _validate_summary_output(formatted_fallback, user_text, line_count)
+    if ok:
+        return formatted_fallback, "fallback"
+    return "요약 결과를 생성하지 못했습니다.", f"fallback_invalid:{reason}"
 
 
 def _extract_requested_count(plan: AgentPlan, default_count: int = 3) -> int:
@@ -468,7 +571,7 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
             if not dependency_text:
                 dependency_text = plan.user_text
             sentence_count = max(1, min(10, int((task.payload or {}).get("sentences", 3))))
-            summary_raw, summarize_mode = await _summarize_text_with_llm(dependency_text, f"{sentence_count}문장 요약")
+            summary_raw, summarize_mode = await _summarize_text_with_llm(dependency_text, plan.user_text)
             summary_text = _enforce_sentence_count(summary_raw, sentence_count)
             task_outputs[task.id] = {
                 "kind": "llm",
@@ -545,7 +648,7 @@ async def _execute_linear_summary_to_notion_flow(user_id: str, plan: AgentPlan) 
 
     sentence_count = max(1, min(10, int((llm_task.payload or {}).get("sentences", 3))))
     summary_source = _format_issue_text_for_summary(issues)
-    llm_summary_raw, summarize_mode = await _summarize_text_with_llm(summary_source, f"{sentence_count}문장 요약")
+    llm_summary_raw, summarize_mode = await _summarize_text_with_llm(summary_source, plan.user_text)
     llm_summary = _enforce_sentence_count(llm_summary_raw, sentence_count)
     steps.append(
         AgentExecutionStep(

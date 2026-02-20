@@ -42,6 +42,7 @@ def _sample_payload_tool_only_tasks():
                 "tool_name": "notion_query_data_source",
                 "depends_on": [],
                 "payload": {"data_source_id": "12345678-1234-1234-1234-1234567890ab"},
+                "output_schema": {"type": "tool_result", "service": "notion", "tool": "notion_query_data_source"},
             },
             {
                 "id": "task2",
@@ -51,10 +52,33 @@ def _sample_payload_tool_only_tasks():
                 "tool_name": "notion_create_page",
                 "depends_on": ["task1"],
                 "payload": {"title_hint": "요약"},
+                "output_schema": {"type": "tool_result", "service": "notion", "tool": "notion_create_page"},
             },
         ],
         "workflow_steps": ["조회", "생성"],
         "notes": ["tool_only"],
+    }
+
+
+def _sample_payload_invalid_contract_tasks():
+    return {
+        "requirements": ["최근 페이지 조회"],
+        "target_services": ["notion"],
+        "selected_tools": ["notion_search"],
+        "tasks": [
+            {
+                "id": "task1",
+                "title": "조회",
+                "task_type": "TOOL",
+                "service": "notion",
+                "tool_name": "notion_search",
+                "depends_on": [],
+                "payload": {"query": "최근"},
+                # output_schema intentionally missing
+            }
+        ],
+        "workflow_steps": ["조회"],
+        "notes": ["invalid_contract"],
     }
 
 
@@ -119,3 +143,23 @@ def test_try_build_agent_plan_with_llm_rehydrates_missing_llm_task(monkeypatch):
     assert plan is not None
     assert any(task.task_type == "LLM" for task in plan.tasks)
     assert any(note == "tasks_rehydrated_with_rule_synthesis" for note in plan.notes)
+
+
+def test_try_build_agent_plan_with_llm_rejects_invalid_task_contract(monkeypatch):
+    async def _fake_request(**kwargs):
+        _ = kwargs
+        return _sample_payload_invalid_contract_tasks(), None
+
+    monkeypatch.setattr("agent.planner_llm.get_settings", lambda: _settings())
+    monkeypatch.setattr("agent.planner_llm._request_plan_with_provider", _fake_request)
+
+    plan, err = asyncio.run(
+        try_build_agent_plan_with_llm(
+            user_text="노션 최근 페이지 조회",
+            connected_services=["notion"],
+        )
+    )
+    assert err is None
+    assert plan is not None
+    assert any(note.startswith("tasks_contract_rejected:") for note in plan.notes)
+    assert any(task.output_schema for task in plan.tasks)

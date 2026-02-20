@@ -23,6 +23,7 @@ def _settings():
         llm_autonomous_max_tool_calls=4,
         llm_autonomous_timeout_sec=30,
         llm_autonomous_replan_limit=0,
+        llm_autonomous_strict_tool_scope=False,
     )
 
 
@@ -210,6 +211,7 @@ def test_autonomous_blocks_duplicate_mutation_tool_call(monkeypatch):
             llm_autonomous_max_tool_calls=5,
             llm_autonomous_timeout_sec=30,
             llm_autonomous_replan_limit=1,
+            llm_autonomous_strict_tool_scope=False,
         )
 
     sequence = iter(
@@ -263,6 +265,7 @@ def test_autonomous_append_multiple_targets_requires_enough_calls(monkeypatch):
             llm_autonomous_max_tool_calls=4,
             llm_autonomous_timeout_sec=30,
             llm_autonomous_replan_limit=0,
+            llm_autonomous_strict_tool_scope=False,
         )
 
     sequence = iter(
@@ -306,6 +309,7 @@ def test_autonomous_append_multiple_targets_succeeds_with_enough_calls(monkeypat
             llm_autonomous_max_tool_calls=6,
             llm_autonomous_timeout_sec=30,
             llm_autonomous_replan_limit=0,
+            llm_autonomous_strict_tool_scope=False,
         )
 
     sequence = iter(
@@ -388,3 +392,276 @@ def test_autonomous_records_llm_provider_and_model(monkeypatch):
     assert result.success is True
     assert result.artifacts.get("llm_provider") == "openai"
     assert result.artifacts.get("llm_model") == "gpt-4o-mini"
+
+
+def test_autonomous_strict_tool_scope_blocks_unplanned_tool(monkeypatch):
+    def _settings_strict():
+        return SimpleNamespace(
+            llm_autonomous_enabled=True,
+            llm_autonomous_max_turns=4,
+            llm_autonomous_max_tool_calls=4,
+            llm_autonomous_timeout_sec=30,
+            llm_autonomous_replan_limit=0,
+            llm_autonomous_strict_tool_scope=True,
+        )
+
+    sequence = iter(
+        [
+            (
+                {"action": "tool_call", "tool_name": "notion_create_page", "tool_input": {"title": "x"}},
+                None,
+            ),
+            ({"action": "final", "final_response": "조회 완료"}, None),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        raise AssertionError("disallowed tool must not execute")
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings_strict)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+
+    result = asyncio.run(run_autonomous_loop("user-1", _plan("노션에서 최근 페이지 조회해줘")))
+
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "verification_failed"
+    assert any(step.detail == "tool_not_allowed:notion_create_page" for step in result.steps)
+
+
+def test_autonomous_replan_cannot_expand_selected_tools(monkeypatch):
+    def _settings_replan():
+        return SimpleNamespace(
+            llm_autonomous_enabled=True,
+            llm_autonomous_max_turns=4,
+            llm_autonomous_max_tool_calls=4,
+            llm_autonomous_timeout_sec=30,
+            llm_autonomous_replan_limit=1,
+            llm_autonomous_strict_tool_scope=False,
+        )
+
+    sequence = iter(
+        [
+            (
+                {
+                    "action": "replan",
+                    "reason": "생성 도구를 추가합니다.",
+                    "updated_selected_tools": ["notion_search", "notion_create_page"],
+                },
+                None,
+            ),
+            (
+                {"action": "tool_call", "tool_name": "notion_create_page", "tool_input": {"title": "x"}},
+                None,
+            ),
+            ({"action": "final", "final_response": "생성 완료"}, None),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        raise AssertionError("replan expansion-blocked tool must not execute")
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings_replan)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+
+    result = asyncio.run(run_autonomous_loop("user-1", _plan("노션 페이지 만들어줘")))
+
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "verification_failed"
+    assert any(step.detail == "replan_tool_expansion_blocked:notion_create_page" for step in result.steps)
+    assert any(step.detail == "tool_not_allowed:notion_create_page" for step in result.steps)
+
+
+def test_autonomous_blocks_duplicate_validation_error_call(monkeypatch):
+    def _settings_validation():
+        return SimpleNamespace(
+            llm_autonomous_enabled=True,
+            llm_autonomous_max_turns=5,
+            llm_autonomous_max_tool_calls=5,
+            llm_autonomous_timeout_sec=30,
+            llm_autonomous_replan_limit=0,
+            llm_autonomous_strict_tool_scope=False,
+        )
+
+    sequence = iter(
+        [
+            (
+                {
+                    "action": "tool_call",
+                    "tool_name": "notion_search",
+                    "tool_input": {"query": "metel", "start_cursor": {"bad": "cursor"}},
+                },
+                None,
+            ),
+            (
+                {
+                    "action": "tool_call",
+                    "tool_name": "notion_search",
+                    "tool_input": {"query": "metel", "start_cursor": {"bad": "cursor"}},
+                },
+                None,
+            ),
+            ({"action": "final", "final_response": "조회 완료"}, None),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        raise HTTPException(status_code=400, detail=f"{tool_name}:VALIDATION_TYPE:start_cursor")
+
+    from fastapi import HTTPException
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings_validation)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+
+    result = asyncio.run(run_autonomous_loop("user-1", _plan("노션에서 최근 페이지 조회해줘")))
+
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "verification_failed"
+    assert any(step.detail == "duplicate_validation_error_call_blocked" for step in result.steps)
+
+
+def test_autonomous_llm_verifier_rejects_final_response(monkeypatch):
+    def _settings_with_verifier():
+        return SimpleNamespace(
+            llm_autonomous_enabled=True,
+            llm_autonomous_max_turns=4,
+            llm_autonomous_max_tool_calls=4,
+            llm_autonomous_timeout_sec=30,
+            llm_autonomous_replan_limit=0,
+            llm_autonomous_strict_tool_scope=False,
+            llm_autonomous_verifier_enabled=True,
+        )
+
+    sequence = iter(
+        [
+            ({"action": "tool_call", "tool_name": "notion_search", "tool_input": {"query": "metel"}}, None),
+            ({"action": "final", "final_response": "조회 완료"}, None),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        return {"ok": True, "data": {"results": [{"id": "p1"}]}}
+
+    async def _fake_llm_verify_completion(**kwargs):
+        return "fail", "근거 부족", "openai:gpt-4o-mini"
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings_with_verifier)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.autonomous._llm_verify_completion", _fake_llm_verify_completion)
+
+    result = asyncio.run(run_autonomous_loop("user-1", _plan("노션에서 최근 페이지 조회해줘")))
+
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "verification_failed"
+    assert str(result.artifacts.get("verification_reason", "")).startswith("llm_verifier_rejected:")
+    assert any(step.name.endswith("_verify_llm") and step.status == "error" for step in result.steps)
+
+
+def test_autonomous_llm_verifier_passes_final_response(monkeypatch):
+    def _settings_with_verifier():
+        return SimpleNamespace(
+            llm_autonomous_enabled=True,
+            llm_autonomous_max_turns=4,
+            llm_autonomous_max_tool_calls=4,
+            llm_autonomous_timeout_sec=30,
+            llm_autonomous_replan_limit=0,
+            llm_autonomous_strict_tool_scope=False,
+            llm_autonomous_verifier_enabled=True,
+        )
+
+    sequence = iter(
+        [
+            ({"action": "tool_call", "tool_name": "notion_search", "tool_input": {"query": "metel"}}, None),
+            ({"action": "final", "final_response": "조회 완료"}, None),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        return {"ok": True, "data": {"results": [{"id": "p1"}]}}
+
+    async def _fake_llm_verify_completion(**kwargs):
+        return "pass", "근거 일치", "openai:gpt-4o-mini"
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings_with_verifier)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.autonomous._llm_verify_completion", _fake_llm_verify_completion)
+
+    result = asyncio.run(run_autonomous_loop("user-1", _plan("노션에서 최근 페이지 조회해줘")))
+
+    assert result.success is True
+    assert result.artifacts.get("llm_verifier") == "openai:gpt-4o-mini"
+    assert any(step.name.endswith("_verify_llm") and step.status == "success" for step in result.steps)
+
+
+def test_autonomous_llm_verifier_fail_closed_on_unavailable(monkeypatch):
+    def _settings_with_verifier_fail_closed():
+        return SimpleNamespace(
+            llm_autonomous_enabled=True,
+            llm_autonomous_max_turns=4,
+            llm_autonomous_max_tool_calls=4,
+            llm_autonomous_timeout_sec=30,
+            llm_autonomous_replan_limit=0,
+            llm_autonomous_strict_tool_scope=False,
+            llm_autonomous_verifier_enabled=True,
+            llm_autonomous_verifier_fail_closed=True,
+            llm_autonomous_verifier_max_history=8,
+            llm_autonomous_verifier_require_tool_evidence=True,
+            llm_planner_provider="openai",
+            llm_planner_model="gpt-4o-mini",
+            llm_planner_fallback_provider="gemini",
+            llm_planner_fallback_model="gemini-2.5-flash-lite",
+            openai_api_key="k",
+            google_api_key="k",
+        )
+
+    sequence = iter(
+        [
+            ({"action": "tool_call", "tool_name": "notion_search", "tool_input": {"query": "metel"}}, None),
+            ({"action": "final", "final_response": "조회 완료"}, None),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        return {"ok": True, "data": {"results": [{"id": "p1"}]}}
+
+    async def _fake_request_autonomous_action(**kwargs):
+        return None, "http_500"
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings_with_verifier_fail_closed)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.autonomous._request_autonomous_action", _fake_request_autonomous_action)
+
+    result = asyncio.run(run_autonomous_loop("user-1", _plan("노션에서 최근 페이지 조회해줘")))
+
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "verification_failed"
+    assert str(result.artifacts.get("verification_reason", "")).startswith("llm_verifier_rejected:verifier_unavailable_fail_closed")
