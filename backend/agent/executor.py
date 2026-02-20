@@ -1134,7 +1134,7 @@ async def _resolve_linear_team_id_from_reference(
     result = await execute_tool(
         user_id=user_id,
         tool_name=_pick_tool(plan, "linear_list_teams", "linear_list_teams"),
-        payload={"first": 50},
+        payload={"first": 20},
     )
     nodes = (((result.get("data") or {}).get("teams") or {}).get("nodes") or [])
     steps.append(AgentExecutionStep(name="linear_list_teams_for_create", status="success", detail=f"count={len(nodes)}"))

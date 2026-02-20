@@ -778,6 +778,7 @@ def test_execute_linear_list_teams(monkeypatch):
     async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
         calls.append((tool_name, payload))
         if tool_name == "linear_list_teams":
+            assert payload.get("first") == 20
             return {
                 "ok": True,
                 "data": {
