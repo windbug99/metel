@@ -526,7 +526,17 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     autonomous: AgentExecutionResult | None = None
 
     if autonomous_enabled and not hybrid_executor_first:
-        autonomous = await run_autonomous_loop(user_id=user_id, plan=plan)
+        try:
+            autonomous = await run_autonomous_loop(user_id=user_id, plan=plan)
+        except Exception as exc:
+            autonomous = AgentExecutionResult(
+                success=False,
+                user_message="자율 실행 중 네트워크 오류가 발생했습니다. 규칙 기반 실행으로 전환합니다.",
+                summary="자율 루프 예외로 fallback",
+                artifacts={"error_code": "autonomous_runtime_error"},
+                steps=[AgentExecutionStep(name="autonomous_runtime_exception", status="error", detail=exc.__class__.__name__)],
+            )
+            plan.notes.append(f"autonomous_exception={exc.__class__.__name__}")
         if autonomous.success:
             execution = autonomous
             plan.notes.append("execution=autonomous")
@@ -570,16 +580,32 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
                     f"replan:{retry_overrides['replan_limit_override']},"
                     f"candidates:{retry_overrides['max_candidates_override']}"
                 )
-                retry = await run_autonomous_loop(
-                    user_id=user_id,
-                    plan=plan,
-                    max_turns_override=retry_overrides["max_turns_override"],
-                    max_tool_calls_override=retry_overrides["max_tool_calls_override"],
-                    timeout_sec_override=retry_overrides["timeout_sec_override"],
-                    replan_limit_override=retry_overrides["replan_limit_override"],
-                    max_candidates_override=retry_overrides["max_candidates_override"],
-                    extra_guidance=_build_retry_guidance(autonomous, error_code),
-                )
+                try:
+                    retry = await run_autonomous_loop(
+                        user_id=user_id,
+                        plan=plan,
+                        max_turns_override=retry_overrides["max_turns_override"],
+                        max_tool_calls_override=retry_overrides["max_tool_calls_override"],
+                        timeout_sec_override=retry_overrides["timeout_sec_override"],
+                        replan_limit_override=retry_overrides["replan_limit_override"],
+                        max_candidates_override=retry_overrides["max_candidates_override"],
+                        extra_guidance=_build_retry_guidance(autonomous, error_code),
+                    )
+                except Exception as exc:
+                    plan.notes.append(f"autonomous_retry_exception={exc.__class__.__name__}")
+                    retry = AgentExecutionResult(
+                        success=False,
+                        user_message="자율 재시도 중 네트워크 오류가 발생했습니다. 규칙 기반 실행으로 전환합니다.",
+                        summary="자율 재시도 예외로 fallback",
+                        artifacts={"error_code": "autonomous_runtime_error"},
+                        steps=[
+                            AgentExecutionStep(
+                                name="autonomous_retry_runtime_exception",
+                                status="error",
+                                detail=exc.__class__.__name__,
+                            )
+                        ],
+                    )
                 if retry.success:
                     execution = retry
                     plan.notes.append("execution=autonomous_retry")

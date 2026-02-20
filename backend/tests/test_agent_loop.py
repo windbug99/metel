@@ -1,4 +1,5 @@
 import asyncio
+import httpx
 
 from agent.loop import run_agent_analysis
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRequirement, AgentTask
@@ -221,6 +222,34 @@ def test_run_agent_analysis_autonomous_fallback_to_executor(monkeypatch):
     assert result.result_summary == "done"
     assert any(item == "execution=autonomous_fallback" for item in result.plan.notes)
     assert any(item == "autonomous_error=turn_limit" for item in result.plan.notes)
+
+
+def test_run_agent_analysis_handles_autonomous_runtime_exception(monkeypatch):
+    llm_plan = _sample_plan()
+
+    class _Settings:
+        llm_autonomous_enabled = True
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan, **kwargs):
+        raise httpx.ReadTimeout("upstream timeout")
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("text", ["notion"], "user-1"))
+    assert result.ok is True
+    assert result.result_summary == "done"
+    assert any(item == "execution=autonomous_fallback" for item in result.plan.notes)
+    assert any(item == "autonomous_error=autonomous_runtime_error" for item in result.plan.notes)
+    assert any(item == "autonomous_exception=ReadTimeout" for item in result.plan.notes)
 
 
 def test_run_agent_analysis_can_disable_rule_fallback(monkeypatch):

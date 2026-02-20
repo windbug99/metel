@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -335,6 +336,8 @@ async def _request_autonomous_action(
     user_prompt: str,
     openai_api_key: str | None,
     google_api_key: str | None,
+    request_timeout_sec: int = 20,
+    request_max_retries: int = 1,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if provider == "openai":
         if not openai_api_key:
@@ -349,15 +352,26 @@ async def _request_autonomous_action(
             ],
         }
         headers = {"Authorization": f"Bearer {openai_api_key}", "Content-Type": "application/json"}
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(OPENAI_CHAT_COMPLETIONS_URL, headers=headers, json=payload)
-        if response.status_code >= 400:
-            return None, f"http_{response.status_code}"
-        content = ((response.json().get("choices") or [{}])[0].get("message") or {}).get("content", "").strip()
-        parsed = _extract_json_object(content)
-        if not parsed:
-            return None, "invalid_json"
-        return parsed, None
+        last_err: str | None = None
+        attempts = max(1, int(request_max_retries) + 1)
+        for attempt in range(attempts):
+            try:
+                async with httpx.AsyncClient(timeout=max(5, int(request_timeout_sec))) as client:
+                    response = await client.post(OPENAI_CHAT_COMPLETIONS_URL, headers=headers, json=payload)
+                if response.status_code >= 400:
+                    return None, f"http_{response.status_code}"
+                content = ((response.json().get("choices") or [{}])[0].get("message") or {}).get("content", "").strip()
+                parsed = _extract_json_object(content)
+                if not parsed:
+                    return None, "invalid_json"
+                return parsed, None
+            except httpx.TimeoutException:
+                last_err = "timeout"
+            except httpx.HTTPError:
+                last_err = "request_error"
+            if attempt + 1 < attempts:
+                await asyncio.sleep(0.35 * (attempt + 1))
+        return None, last_err or "request_failed"
 
     if provider == "gemini":
         if not google_api_key:
@@ -367,16 +381,27 @@ async def _request_autonomous_action(
             "contents": [{"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}],
             "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
         }
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(url, headers={"Content-Type": "application/json"}, json=payload)
-        if response.status_code >= 400:
-            return None, f"http_{response.status_code}"
-        parts = (((response.json().get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
-        content = "".join(part.get("text", "") for part in parts if isinstance(part, dict)).strip()
-        parsed = _extract_json_object(content)
-        if not parsed:
-            return None, "invalid_json"
-        return parsed, None
+        last_err: str | None = None
+        attempts = max(1, int(request_max_retries) + 1)
+        for attempt in range(attempts):
+            try:
+                async with httpx.AsyncClient(timeout=max(5, int(request_timeout_sec))) as client:
+                    response = await client.post(url, headers={"Content-Type": "application/json"}, json=payload)
+                if response.status_code >= 400:
+                    return None, f"http_{response.status_code}"
+                parts = (((response.json().get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+                content = "".join(part.get("text", "") for part in parts if isinstance(part, dict)).strip()
+                parsed = _extract_json_object(content)
+                if not parsed:
+                    return None, "invalid_json"
+                return parsed, None
+            except httpx.TimeoutException:
+                last_err = "timeout"
+            except httpx.HTTPError:
+                last_err = "request_error"
+            if attempt + 1 < attempts:
+                await asyncio.sleep(0.35 * (attempt + 1))
+        return None, last_err or "request_failed"
 
     return None, "unsupported_provider"
 
@@ -390,6 +415,8 @@ async def _choose_next_action(
     extra_guidance: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     settings = get_settings()
+    request_timeout_sec = max(5, int(getattr(settings, "llm_request_timeout_sec", 20)))
+    request_max_retries = max(0, int(getattr(settings, "llm_request_max_retries", 1)))
     attempts: list[tuple[str, str]] = []
 
     primary_provider = (settings.llm_planner_provider or "openai").strip().lower()
@@ -445,6 +472,8 @@ async def _choose_next_action(
             user_prompt=user_prompt,
             openai_api_key=settings.openai_api_key,
             google_api_key=settings.google_api_key,
+            request_timeout_sec=request_timeout_sec,
+            request_max_retries=request_max_retries,
         )
         if payload:
             payload["_provider"] = provider
@@ -461,6 +490,8 @@ async def _llm_verify_completion(
     final_response: str,
 ) -> tuple[str, str, str]:
     settings = get_settings()
+    request_timeout_sec = max(5, int(getattr(settings, "llm_request_timeout_sec", 20)))
+    request_max_retries = max(0, int(getattr(settings, "llm_request_max_retries", 1)))
     if not bool(getattr(settings, "llm_autonomous_verifier_enabled", False)):
         return "skipped", "disabled", ""
     fail_closed = bool(getattr(settings, "llm_autonomous_verifier_fail_closed", False))
@@ -519,6 +550,8 @@ async def _llm_verify_completion(
             user_prompt=user_prompt,
             openai_api_key=settings.openai_api_key,
             google_api_key=settings.google_api_key,
+            request_timeout_sec=request_timeout_sec,
+            request_max_retries=request_max_retries,
         )
         if not payload:
             errors.append(f"{provider}:{err}")
