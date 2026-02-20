@@ -4,6 +4,7 @@ import json
 import re
 from html import unescape
 from datetime import datetime, timezone
+from dataclasses import dataclass
 
 import httpx
 from fastapi import HTTPException
@@ -23,6 +24,15 @@ from app.core.config import get_settings
 
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 GEMINI_GENERATE_CONTENT_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+
+
+@dataclass(frozen=True)
+class CopyRequest:
+    source_service: str
+    source_ref: str
+    target_service: str
+    target_ref: str
+    target_field: str
 
 
 def _map_execution_error(detail: str) -> tuple[str, str, str]:
@@ -1062,11 +1072,75 @@ def _extract_linear_search_query(user_text: str) -> str | None:
     return candidate or None
 
 
-def _extract_linear_issue_id(user_text: str) -> str | None:
-    match = re.search(r"([0-9a-fA-F]{8,}-[0-9a-fA-F-]{8,})", user_text)
-    if not match:
-        return None
-    return match.group(1).strip()
+def _extract_linear_issue_reference(user_text: str) -> str | None:
+    keyed = re.search(r"(?i)(?:issue_id|issueid|이슈ID|이슈_id)\s*[:=]?\s*([^\s,]+)", user_text.strip())
+    if keyed:
+        value = keyed.group(1).strip(" \"'`,.;:()[]{}")
+        if value:
+            return value
+    # Title/reference form: "이슈: 구글로그인 구현" / "issue: login"
+    title_like = re.search(
+        r"(?i)(?:이슈|issue)\s*[:：]\s*(.+?)(?:\s+(?:설명|description|제목|title|상태|state_id)\s*[:：]|$)",
+        user_text.strip(),
+    )
+    if title_like:
+        value = title_like.group(1).strip(" \"'`,.;:()[]{}")
+        if value:
+            return value
+    uuid_like = re.search(r"([0-9a-fA-F]{8,}-[0-9a-fA-F-]{8,})", user_text)
+    if uuid_like:
+        return uuid_like.group(1).strip()
+    identifier_like = re.search(r"\b([A-Za-z]{2,10}-\d{1,6})\b", user_text)
+    if identifier_like:
+        return identifier_like.group(1).strip()
+    return None
+
+
+def _looks_like_linear_identifier(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z]{2,10}-\d{1,6}", (value or "").strip()))
+
+
+async def _resolve_linear_issue_id_from_reference(
+    *,
+    user_id: str,
+    plan: AgentPlan,
+    issue_reference: str,
+    steps: list[AgentExecutionStep],
+    step_name: str,
+) -> str:
+    ref = (issue_reference or "").strip()
+    if not ref:
+        return ""
+    # Internal id (UUID-like) can be used as-is.
+    if re.fullmatch(r"[0-9a-fA-F]{8,}-[0-9a-fA-F-]{8,}", ref):
+        return ref
+
+    # Resolve identifier/key/name via search.
+    result = await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_tool(plan, "linear_search_issues", "linear_search_issues"),
+        payload={"query": ref, "first": 20},
+    )
+    nodes = (((result.get("data") or {}).get("issues") or {}).get("nodes") or [])
+    steps.append(AgentExecutionStep(name=step_name, status="success", detail=f"count={len(nodes)}"))
+    ref_lower = ref.lower()
+    for node in nodes:
+        issue_id = str(node.get("id") or "").strip()
+        identifier = str(node.get("identifier") or "").strip().lower()
+        title = str(node.get("title") or "").strip().lower()
+        if not issue_id:
+            continue
+        if ref_lower in {identifier, issue_id.lower(), title}:
+            return issue_id
+    for node in nodes:
+        issue_id = str(node.get("id") or "").strip()
+        identifier = str(node.get("identifier") or "").strip().lower()
+        title = str(node.get("title") or "").strip().lower()
+        if not issue_id:
+            continue
+        if ref_lower in identifier or ref_lower in title:
+            return issue_id
+    return ""
 
 
 def _extract_linear_comment_body(user_text: str) -> str | None:
@@ -1096,6 +1170,241 @@ def _extract_linear_update_fields(user_text: str) -> dict:
     if state_match:
         fields["state_id"] = state_match.group(1).strip()
     return {k: v for k, v in fields.items() if v}
+
+
+def _extract_notion_page_title_from_reference(text: str) -> str | None:
+    raw = (text or "").strip()
+    patterns = [
+        r"(?i)(?:notion|노션)(?:의|에서)?\s*(.+?)\s*페이지(?:의)?\s*(?:내용|본문)",
+        r"(?i)(?:notion|노션)(?:의|에서)?\s*(.+?)\s*페이지",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, raw)
+        if not match:
+            continue
+        title = match.group(1).strip(" \"'`")
+        title = re.sub(r"^(노션|notion)\s*", "", title, flags=re.IGNORECASE).strip()
+        if title:
+            return title
+    return None
+
+
+def _description_requests_notion_page_content(description: str) -> bool:
+    text = (description or "").lower()
+    has_notion = ("notion" in text) or ("노션" in text)
+    has_page = ("페이지" in text) or ("page" in text)
+    has_content = ("내용" in text) or ("본문" in text) or ("content" in text)
+    return has_notion and has_page and has_content
+
+
+def _extract_linear_issue_reference_for_update(user_text: str) -> str | None:
+    explicit = _extract_linear_issue_reference(user_text)
+    if explicit:
+        return explicit
+    match = re.search(r"(?i)(?:linear|리니어)(?:의|에서)?\s*(.+?)\s*이슈", user_text.strip())
+    if not match:
+        return None
+    candidate = match.group(1).strip(" \"'`,.;:()[]{}")
+    return candidate or None
+
+
+def _pick_best_notion_page_by_title(pages: list[dict], title: str) -> dict | None:
+    normalized_target = _normalize_title(title)
+    if not normalized_target:
+        return None
+    normalized_pages = [
+        {
+            "id": page.get("id"),
+            "title": _extract_page_title(page),
+            "url": page.get("url"),
+        }
+        for page in pages
+        if isinstance(page, dict) and page.get("id")
+    ]
+    for page in normalized_pages:
+        if _normalize_title(page["title"]) == normalized_target:
+            return page
+    for page in normalized_pages:
+        if normalized_target in _normalize_title(page["title"]):
+            return page
+    return normalized_pages[0] if normalized_pages else None
+
+
+def _extract_copy_request(plan: AgentPlan) -> CopyRequest | None:
+    text = (plan.user_text or "").strip()
+    lower = text.lower()
+    has_notion = ("notion" in lower) or ("노션" in text)
+    has_linear = ("linear" in lower) or ("리니어" in text)
+    if not (has_notion and has_linear):
+        return None
+    if not contains_any(text, ("설명", "디스크립션", "description")):
+        return None
+    source_ref = _extract_notion_page_title_from_reference(text) or _extract_target_page_title(text)
+    target_ref = _extract_linear_issue_reference_for_update(text)
+    if not source_ref or not target_ref:
+        return None
+    return CopyRequest(
+        source_service="notion",
+        source_ref=source_ref,
+        target_service="linear",
+        target_ref=target_ref,
+        target_field="description",
+    )
+
+
+async def _copy_read_from_notion(
+    *,
+    user_id: str,
+    plan: AgentPlan,
+    source_ref: str,
+    steps: list[AgentExecutionStep],
+) -> tuple[str | None, str | None]:
+    search_result = await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_service_tool(plan, "notion", "search", "notion_search"),
+        payload={"query": source_ref, "page_size": 10},
+    )
+    pages = ((search_result.get("data") or {}).get("results") or [])
+    steps.append(AgentExecutionStep(name="copy_read_notion_search", status="success", detail=f"count={len(pages)}"))
+    selected_page = _pick_best_notion_page_by_title(pages, source_ref)
+    if not selected_page:
+        return None, "copy_source_not_found"
+
+    block_result = await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_service_tool(plan, "notion", "retrieve_block_children", "notion_retrieve_block_children"),
+        payload={"block_id": selected_page["id"], "page_size": 50},
+    )
+    blocks = (block_result.get("data") or {}).get("results", [])
+    steps.append(AgentExecutionStep(name="copy_read_notion_blocks", status="success", detail=f"blocks={len(blocks)}"))
+    plain = _extract_plain_text_from_blocks(blocks).strip()
+    if not plain:
+        return None, "copy_source_empty"
+    return plain[:12000], None
+
+
+async def _copy_write_to_linear_description(
+    *,
+    user_id: str,
+    plan: AgentPlan,
+    target_ref: str,
+    content: str,
+    steps: list[AgentExecutionStep],
+) -> tuple[dict | None, str | None]:
+    issue_id = await _resolve_linear_issue_id_from_reference(
+        user_id=user_id,
+        plan=plan,
+        issue_reference=target_ref,
+        steps=steps,
+        step_name="copy_target_linear_issue_search",
+    )
+    if not issue_id:
+        return None, "copy_target_not_found"
+
+    updated = await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_service_tool(plan, "linear", "update_issue", "linear_update_issue"),
+        payload={"issue_id": issue_id, "description": content},
+    )
+    issue = ((updated.get("data") or {}).get("issueUpdate") or {}).get("issue") or {}
+    steps.append(AgentExecutionStep(name="copy_target_linear_update", status="success", detail=f"id={issue.get('id')}"))
+    return issue, None
+
+
+async def _execute_cross_service_copy_flow(user_id: str, plan: AgentPlan) -> AgentExecutionResult | None:
+    request = _extract_copy_request(plan)
+    if not request:
+        return None
+
+    steps: list[AgentExecutionStep] = [AgentExecutionStep(name="copy_pipeline_init", status="success", detail="notion->linear")]
+    content, read_err = await _copy_read_from_notion(
+        user_id=user_id,
+        plan=plan,
+        source_ref=request.source_ref,
+        steps=steps,
+    )
+    if read_err or not content:
+        return AgentExecutionResult(
+            success=False,
+            summary="서비스간 복사 소스 조회에 실패했습니다.",
+            user_message="Notion 페이지 본문을 찾지 못했습니다. 페이지 제목을 더 구체적으로 입력해주세요.",
+            artifacts={"error_code": "validation_error"},
+            steps=steps + [AgentExecutionStep(name="copy_pipeline_read", status="error", detail=read_err or "copy_source_empty")],
+        )
+
+    issue, write_err = await _copy_write_to_linear_description(
+        user_id=user_id,
+        plan=plan,
+        target_ref=request.target_ref,
+        content=content,
+        steps=steps,
+    )
+    if write_err or not issue:
+        return AgentExecutionResult(
+            success=False,
+            summary="서비스간 복사 타겟 업데이트에 실패했습니다.",
+            user_message="Linear 이슈를 찾지 못했거나 설명 업데이트에 실패했습니다. 이슈 제목/식별자를 확인해주세요.",
+            artifacts={"error_code": "validation_error"},
+            steps=steps + [AgentExecutionStep(name="copy_pipeline_write", status="error", detail=write_err or "copy_target_update_failed")],
+        )
+
+    return AgentExecutionResult(
+        success=True,
+        summary="Notion 본문을 Linear 이슈 설명으로 복사했습니다.",
+        user_message=(
+            "요청하신 서비스간 복사를 완료했습니다.\n"
+            f"- Linear 이슈: {issue.get('identifier') or '-'}\n"
+            f"- 제목: {issue.get('title') or '-'}\n"
+            f"- 링크: {issue.get('url') or '-'}"
+        ),
+        artifacts={"updated_issue_id": issue.get("id") or "", "updated_issue_url": issue.get("url") or ""},
+        steps=steps,
+    )
+
+
+async def _resolve_linear_update_description_from_notion(
+    *,
+    user_id: str,
+    plan: AgentPlan,
+    raw_description: str,
+    steps: list[AgentExecutionStep],
+) -> tuple[str | None, str | None]:
+    if not _description_requests_notion_page_content(raw_description):
+        return raw_description, None
+
+    notion_title = _extract_notion_page_title_from_reference(raw_description) or _extract_target_page_title(plan.user_text)
+    if not notion_title:
+        return None, "missing_notion_page_title_for_description"
+
+    search_result = await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_service_tool(plan, "notion", "search", "notion_search"),
+        payload={"query": notion_title, "page_size": 10},
+    )
+    pages = ((search_result.get("data") or {}).get("results") or [])
+    steps.append(AgentExecutionStep(name="notion_search_for_linear_description", status="success", detail=f"count={len(pages)}"))
+    selected_page = _pick_best_notion_page_by_title(pages, notion_title)
+    if not selected_page:
+        return None, "notion_page_not_found_for_description"
+
+    block_result = await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_service_tool(plan, "notion", "retrieve_block_children", "notion_retrieve_block_children"),
+        payload={"block_id": selected_page["id"], "page_size": 50},
+    )
+    blocks = (block_result.get("data") or {}).get("results", [])
+    steps.append(
+        AgentExecutionStep(
+            name="notion_retrieve_block_children_for_linear_description",
+            status="success",
+            detail=f"blocks={len(blocks)}",
+        )
+    )
+    plain = _extract_plain_text_from_blocks(blocks).strip()
+    if not plain:
+        return None, "notion_page_content_empty_for_description"
+    # Keep under a conservative limit for update payload.
+    return plain[:12000], None
 
 
 def _extract_linear_team_reference(user_text: str) -> str | None:
@@ -1189,13 +1498,20 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         )
 
     if any(token in text for token in ("댓글", "코멘트", "comment")) and any(token in text for token in ("생성", "추가", "작성", "create")):
-        issue_id = _extract_linear_issue_id(plan.user_text)
+        issue_reference = _extract_linear_issue_reference(plan.user_text)
+        issue_id = await _resolve_linear_issue_id_from_reference(
+            user_id=user_id,
+            plan=plan,
+            issue_reference=issue_reference or "",
+            steps=steps,
+            step_name="linear_search_issue_for_comment",
+        )
         body = _extract_linear_comment_body(plan.user_text)
         if not issue_id or not body:
             return AgentExecutionResult(
                 success=False,
                 summary="Linear 댓글 생성 입력이 부족합니다.",
-                user_message="`issue_id`와 댓글 본문이 필요합니다. 예: `Linear issue_id <ID> 댓글: 확인 부탁드립니다`",
+                user_message="`issue_id`(또는 `identifier`)와 댓글 본문이 필요합니다. 예: `Linear issue_id OPT-35 댓글: 확인 부탁드립니다`",
                 artifacts={"error_code": "validation_error"},
                 steps=steps + [AgentExecutionStep(name="extract_comment_input", status="error", detail="missing_issue_or_body")],
             )
@@ -1219,15 +1535,47 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         )
 
     if is_update_intent(text) and "이슈" in text:
-        issue_id = _extract_linear_issue_id(plan.user_text)
+        issue_reference = _extract_linear_issue_reference(plan.user_text)
+        issue_id = await _resolve_linear_issue_id_from_reference(
+            user_id=user_id,
+            plan=plan,
+            issue_reference=issue_reference or "",
+            steps=steps,
+            step_name="linear_search_issue_for_update",
+        )
         update_fields = _extract_linear_update_fields(plan.user_text)
+        if update_fields.get("description"):
+            resolved_description, description_err = await _resolve_linear_update_description_from_notion(
+                user_id=user_id,
+                plan=plan,
+                raw_description=str(update_fields.get("description") or ""),
+                steps=steps,
+            )
+            if description_err:
+                return AgentExecutionResult(
+                    success=False,
+                    summary="Linear 이슈 설명 업데이트를 위한 Notion 본문을 찾지 못했습니다.",
+                    user_message=(
+                        "설명에 반영할 Notion 페이지 본문을 찾지 못했습니다.\n"
+                        "예: `notion의 구글로그인 구현 페이지 내용`처럼 페이지 제목을 명확히 입력해주세요."
+                    ),
+                    artifacts={"error_code": "validation_error"},
+                    steps=steps + [
+                        AgentExecutionStep(
+                            name="resolve_notion_description",
+                            status="error",
+                            detail=description_err,
+                        )
+                    ],
+                )
+            update_fields["description"] = resolved_description or ""
         if not issue_id or not update_fields:
             return AgentExecutionResult(
                 success=False,
                 summary="Linear 이슈 수정 입력이 부족합니다.",
                 user_message=(
-                    "`issue_id`와 변경 필드가 필요합니다.\n"
-                    "예: `Linear 이슈 수정 issue_id <ID> 제목: 새 제목`"
+                    "`issue_id`(또는 `identifier`)와 변경 필드가 필요합니다.\n"
+                    "예: `Linear 이슈 수정 issue_id OPT-35 설명: 내용입니다.`"
                 ),
                 artifacts={"error_code": "validation_error"},
                 steps=steps + [AgentExecutionStep(name="extract_update_issue_input", status="error", detail="missing_issue_or_fields")],
@@ -1501,6 +1849,14 @@ def _requires_summary_only(plan: AgentPlan) -> bool:
 def _pick_tool(plan: AgentPlan, keyword: str, default_tool: str) -> str:
     for tool in plan.selected_tools:
         if keyword in tool:
+            return tool
+    return default_tool
+
+
+def _pick_service_tool(plan: AgentPlan, service: str, keyword: str, default_tool: str) -> str:
+    normalized = f"{service.lower()}_"
+    for tool in plan.selected_tools:
+        if tool.startswith(normalized) and keyword in tool:
             return tool
     return default_tool
 
@@ -2495,6 +2851,9 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
 
 async def execute_agent_plan(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
     try:
+        cross_copy_result = await _execute_cross_service_copy_flow(user_id=user_id, plan=plan)
+        if cross_copy_result is not None:
+            return cross_copy_result
         task_orchestration_result = await _execute_task_orchestration(user_id=user_id, plan=plan)
         if task_orchestration_result is not None:
             return task_orchestration_result

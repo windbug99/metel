@@ -38,7 +38,7 @@ READ_KEYWORDS = (
     "show",
 )
 SUMMARY_KEYWORDS = ("요약", "summary", "정리", "핵심 정리", "압축", "한줄요약")
-UPDATE_KEYWORDS = ("수정", "변경", "갱신", "바꿔", "고쳐", "편집", "반영", "update")
+UPDATE_KEYWORDS = ("수정", "변경", "갱신", "업데이트", "바꿔", "고쳐", "편집", "반영", "update")
 DELETE_KEYWORDS = ("삭제", "지워", "아카이브", "휴지통", "제거", "없애", "archive", "remove", "delete")
 APPEND_KEYWORDS = ("추가", "append", "덧붙여", "붙여", "넣어", "본문에")
 DATA_SOURCE_KEYWORDS = ("데이터소스", "data source", "data_source", "데이터베이스", "database", "db")
