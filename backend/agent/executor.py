@@ -790,7 +790,7 @@ async def _autofill_task_payload(
             team_id = team_reference
         else:
             team_id = slot_context.get("recent_linear_team_id", "")
-            if not team_id and allow_user_text_reparse:
+            if not team_id and (allow_user_text_reparse or bool(team_reference)):
                 if not team_reference:
                     team_reference = _extract_linear_team_reference(user_text) or ""
                 if team_reference:
@@ -802,6 +802,9 @@ async def _autofill_task_payload(
                     )
         if team_id:
             filled["team_id"] = team_id
+        elif team_reference:
+            # Do not pass unresolved team alias/key as team_id to API.
+            filled.pop("team_id", None)
 
     if "linear_update_issue" in tool_name:
         issue_ref = str(filled.get("issue_id") or "").strip()

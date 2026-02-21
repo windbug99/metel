@@ -608,3 +608,37 @@ def test_execute_agent_plan_blocks_llm_plan_fallback_when_tasks_not_executable(m
     result = asyncio.run(execute_agent_plan("user-1", plan))
     assert result.success is False
     assert result.artifacts.get("error_code") == "task_orchestration_unavailable"
+
+
+def test_task_orchestration_linear_create_issue_removes_unresolved_team_alias(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        if tool_name == "linear_list_teams":
+            return {"data": {"teams": {"nodes": []}}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text='팀: operate',
+        requirements=[AgentRequirement(summary="Linear 이슈 생성")],
+        target_services=["linear"],
+        selected_tools=["linear_create_issue", "linear_list_teams"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_linear_create_issue",
+                title="Linear 이슈 생성",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_create_issue",
+                payload={"title": "로그인 오류", "team_id": "operate"},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=["planner=llm"],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "validation_error"
+    assert result.artifacts.get("missing_slot") == "team_id"

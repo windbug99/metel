@@ -7,6 +7,7 @@ import httpx
 
 from agent.planner import build_agent_plan, build_execution_tasks
 from agent.registry import load_registry
+from agent.slot_collector import collect_slots_from_user_reply
 from agent.slot_schema import validate_slots
 from agent.types import AgentPlan, AgentRequirement, AgentTask
 from app.core.config import get_settings
@@ -314,6 +315,32 @@ def _maybe_rewrite_tasks_by_intent(*, plan: AgentPlan, intent: str) -> tuple[Age
     return plan, "tasks_rewritten_by_structured_intent:update"
 
 
+def _apply_keyed_slot_fallback_to_plan(*, plan: AgentPlan, user_text: str) -> tuple[AgentPlan, list[str]]:
+    notes: list[str] = []
+    raw = (user_text or "").strip()
+    if not raw:
+        return plan, notes
+    # keyed marker only fallback (e.g., "제목: ... 팀: ...")
+    if not re.search(r"[0-9A-Za-z가-힣_]+\s*[:=]\s*", raw):
+        return plan, notes
+
+    for task in plan.tasks:
+        if task.task_type != "TOOL":
+            continue
+        action = str(task.tool_name or "").strip()
+        if not action:
+            continue
+        parsed = collect_slots_from_user_reply(
+            action=action,
+            user_text=raw,
+            collected_slots=dict(task.payload or {}),
+        )
+        if parsed.collected_slots != dict(task.payload or {}):
+            task.payload = dict(parsed.collected_slots)
+            notes.append(f"keyed_slots_fallback_applied:{action}")
+    return plan, notes
+
+
 async def _try_structured_parse_with_llm(
     *,
     user_text: str,
@@ -461,6 +488,9 @@ async def try_build_agent_plan_with_llm(
             errors.append(f"{provider}:{err}")
             continue
         plan = _to_agent_plan(user_text=user_text, connected_services=connected_services, payload=parsed)
+        plan, keyed_notes = _apply_keyed_slot_fallback_to_plan(plan=plan, user_text=user_text)
+        if keyed_notes:
+            plan.notes.extend(keyed_notes)
         structured, structured_err = await _try_structured_parse_with_llm(
             user_text=user_text,
             connected_services=connected_services,
