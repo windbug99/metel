@@ -468,6 +468,21 @@ def _extract_page_url_from_tool_result(result: dict) -> str:
     return ""
 
 
+def _extract_linear_issue_url_from_tool_result(result: dict) -> str:
+    data = result.get("data") or {}
+    if not isinstance(data, dict):
+        return ""
+    for key in ("issueCreate", "issueUpdate"):
+        payload = data.get(key) or {}
+        issue = payload.get("issue") if isinstance(payload, dict) else {}
+        if not isinstance(issue, dict):
+            continue
+        candidate = str(issue.get("url") or "").strip()
+        if candidate:
+            return candidate
+    return ""
+
+
 def _task_output_as_text(value: dict) -> str:
     if "summary_text" in value:
         return str(value.get("summary_text") or "")
@@ -984,10 +999,15 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
     for output in task_outputs.values():
         if output.get("kind") != "tool":
             continue
-        page_url = _extract_page_url_from_tool_result(output.get("tool_result") or {})
+        tool_result = output.get("tool_result") or {}
+        page_url = _extract_page_url_from_tool_result(tool_result)
         if page_url:
             artifacts["created_page_url"] = page_url
             final_user_message = f"{final_user_message}\n- 생성 페이지: {page_url}"
+        issue_url = _extract_linear_issue_url_from_tool_result(tool_result)
+        if issue_url and issue_url != artifacts.get("linear_issue_url"):
+            artifacts["linear_issue_url"] = issue_url
+            final_user_message = f"{final_user_message}\n- 이슈 링크: {issue_url}"
 
     llm_outputs = [output for output in task_outputs.values() if output.get("kind") == "llm"]
     if llm_outputs:

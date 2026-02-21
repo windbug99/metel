@@ -113,7 +113,7 @@ def test_build_user_preface_template_validation_error():
 
 def test_should_use_preface_llm():
     assert _should_use_preface_llm(ok=False, error_code=None, execution_message="short")
-    assert _should_use_preface_llm(ok=True, error_code="validation_error", execution_message="short")
+    assert not _should_use_preface_llm(ok=True, error_code="validation_error", execution_message="short")
     assert _should_use_preface_llm(ok=True, error_code=None, execution_message="x" * 120)
     assert not _should_use_preface_llm(ok=True, error_code=None, execution_message="짧은 결과")
 
@@ -129,6 +129,17 @@ def test_build_user_facing_message_validation_error_slot_prompt():
     assert "팀" in text
     assert "예:" in text
     assert "취소" in text
+
+
+def test_build_user_facing_message_success_keeps_link():
+    text = _build_user_facing_message(
+        ok=True,
+        execution_message="요청하신 작업을 완료했습니다.\n- 이슈 링크: https://linear.app/issue/OPT-1",
+        error_code=None,
+        slot_action=None,
+        missing_slot=None,
+    )
+    assert "https://linear.app/issue/OPT-1" in text
 
 
 def test_truncate_telegram_message():

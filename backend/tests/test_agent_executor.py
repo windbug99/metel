@@ -358,6 +358,7 @@ def test_execute_linear_create_issue_uses_task_payload(monkeypatch):
     result = asyncio.run(execute_agent_plan("user-1", plan))
     assert result.success is True
     assert [name for name, _ in calls] == ["linear_create_issue"]
+    assert "https://linear.app/i/1" in result.user_message
 
 
 def test_task_orchestration_does_not_reparse_user_text_when_planner_llm(monkeypatch):

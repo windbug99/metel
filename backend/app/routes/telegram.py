@@ -412,6 +412,11 @@ def _first_non_empty_line(text: str) -> str:
     return ""
 
 
+def _extract_first_url(text: str) -> str:
+    match = re.search(r"https?://\S+", text or "")
+    return match.group(0).strip() if match else ""
+
+
 def _clip_log_detail(text: str, max_chars: int = 700) -> str:
     compact = (text or "").strip()
     if len(compact) <= max_chars:
@@ -465,10 +470,16 @@ def _build_user_facing_message(
         return f"{lead} 다시 시도해 주세요."
 
     lead = _first_non_empty_line(execution_message) or "요청하신 작업을 완료했습니다."
+    url = _extract_first_url(execution_message)
+    if url and url not in lead:
+        return f"{lead}\n{url}"
     return lead
 
 
 def _should_use_preface_llm(*, ok: bool, error_code: str | None, execution_message: str) -> bool:
+    if error_code == "validation_error":
+        # Slot question/failure recovery should keep deterministic wording.
+        return False
     if error_code:
         return True
     if not ok:
