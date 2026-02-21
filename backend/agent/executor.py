@@ -684,6 +684,27 @@ def _extract_first_quoted_text(user_text: str) -> str | None:
     return None
 
 
+def _is_llm_planner_plan(plan: AgentPlan) -> bool:
+    return any(str(note or "").strip() == "planner=llm" for note in (plan.notes or []))
+
+
+def _merge_keyed_slots_from_user_text(*, action: str, user_text: str, filled: dict) -> dict:
+    schema = get_action_slot_schema(action)
+    if not schema:
+        return filled
+    collected = collect_slots_from_user_reply(
+        action=action,
+        user_text=user_text,
+        collected_slots=filled,
+    )
+    merged = dict(filled)
+    for key, value in collected.collected_slots.items():
+        if value in (None, ""):
+            continue
+        merged[key] = value
+    return merged
+
+
 async def _autofill_task_payload(
     *,
     user_id: str,
@@ -696,13 +717,18 @@ async def _autofill_task_payload(
     tool_name = (task.tool_name or "").strip().lower()
     filled = dict(payload or {})
     user_text = plan.user_text or ""
+    settings = get_settings()
+    allow_user_text_reparse = bool(getattr(settings, "rule_reparse_for_llm_plan_enabled", False)) or not _is_llm_planner_plan(plan)
+    if allow_user_text_reparse:
+        # Common slot fill path for all actions with schema; regex branches below are fallback only.
+        filled = _merge_keyed_slots_from_user_text(action=tool_name, user_text=user_text, filled=filled)
 
-    if "notion_search" in tool_name and _missing(filled.get("query")):
+    if "notion_search" in tool_name and _missing(filled.get("query")) and allow_user_text_reparse:
         query = _extract_target_page_title(user_text) or _extract_first_quoted_text(user_text) or ""
         if query:
             filled["query"] = query
 
-    if "notion_query_data_source" in tool_name and _missing(filled.get("data_source_id")):
+    if "notion_query_data_source" in tool_name and _missing(filled.get("data_source_id")) and allow_user_text_reparse:
         parsed_id, parsed_page_size, _ = _extract_data_source_query_request(user_text)
         if parsed_id:
             filled["data_source_id"] = parsed_id
@@ -711,7 +737,7 @@ async def _autofill_task_payload(
 
     if "notion_update_page" in tool_name and _missing(filled.get("page_id")):
         page_id = slot_context.get("recent_notion_page_id", "")
-        if not page_id:
+        if not page_id and allow_user_text_reparse:
             rename_title, _ = _extract_page_rename_request(user_text)
             move_title, _ = _extract_move_request(user_text)
             archive_title = _extract_page_archive_target(user_text)
@@ -728,7 +754,7 @@ async def _autofill_task_payload(
 
     if "notion_append_block_children" in tool_name and _missing(filled.get("block_id")):
         page_id = slot_context.get("recent_notion_page_id", "")
-        if not page_id:
+        if not page_id and allow_user_text_reparse:
             target_title, content = _extract_append_target_and_content(user_text)
             candidate_title = target_title or _extract_first_quoted_text(user_text) or ""
             if candidate_title:
@@ -750,18 +776,7 @@ async def _autofill_task_payload(
             filled["block_id"] = page_id
 
     if "linear_create_issue" in tool_name:
-        # LLM payload가 과추출한 title/team 값을 보정하기 위해 keyed input을 항상 우선 반영한다.
-        collected = collect_slots_from_user_reply(
-            action="linear_create_issue",
-            user_text=user_text,
-            collected_slots=filled,
-        )
-        for key in ("title", "team_id", "description", "priority"):
-            value = collected.collected_slots.get(key)
-            if value not in (None, ""):
-                filled[key] = value
-
-        if _missing(filled.get("title")):
+        if _missing(filled.get("title")) and allow_user_text_reparse:
             title_match = re.search(
                 r'(?i)(?:제목|title)\s*[:：]\s*(.+?)(?:\s*(?:,|;)?\s*(?:팀|team|내용|설명|description|priority|우선순위)\s*[:：]|$)',
                 user_text,
@@ -775,7 +790,7 @@ async def _autofill_task_payload(
             team_id = team_reference
         else:
             team_id = slot_context.get("recent_linear_team_id", "")
-            if not team_id:
+            if not team_id and allow_user_text_reparse:
                 if not team_reference:
                     team_reference = _extract_linear_team_reference(user_text) or ""
                 if team_reference:
@@ -792,7 +807,7 @@ async def _autofill_task_payload(
         issue_ref = str(filled.get("issue_id") or "").strip()
         if not issue_ref:
             issue_ref = slot_context.get("recent_linear_issue_id", "")
-        if not issue_ref:
+        if not issue_ref and allow_user_text_reparse:
             issue_ref = _extract_linear_issue_reference_for_update(user_text) or _extract_linear_issue_reference(user_text) or ""
         if issue_ref:
             issue_id = issue_ref
@@ -811,7 +826,7 @@ async def _autofill_task_payload(
         issue_ref = str(filled.get("issue_id") or "").strip()
         if not issue_ref:
             issue_ref = slot_context.get("recent_linear_issue_id", "")
-        if not issue_ref:
+        if not issue_ref and allow_user_text_reparse:
             issue_ref = _extract_linear_issue_reference(user_text) or ""
         if issue_ref:
             issue_id = issue_ref
@@ -825,12 +840,12 @@ async def _autofill_task_payload(
                 )
             if issue_id:
                 filled["issue_id"] = issue_id
-        if _missing(filled.get("body")):
+        if _missing(filled.get("body")) and allow_user_text_reparse:
             body = _extract_linear_comment_body(user_text)
             if body:
                 filled["body"] = body
 
-    if "linear_search_issues" in tool_name and _missing(filled.get("query")):
+    if "linear_search_issues" in tool_name and _missing(filled.get("query")) and allow_user_text_reparse:
         query = _extract_linear_search_query(user_text) or ""
         if query:
             filled["query"] = query
@@ -846,6 +861,7 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
     task_outputs: dict[str, dict] = {}
     steps: list[AgentExecutionStep] = []
     slot_context: dict[str, str] = {}
+    validated_payloads: list[dict[str, object]] = []
 
     for task in tasks:
         missing_deps = [dep for dep in task.depends_on if dep not in task_outputs]
@@ -881,6 +897,7 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
                         "slot_action": tool_name,
                         "slot_task_id": task.id,
                         "validation_error": validation_errors[0],
+                        "validated_payload_json": json.dumps(payload, ensure_ascii=False),
                     },
                     steps=steps + [AgentExecutionStep(name=task.id, status="error", detail=f"validation:{validation_errors[0]}")],
                 )
@@ -926,6 +943,7 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
                         },
                         steps=steps + [AgentExecutionStep(name=task.id, status="error", detail="missing_update_fields")],
                     )
+            validated_payloads.append({"task_id": task.id, "tool_name": tool_name, "payload": payload})
             tool_result = await execute_tool(user_id=user_id, tool_name=tool_name, payload=payload)
             _update_slot_context_from_tool_result(slot_context=slot_context, tool_name=tool_name, tool_result=tool_result)
             task_outputs[task.id] = {"kind": "tool", "tool_name": tool_name, "tool_result": tool_result}
@@ -975,6 +993,8 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
             final_user_message = f"{final_user_message}\n\n[요약]\n{last_summary}"
             artifacts["summary_sentence_count"] = str(llm_outputs[-1].get("sentence_count") or 0)
             final_summary = "TOOL/LLM 작업 오케스트레이션을 완료했습니다."
+    if validated_payloads:
+        artifacts["validated_payloads_json"] = json.dumps(validated_payloads, ensure_ascii=False)
 
     return AgentExecutionResult(
         success=True,
@@ -3331,6 +3351,14 @@ async def execute_agent_plan(user_id: str, plan: AgentPlan) -> AgentExecutionRes
         task_orchestration_result = await _execute_task_orchestration(user_id=user_id, plan=plan)
         if task_orchestration_result is not None:
             return task_orchestration_result
+        if _is_llm_planner_plan(plan) and (plan.tasks or []):
+            return AgentExecutionResult(
+                success=False,
+                summary="LLM 계획의 task 실행 경로를 확정하지 못했습니다.",
+                user_message="요청을 실행하기 위한 작업 계획 검증에 실패했습니다. 다시 시도해주세요.",
+                artifacts={"error_code": "task_orchestration_unavailable"},
+                steps=[AgentExecutionStep(name="task_orchestration", status="error", detail="llm_plan_without_executable_tasks")],
+            )
         if _supports_linear_summary_to_notion_flow(plan):
             return await _execute_linear_summary_to_notion_flow(user_id, plan)
         if _requires_spotify_recent_tracks_to_notion(plan):

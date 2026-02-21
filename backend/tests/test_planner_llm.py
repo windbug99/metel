@@ -200,6 +200,10 @@ def test_try_build_agent_plan_with_llm_applies_structured_slots(monkeypatch):
         _ = kwargs
         return {
             "intent": "create",
+            "service": "linear",
+            "tool": "linear_create_issue",
+            "workflow": ["의도 파악", "이슈 생성"],
+            "confidence": 0.92,
             "slots": {
                 "linear_create_issue": {
                     "title": "로그인 오류 수정",
@@ -229,6 +233,10 @@ def test_try_build_agent_plan_with_llm_applies_structured_slots(monkeypatch):
     assert any(note == "semantic_parse=llm" for note in plan.notes)
     assert any(note == "execution_decision=rule" for note in plan.notes)
     assert any(note == "structured_intent=create" for note in plan.notes)
+    assert any(note == "structured_service=linear" for note in plan.notes)
+    assert any(note == "structured_tool=linear_create_issue" for note in plan.notes)
+    assert any(note == "structured_workflow_steps=2" for note in plan.notes)
+    assert any(note == "structured_confidence=0.92" for note in plan.notes)
 
 
 def test_try_build_agent_plan_with_llm_structured_parser_fallback(monkeypatch):

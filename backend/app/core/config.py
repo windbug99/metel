@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     telegram_user_preface_enabled: bool = True
     telegram_user_preface_llm_enabled: bool = True
     telegram_user_preface_max_chars: int = 240
+    conversation_mode_enabled: bool = True
+    telegram_debug_report_enabled: bool = False
+    telegram_message_max_chars: int = 3500
+    rule_reparse_for_llm_plan_enabled: bool = False
 
 
 @lru_cache

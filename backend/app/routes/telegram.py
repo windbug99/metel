@@ -390,6 +390,84 @@ def _build_user_preface_template(*, ok: bool, error_code: str | None, execution_
     return "요청하신 작업 처리를 완료했습니다. 아래 실행 결과를 확인해 주세요."
 
 
+def _display_slot_name(action: str, slot_name: str) -> str:
+    schema = get_action_slot_schema(action)
+    if not schema:
+        return slot_name
+    aliases = schema.aliases.get(slot_name) or ()
+    for alias in aliases:
+        candidate = str(alias or "").strip()
+        if not candidate:
+            continue
+        if re.search(r"[가-힣]", candidate):
+            return candidate
+    return aliases[0] if aliases else slot_name
+
+
+def _first_non_empty_line(text: str) -> str:
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def _clip_log_detail(text: str, max_chars: int = 700) -> str:
+    compact = (text or "").strip()
+    if len(compact) <= max_chars:
+        return compact
+    return compact[: max(80, max_chars - 3)].rstrip() + "..."
+
+
+def _truncate_telegram_message(text: str, max_chars: int) -> str:
+    max_chars = max(120, max_chars)
+    compact = (text or "").strip()
+    if len(compact) <= max_chars:
+        return compact
+    keep = max_chars - len("\n\n(메시지가 길어 일부만 표시했어요.)")
+    return f"{compact[:max(20, keep)].rstrip()}\n\n(메시지가 길어 일부만 표시했어요.)"
+
+
+def _compose_telegram_response_text(
+    *,
+    conversation_mode_enabled: bool,
+    debug_report_enabled: bool,
+    user_message: str,
+    report_text: str,
+    legacy_user_preface: str,
+) -> str:
+    if conversation_mode_enabled:
+        if debug_report_enabled:
+            return f"{user_message}\n\n{report_text}"
+        return user_message
+    return f"{legacy_user_preface}\n\n{report_text}" if legacy_user_preface else report_text
+
+
+def _build_user_facing_message(
+    *,
+    ok: bool,
+    execution_message: str,
+    error_code: str | None,
+    slot_action: str | None,
+    missing_slot: str | None,
+) -> str:
+    if error_code == "validation_error" and missing_slot:
+        display_slot = _display_slot_name(str(slot_action or ""), str(missing_slot))
+        example = _slot_input_example(str(slot_action or ""), str(missing_slot))
+        return (
+            f"작업을 이어가려면 `{display_slot}` 값을 알려주세요. "
+            f"예: {example} "
+            "취소하려면 `취소`라고 입력해주세요."
+        )
+
+    if not ok:
+        lead = _first_non_empty_line(execution_message) or "요청 처리 중 문제가 발생했습니다."
+        return f"{lead} 다시 시도해 주세요."
+
+    lead = _first_non_empty_line(execution_message) or "요청하신 작업을 완료했습니다."
+    return lead
+
+
 def _should_use_preface_llm(*, ok: bool, error_code: str | None, execution_message: str) -> bool:
     if error_code:
         return True
@@ -906,15 +984,32 @@ async def telegram_webhook(
                 command="agent_plan",
                 status="success" if analysis.ok else "error",
                 error_code=None if analysis.ok else (execution_error_code or "execution_failed"),
-                detail=(
-                    f"services={services_text}"
-                    if not metrics_enabled
-                    else (
-                        f"services={services_text};"
-                        f"slot_loop_enabled={slot_loop_enabled};"
-                        f"slot_loop_started={slot_loop_started};"
-                        f"slot_loop_completed={slot_loop_completed};"
-                        f"slot_loop_turns={slot_loop_turns}"
+                detail=_clip_log_detail(
+                    (
+                        f"services={services_text}"
+                        if not metrics_enabled
+                        else (
+                            f"services={services_text};"
+                            f"slot_loop_enabled={slot_loop_enabled};"
+                            f"slot_loop_started={slot_loop_started};"
+                            f"slot_loop_completed={slot_loop_completed};"
+                            f"slot_loop_turns={slot_loop_turns}"
+                        )
+                    )
+                    + (
+                        f";missing_slot={missing_slot};slot_action={slot_action}"
+                        if missing_slot and slot_action
+                        else ""
+                    )
+                    + (
+                        f";validation_error={analysis.execution.artifacts.get('validation_error')}"
+                        if analysis.execution and analysis.execution.artifacts.get("validation_error")
+                        else ""
+                    )
+                    + (
+                        f";validated_payloads={analysis.execution.artifacts.get('validated_payloads_json')}"
+                        if analysis.execution and analysis.execution.artifacts.get("validated_payloads_json")
+                        else ""
                     )
                 ),
                 plan_source=analysis.plan_source,
@@ -938,31 +1033,52 @@ async def telegram_webhook(
                 f"[실행 단계 로그]\n{execution_steps_text}"
             )
 
+            user_message = _build_user_facing_message(
+                ok=analysis.ok,
+                execution_message=execution_message,
+                error_code=execution_error_code,
+                slot_action=slot_action,
+                missing_slot=missing_slot,
+            )
+            if bool(getattr(settings, "telegram_user_preface_llm_enabled", True)) and _should_use_preface_llm(
+                ok=analysis.ok,
+                error_code=execution_error_code,
+                execution_message=execution_message,
+            ):
+                user_message = await _rewrite_user_preface_with_llm(
+                    settings=settings,
+                    user_text=text,
+                    base_preface=user_message,
+                    execution_message=execution_message,
+                    error_code=execution_error_code,
+                )
+
+            conversation_mode_enabled = bool(getattr(settings, "conversation_mode_enabled", True))
+            debug_report_enabled = bool(getattr(settings, "telegram_debug_report_enabled", False))
+            max_chars = max(200, int(getattr(settings, "telegram_message_max_chars", 3500)))
+
+            # rollback mode: keep legacy execution report style
             user_preface = ""
-            if bool(getattr(settings, "telegram_user_preface_enabled", True)):
+            if (not conversation_mode_enabled) and bool(getattr(settings, "telegram_user_preface_enabled", True)):
                 user_preface = _build_user_preface_template(
                     ok=analysis.ok,
                     error_code=execution_error_code,
                     execution_message=execution_message,
                 )
-                if bool(getattr(settings, "telegram_user_preface_llm_enabled", True)) and _should_use_preface_llm(
-                    ok=analysis.ok,
-                    error_code=execution_error_code,
-                    execution_message=execution_message,
-                ):
-                    user_preface = await _rewrite_user_preface_with_llm(
-                        settings=settings,
-                        user_text=text,
-                        base_preface=user_preface,
-                        execution_message=execution_message,
-                        error_code=execution_error_code,
-                    )
+            final_text = _compose_telegram_response_text(
+                conversation_mode_enabled=conversation_mode_enabled,
+                debug_report_enabled=debug_report_enabled,
+                user_message=user_message,
+                report_text=report_text,
+                legacy_user_preface=user_preface,
+            )
+            final_text = _truncate_telegram_message(final_text, max_chars=max_chars)
 
             await _telegram_api(
                 "sendMessage",
                 {
                     "chat_id": chat_id,
-                    "text": (f"{user_preface}\n\n{report_text}" if user_preface else report_text),
+                    "text": final_text,
                     "disable_web_page_preview": True,
                 },
             )

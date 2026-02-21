@@ -360,6 +360,38 @@ def test_execute_linear_create_issue_uses_task_payload(monkeypatch):
     assert [name for name, _ in calls] == ["linear_create_issue"]
 
 
+def test_task_orchestration_does_not_reparse_user_text_when_planner_llm(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        raise AssertionError(f"unexpected tool call: {tool_name} {payload}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="Linear 이슈 생성 제목: 로그인 오류 팀: operate",
+        requirements=[AgentRequirement(summary="Linear 이슈 생성")],
+        target_services=["linear"],
+        selected_tools=["linear_create_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_linear_create_issue",
+                title="Linear 이슈 생성",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_create_issue",
+                payload={},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=["planner=llm"],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "validation_error"
+    assert result.artifacts.get("missing_slot") == "title"
+
+
 def test_execute_linear_update_issue_returns_slot_metadata_when_missing(monkeypatch):
     async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
         raise AssertionError(f"unexpected tool: {tool_name}")
@@ -499,3 +531,80 @@ def test_task_orchestration_linear_update_resolves_identifier_to_issue_id(monkey
     result = asyncio.run(execute_agent_plan("user-1", plan))
     assert result.success is True
     assert [name for name, _ in calls] == ["linear_search_issues", "linear_update_issue"]
+
+
+def test_task_orchestration_linear_update_uses_common_slot_fill_from_user_text(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, dict(payload)))
+        if tool_name == "linear_search_issues":
+            return {"data": {"issues": {"nodes": [{"id": "issue-internal-40", "identifier": "OPT-40", "title": "로그인 오류"}]}}}
+        if tool_name == "linear_update_issue":
+            assert payload.get("issue_id") == "issue-internal-40"
+            assert payload.get("description") == "로그인 버튼 클릭 시 오류"
+            return {
+                "data": {
+                    "issueUpdate": {
+                        "issue": {"id": "issue-internal-40", "identifier": "OPT-40", "title": "로그인 오류", "url": "https://linear.app/issue/OPT-40"}
+                    }
+                }
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="linear 이슈 업데이트 이슈: OPT-40 본문: 로그인 버튼 클릭 시 오류",
+        requirements=[AgentRequirement(summary="Linear 이슈 업데이트")],
+        target_services=["linear"],
+        selected_tools=["linear_search_issues", "linear_update_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_linear_update_issue",
+                title="Linear 이슈 수정",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_update_issue",
+                payload={},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert [name for name, _ in calls] == ["linear_search_issues", "linear_update_issue"]
+
+
+def test_execute_agent_plan_blocks_llm_plan_fallback_when_tasks_not_executable(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="linear 작업 실행",
+        requirements=[AgentRequirement(summary="Linear 작업")],
+        target_services=["linear"],
+        selected_tools=["linear_update_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_invalid",
+                title="invalid",
+                task_type="UNKNOWN",
+                service="linear",
+                tool_name="linear_update_issue",
+                payload={},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=["planner=llm"],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "task_orchestration_unavailable"

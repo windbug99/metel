@@ -197,8 +197,15 @@ def _normalize_structured_slots_payload(
     payload: dict,
     *,
     available_tool_names: set[str],
-) -> tuple[str, dict[str, dict], str | None]:
+) -> tuple[dict[str, object], str | None]:
     intent = str(payload.get("intent") or "").strip().lower() or "unknown"
+    service = str(payload.get("service") or "").strip().lower()
+    tool = str(payload.get("tool") or "").strip()
+    workflow = _normalize_list(payload.get("workflow"))
+    raw_confidence = payload.get("confidence")
+    confidence: float | None = None
+    if isinstance(raw_confidence, (int, float)):
+        confidence = max(0.0, min(1.0, float(raw_confidence)))
     slots_by_action: dict[str, dict] = {}
 
     raw_slots = payload.get("slots")
@@ -222,23 +229,48 @@ def _normalize_structured_slots_payload(
             if isinstance(slots, dict):
                 slots_by_action[action_name] = dict(slots)
 
+    if tool and tool in available_tool_names and tool not in slots_by_action:
+        slots_by_action[tool] = {}
+
+    normalized: dict[str, object] = {
+        "intent": intent,
+        "service": service,
+        "tool": tool,
+        "workflow": workflow,
+        "confidence": confidence,
+        "slots_by_action": slots_by_action,
+    }
+
     if not slots_by_action:
         # Intent-only output is still useful for task rewrite/routing.
         if intent and intent != "unknown":
-            return intent, {}, None
-        return intent, {}, "structured_slots_empty"
-    return intent, slots_by_action, None
+            return normalized, None
+        return normalized, "structured_slots_empty"
+    return normalized, None
 
 
 def _apply_structured_slots_to_plan(
     *,
     plan: AgentPlan,
-    intent: str,
+    structured: dict[str, object],
     slots_by_action: dict[str, dict],
 ) -> tuple[AgentPlan, list[str]]:
+    intent = str(structured.get("intent") or "").strip()
+    service = str(structured.get("service") or "").strip()
+    tool = str(structured.get("tool") or "").strip()
+    workflow = [item for item in (structured.get("workflow") or []) if isinstance(item, str) and item.strip()]
+    confidence = structured.get("confidence")
     notes: list[str] = []
     if intent:
         notes.append(f"structured_intent={intent}")
+    if service:
+        notes.append(f"structured_service={service}")
+    if tool:
+        notes.append(f"structured_tool={tool}")
+    if workflow:
+        notes.append(f"structured_workflow_steps={len(workflow)}")
+    if isinstance(confidence, float):
+        notes.append(f"structured_confidence={confidence:.2f}")
     if not slots_by_action:
         return plan, notes
 
@@ -288,7 +320,7 @@ async def _try_structured_parse_with_llm(
     connected_services: list[str],
     available_tools: list,
     settings,
-) -> tuple[tuple[str, dict[str, dict]] | None, str | None]:
+) -> tuple[dict[str, object] | None, str | None]:
     available_tool_names = {tool.tool_name for tool in available_tools}
     if not available_tool_names:
         return None, "no_available_tools"
@@ -307,6 +339,10 @@ async def _try_structured_parse_with_llm(
         "JSON 형식:\n"
         "{\n"
         '  "intent": "search|create|update|delete|summary|query|unknown",\n'
+        '  "service": "notion|linear|spotify|unknown",\n'
+        '  "tool": "tool_name 또는 빈 문자열",\n'
+        '  "workflow": ["1단계", "2단계"],\n'
+        '  "confidence": 0.0,\n'
         '  "slots": {\n'
         '    "tool_name": {"slot_key": "value"}\n'
         "  }\n"
@@ -340,14 +376,14 @@ async def _try_structured_parse_with_llm(
         if err:
             errors.append(f"{provider}:{err}")
             continue
-        intent, slots_by_action, normalize_err = _normalize_structured_slots_payload(
+        normalized, normalize_err = _normalize_structured_slots_payload(
             parsed,
             available_tool_names=available_tool_names,
         )
         if normalize_err:
             errors.append(f"{provider}:{normalize_err}")
             continue
-        return (intent, slots_by_action), None
+        return normalized, None
     return None, "|".join(errors) if errors else "structured_parse_unknown_error"
 
 
@@ -432,11 +468,12 @@ async def try_build_agent_plan_with_llm(
             settings=settings,
         )
         if structured:
-            intent, slots_by_action = structured
+            intent = str(structured.get("intent") or "").strip()
+            slots_by_action = structured.get("slots_by_action")
             plan, structured_notes = _apply_structured_slots_to_plan(
                 plan=plan,
-                intent=intent,
-                slots_by_action=slots_by_action,
+                structured=structured,
+                slots_by_action=slots_by_action if isinstance(slots_by_action, dict) else {},
             )
             plan, rewrite_note = _maybe_rewrite_tasks_by_intent(plan=plan, intent=intent)
             if rewrite_note:

@@ -91,14 +91,14 @@ def test_run_agent_analysis_slot_question_and_resume(monkeypatch):
     first = asyncio.run(run_agent_analysis("Linear 이슈 생성해줘", ["linear"], "user-slot"))
     assert first.ok is False
     assert first.execution is not None
-    assert "title" in first.execution.user_message
+    assert "제목" in first.execution.user_message
     assert "취소" in first.execution.user_message
     assert get_pending_action("user-slot") is not None
 
     second = asyncio.run(run_agent_analysis('제목: "로그인 오류 수정"', ["linear"], "user-slot"))
     assert second.ok is False
     assert second.execution is not None
-    assert "team_id" in second.execution.user_message
+    assert "팀" in second.execution.user_message
     assert get_pending_action("user-slot") is not None
 
     third = asyncio.run(run_agent_analysis('팀: "team_123"', ["linear"], "user-slot"))

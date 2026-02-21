@@ -3,10 +3,13 @@ from types import SimpleNamespace
 from app.routes.telegram import (
     _agent_error_guide,
     _autonomous_fallback_hint,
+    _compose_telegram_response_text,
     _build_user_preface_template,
+    _build_user_facing_message,
     _build_capabilities_message,
     _is_capabilities_query,
     _should_use_preface_llm,
+    _truncate_telegram_message,
 )
 
 
@@ -113,3 +116,58 @@ def test_should_use_preface_llm():
     assert _should_use_preface_llm(ok=True, error_code="validation_error", execution_message="short")
     assert _should_use_preface_llm(ok=True, error_code=None, execution_message="x" * 120)
     assert not _should_use_preface_llm(ok=True, error_code=None, execution_message="짧은 결과")
+
+
+def test_build_user_facing_message_validation_error_slot_prompt():
+    text = _build_user_facing_message(
+        ok=False,
+        execution_message="입력이 필요합니다.",
+        error_code="validation_error",
+        slot_action="linear_create_issue",
+        missing_slot="team_id",
+    )
+    assert "팀" in text
+    assert "예:" in text
+    assert "취소" in text
+
+
+def test_truncate_telegram_message():
+    source = "a" * 500
+    out = _truncate_telegram_message(source, max_chars=140)
+    assert len(out) <= 140
+    assert "일부만 표시" in out
+
+
+def test_compose_telegram_response_text_conversation_only():
+    out = _compose_telegram_response_text(
+        conversation_mode_enabled=True,
+        debug_report_enabled=False,
+        user_message="대화형 응답",
+        report_text="에이전트 실행 결과",
+        legacy_user_preface="legacy",
+    )
+    assert out == "대화형 응답"
+
+
+def test_compose_telegram_response_text_conversation_with_debug():
+    out = _compose_telegram_response_text(
+        conversation_mode_enabled=True,
+        debug_report_enabled=True,
+        user_message="대화형 응답",
+        report_text="에이전트 실행 결과",
+        legacy_user_preface="legacy",
+    )
+    assert out.startswith("대화형 응답")
+    assert "에이전트 실행 결과" in out
+
+
+def test_compose_telegram_response_text_legacy_mode():
+    out = _compose_telegram_response_text(
+        conversation_mode_enabled=False,
+        debug_report_enabled=False,
+        user_message="대화형 응답",
+        report_text="에이전트 실행 결과",
+        legacy_user_preface="요약 안내",
+    )
+    assert out.startswith("요약 안내")
+    assert "에이전트 실행 결과" in out

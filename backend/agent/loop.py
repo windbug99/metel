@@ -411,9 +411,10 @@ def _looks_like_new_request(text: str) -> bool:
 
 
 def _build_slot_question_message(action: str, slot_name: str) -> str:
+    display_slot = _display_slot_name(action, slot_name)
     reason = _slot_reason(action, slot_name)
     return (
-        f"`{slot_name}` 값이 필요합니다.\n"
+        f"{display_slot} 값이 필요합니다.\n"
         f"이유: {reason}\n"
         f"예시: {slot_prompt_example(action, slot_name)}\n"
         "취소하려면 `취소`라고 입력해주세요."
@@ -442,9 +443,22 @@ def _has_keyed_slot_marker(text: str) -> bool:
     return bool(re.search(r"[0-9A-Za-z가-힣_]+\s*[:=]\s*", text or ""))
 
 
+def _display_slot_name(action: str, slot_name: str) -> str:
+    schema = get_action_slot_schema(action)
+    if not schema:
+        return slot_name
+    aliases = schema.aliases.get(slot_name) or ()
+    for alias in aliases:
+        candidate = str(alias or "").strip()
+        if candidate and re.search(r"[가-힣]", candidate):
+            return candidate
+    return aliases[0] if aliases else slot_name
+
+
 def _build_validation_guide_message(action: str, slot_name: str) -> str:
+    display_slot = _display_slot_name(action, slot_name)
     return (
-        f"누락 항목: `{slot_name}`\n"
+        f"누락 항목: {display_slot}\n"
         f"입력 예시: {slot_prompt_example(action, slot_name)}\n"
         "다음 동작: 값을 보내주시면 이어서 실행합니다. (취소: `취소`)"
     )
