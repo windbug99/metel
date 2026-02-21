@@ -23,3 +23,15 @@ def test_map_append_intent_to_agent_path():
     command, rest = _map_natural_text_to_command('일일 회의록 테스트 페이지에 "액션 아이템: API 테스트 완료" 추가해줘')
     assert command == ""
     assert rest == ""
+
+
+def test_map_status_word_inside_sentence_to_agent_path():
+    command, rest = _map_natural_text_to_command("linear 이슈 업데이트 이슈: OPT-39 설명: 상태 재현됨, 우선순위: 2")
+    assert command == ""
+    assert rest == ""
+
+
+def test_map_slot_like_status_text_to_agent_path():
+    command, rest = _map_natural_text_to_command("설명: 로그인 버튼 클릭 시 상태 재현됨")
+    assert command == ""
+    assert rest == ""

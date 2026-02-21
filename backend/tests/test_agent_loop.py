@@ -172,6 +172,71 @@ def test_run_agent_analysis_reasks_on_low_confidence_plain_slot_answer(monkeypat
     clear_pending_action("user-low-confidence")
 
 
+def test_run_agent_analysis_accepts_plain_id_for_action_without_slot_schema(monkeypatch):
+    clear_pending_action("user-notion-page-id")
+    llm_plan = AgentPlan(
+        user_text="notion 페이지에 블록 추가",
+        requirements=[AgentRequirement(summary="Notion 페이지 블록 추가")],
+        target_services=["notion"],
+        selected_tools=["notion_retrieve_page", "notion_append_block_children"],
+        workflow_steps=["1"],
+        tasks=[
+            AgentTask(
+                id="task_tool_1",
+                title="도구 실행: notion_retrieve_page",
+                task_type="TOOL",
+                service="notion",
+                tool_name="notion_retrieve_page",
+                payload={},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    class _Settings:
+        llm_autonomous_enabled = False
+
+    calls = {"count": 0}
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return AgentExecutionResult(
+                success=False,
+                user_message="page_id missing",
+                summary="validation",
+                artifacts={
+                    "error_code": "validation_error",
+                    "slot_action": "notion_retrieve_page",
+                    "slot_task_id": "task_tool_1",
+                    "missing_slot": "page_id",
+                    "missing_slots": "page_id",
+                    "slot_payload_json": "{}",
+                },
+            )
+        task = plan.tasks[0]
+        assert task.payload.get("page_id") == "30d50e84a3bf8012abfeea8321ff12ea"
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    first = asyncio.run(run_agent_analysis("notion 페이지에 블록 추가", ["notion"], "user-notion-page-id"))
+    assert first.ok is False
+    assert get_pending_action("user-notion-page-id") is not None
+
+    second = asyncio.run(run_agent_analysis("30d50e84a3bf8012abfeea8321ff12ea", ["notion"], "user-notion-page-id"))
+    assert second.ok is True
+    assert second.result_summary == "done"
+    assert get_pending_action("user-notion-page-id") is None
+    clear_pending_action("user-notion-page-id")
+
+
 def test_run_agent_analysis_does_not_start_slot_loop_when_disabled(monkeypatch):
     clear_pending_action("user-slot-off")
     llm_plan = AgentPlan(

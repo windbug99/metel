@@ -475,10 +475,10 @@ def _map_natural_text_to_command(text: str) -> tuple[str, str]:
     raw = text.strip()
     lower = raw.lower()
 
-    if any(keyword in lower for keyword in ["도움말", "help", "메뉴", "menu", "명령어"]):
+    if re.fullmatch(r"(?i)(?:/help|/menu|help|menu|도움말|메뉴|명령어)(?:\s*알려줘)?", raw):
         return "/help", ""
 
-    if any(keyword in lower for keyword in ["상태", "status", "연결상태"]):
+    if re.fullmatch(r"(?i)(?:/status|status|상태|연결상태)(?:\s*(?:확인|조회|알려줘|보여줘))?", raw):
         return "/status", ""
 
     # 자연어 요청은 가능한 한 자율 에이전트 경로로 전달한다.

@@ -464,6 +464,40 @@ def _is_slot_loop_enabled(settings, user_id: str) -> bool:
     return bucket < rollout
 
 
+def _looks_like_identifier_value(value: object) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if re.fullmatch(r"[0-9a-fA-F]{32}", text):
+        return True
+    if re.fullmatch(r"[0-9a-fA-F\-]{36}", text):
+        return True
+    if re.fullmatch(r"[A-Za-z]{2,10}-\d{1,6}", text):
+        return True
+    return False
+
+
+def _should_reask_low_confidence(
+    *,
+    action: str,
+    slot_name: str,
+    slot_value: object,
+    confidence: float,
+    user_text: str,
+) -> bool:
+    if confidence >= 0.8:
+        return False
+    if _has_keyed_slot_marker(user_text):
+        return False
+    schema = get_action_slot_schema(action)
+    if schema is None:
+        # 스키마가 없는 액션은 plain 응답도 수용한다.
+        return False
+    if slot_name.endswith("_id") and _looks_like_identifier_value(slot_value):
+        return False
+    return True
+
+
 def _looks_like_slot_only_input(text: str) -> bool:
     raw = (text or "").strip()
     if not raw:
@@ -621,7 +655,13 @@ async def _try_resume_pending_action(
         )
 
     confidence = float(collected.confidence_by_slot.get(target_slot, 1.0))
-    if confidence < 0.8 and not _has_keyed_slot_marker(user_text):
+    if _should_reask_low_confidence(
+        action=pending.action,
+        slot_name=target_slot,
+        slot_value=collected.collected_slots.get(target_slot),
+        confidence=confidence,
+        user_text=user_text,
+    ):
         set_pending_action(
             user_id=pending.user_id,
             intent=pending.intent,
