@@ -237,6 +237,105 @@ def test_run_agent_analysis_accepts_plain_id_for_action_without_slot_schema(monk
     clear_pending_action("user-notion-page-id")
 
 
+def test_run_agent_analysis_resumes_with_focused_pending_task_only(monkeypatch):
+    clear_pending_action("user-focused")
+    llm_plan = AgentPlan(
+        user_text="linear 이슈 업데이트",
+        requirements=[AgentRequirement(summary="Linear 이슈 수정")],
+        target_services=["linear", "notion"],
+        selected_tools=["linear_update_issue", "notion_create_page"],
+        workflow_steps=["1. update", "2. create notion"],
+        tasks=[
+            AgentTask(
+                id="task_linear_update_issue",
+                title="Linear 이슈 수정",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_update_issue",
+                payload={},
+                output_schema={"type": "tool_result"},
+            ),
+            AgentTask(
+                id="task_notion_create_page",
+                title="Notion 페이지 생성",
+                task_type="TOOL",
+                service="notion",
+                tool_name="notion_create_page",
+                payload={"title_hint": "should_not_run"},
+                output_schema={"type": "tool_result"},
+            ),
+        ],
+        notes=["planner=llm"],
+    )
+
+    class _Settings:
+        llm_autonomous_enabled = False
+
+    calls = {"count": 0}
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return AgentExecutionResult(
+                success=False,
+                user_message="issue_id missing",
+                summary="validation",
+                artifacts={
+                    "error_code": "validation_error",
+                    "slot_action": "linear_update_issue",
+                    "slot_task_id": "task_linear_update_issue",
+                    "missing_slot": "issue_id",
+                    "missing_slots": "issue_id",
+                    "slot_payload_json": "{}",
+                },
+            )
+        if calls["count"] == 2:
+            return AgentExecutionResult(
+                success=False,
+                user_message="description missing",
+                summary="validation",
+                artifacts={
+                    "error_code": "validation_error",
+                    "slot_action": "linear_update_issue",
+                    "slot_task_id": "task_linear_update_issue",
+                    "missing_slot": "description",
+                    "missing_slots": "description",
+                    "slot_payload_json": '{"issue_id":"OPT-42"}',
+                },
+            )
+        task_tools = [str(task.tool_name or "") for task in plan.tasks if task.task_type == "TOOL"]
+        assert task_tools == ["linear_update_issue"]
+        assert all(service != "notion" for service in plan.target_services)
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    first = asyncio.run(run_agent_analysis("linear 이슈 업데이트", ["linear", "notion"], "user-focused"))
+    assert first.ok is False
+    assert get_pending_action("user-focused") is not None
+
+    second = asyncio.run(run_agent_analysis("이슈: OPT-42", ["linear", "notion"], "user-focused"))
+    assert second.ok is False
+    assert get_pending_action("user-focused") is not None
+
+    third = asyncio.run(
+        run_agent_analysis(
+            "본문: 구글 계정을 통한 간편한 로그인 및 회원가입 기능이 구현되었습니다.",
+            ["linear", "notion"],
+            "user-focused",
+        )
+    )
+    assert third.ok is True
+    assert third.result_summary == "done"
+    assert get_pending_action("user-focused") is None
+    clear_pending_action("user-focused")
+
+
 def test_run_agent_analysis_does_not_start_slot_loop_when_disabled(monkeypatch):
     clear_pending_action("user-slot-off")
     llm_plan = AgentPlan(

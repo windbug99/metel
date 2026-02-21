@@ -20,7 +20,7 @@ from agent.planner_llm import try_build_agent_plan_with_llm
 from agent.registry import load_registry
 from agent.slot_collector import collect_slots_from_user_reply, slot_prompt_example
 from agent.slot_schema import get_action_slot_schema
-from agent.types import AgentExecutionResult, AgentExecutionStep, AgentRunResult
+from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRunResult, AgentTask
 from app.core.config import get_settings
 
 
@@ -525,6 +525,78 @@ def _looks_like_slot_only_input(text: str) -> bool:
     return not has_service_or_action
 
 
+def _build_focused_pending_plan(
+    *,
+    plan: AgentPlan,
+    task_id: str,
+    action: str,
+) -> AgentPlan:
+    tasks = plan.tasks or []
+    if not tasks:
+        return plan
+
+    target = next((task for task in tasks if task.id == task_id or (task.tool_name or "") == action), None)
+    if target is None:
+        return plan
+
+    task_by_id = {task.id: task for task in tasks}
+    keep_ids: set[str] = set()
+    stack = [target.id]
+    while stack:
+        current = stack.pop()
+        if current in keep_ids:
+            continue
+        keep_ids.add(current)
+        current_task = task_by_id.get(current)
+        if not current_task:
+            continue
+        for dep in current_task.depends_on:
+            if dep and dep in task_by_id:
+                stack.append(dep)
+
+    focused_tasks: list[AgentTask] = []
+    for task in tasks:
+        if task.id not in keep_ids:
+            continue
+        focused_tasks.append(
+            AgentTask(
+                id=task.id,
+                title=task.title,
+                task_type=task.task_type,
+                depends_on=list(task.depends_on),
+                service=task.service,
+                tool_name=task.tool_name,
+                payload=dict(task.payload or {}),
+                instruction=task.instruction,
+                output_schema=dict(task.output_schema or {}),
+            )
+        )
+
+    selected_tools = [
+        str(task.tool_name).strip()
+        for task in focused_tasks
+        if task.task_type == "TOOL" and str(task.tool_name or "").strip()
+    ]
+    selected_tools = list(dict.fromkeys(selected_tools))
+
+    target_services = [
+        str(task.service).strip().lower()
+        for task in focused_tasks
+        if task.task_type == "TOOL" and str(task.service or "").strip()
+    ]
+    target_services = list(dict.fromkeys(target_services)) or list(plan.target_services)
+
+    return AgentPlan(
+        user_text=plan.user_text,
+        requirements=list(plan.requirements),
+        target_services=target_services,
+        selected_tools=selected_tools if selected_tools else list(plan.selected_tools),
+        workflow_steps=list(plan.workflow_steps),
+        tasks=focused_tasks,
+        notes=list(plan.notes),
+    )
+
+
 def _apply_slot_loop_from_validation_error(
     *,
     execution: AgentExecutionResult,
@@ -721,17 +793,23 @@ async def _try_resume_pending_action(
                     task.payload = {**(task.payload or {}), **pending.collected_slots}
                     break
             clear_pending_action(user_id)
-            execution = await execute_agent_plan(user_id=user_id, plan=pending.plan)
+            run_plan = _build_focused_pending_plan(
+                plan=pending.plan,
+                task_id=pending.task_id,
+                action=pending.action,
+            )
+            run_plan.notes.append("slot_loop_execute_focused_plan")
+            execution = await execute_agent_plan(user_id=user_id, plan=run_plan)
             settings = get_settings()
             finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
             execution.user_message = finalized_message
             if finalizer_mode != "disabled":
-                pending.plan.notes.append(f"response_finalizer={finalizer_mode}")
-            pending.plan.notes.append("pending_action_autofill_retry")
-            pending.plan.notes.append("slot_loop_autofill_retry")
+                run_plan.notes.append(f"response_finalizer={finalizer_mode}")
+            run_plan.notes.append("pending_action_autofill_retry")
+            run_plan.notes.append("slot_loop_autofill_retry")
             _apply_slot_loop_from_validation_error(
                 execution=execution,
-                plan=pending.plan,
+                plan=run_plan,
                 plan_source=pending.plan_source,
                 user_id=user_id,
                 enabled=True,
@@ -739,7 +817,7 @@ async def _try_resume_pending_action(
             return AgentRunResult(
                 ok=execution.success,
                 stage="execution",
-                plan=pending.plan,
+                plan=run_plan,
                 result_summary=execution.summary,
                 execution=execution,
                 plan_source=pending.plan_source,
@@ -790,18 +868,24 @@ async def _try_resume_pending_action(
             pending.plan.user_text = f"{pending.plan.user_text} {extra}".strip()
     clear_pending_action(user_id)
 
-    execution = await execute_agent_plan(user_id=user_id, plan=pending.plan)
+    run_plan = _build_focused_pending_plan(
+        plan=pending.plan,
+        task_id=pending.task_id,
+        action=pending.action,
+    )
+    run_plan.notes.append("slot_loop_execute_focused_plan")
+    execution = await execute_agent_plan(user_id=user_id, plan=run_plan)
     settings = get_settings()
     finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
     execution.user_message = finalized_message
     if finalizer_mode != "disabled":
-        pending.plan.notes.append(f"response_finalizer={finalizer_mode}")
-    pending.plan.notes.append("pending_action_resumed")
-    pending.plan.notes.append("slot_loop_completed")
+        run_plan.notes.append(f"response_finalizer={finalizer_mode}")
+    run_plan.notes.append("pending_action_resumed")
+    run_plan.notes.append("slot_loop_completed")
     return AgentRunResult(
         ok=execution.success,
         stage="execution",
-        plan=pending.plan,
+        plan=run_plan,
         result_summary=execution.summary,
         execution=execution,
         plan_source=pending.plan_source,
