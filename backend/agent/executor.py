@@ -17,6 +17,7 @@ from agent.intent_keywords import (
     is_summary_intent,
     is_update_intent,
 )
+from agent.slot_collector import collect_slots_from_user_reply
 from agent.slot_schema import get_action_slot_schema, validate_slots
 from agent.tool_runner import execute_tool
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentTask
@@ -1817,7 +1818,16 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         )
 
     if any(token in text for token in ("댓글", "코멘트", "comment")) and any(token in text for token in ("생성", "추가", "작성", "create")):
-        issue_reference = _extract_linear_issue_reference(plan.user_text)
+        comment_task = _find_task(plan.tasks or [], task_type="TOOL", service="linear", tool_token="create_comment")
+        comment_payload = dict((comment_task.payload or {})) if comment_task else {}
+        collected = collect_slots_from_user_reply(
+            action="linear_create_comment",
+            user_text=plan.user_text,
+            collected_slots=comment_payload,
+        )
+        issue_reference = str(collected.collected_slots.get("issue_id") or "").strip()
+        if not issue_reference:
+            issue_reference = str(_extract_linear_issue_reference(plan.user_text) or "").strip()
         issue_id = await _resolve_linear_issue_id_from_reference(
             user_id=user_id,
             plan=plan,
@@ -1825,13 +1835,28 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             steps=steps,
             step_name="linear_search_issue_for_comment",
         )
-        body = _extract_linear_comment_body(plan.user_text)
+        body = str(collected.collected_slots.get("body") or "").strip()
+        if not body:
+            body = str(_extract_linear_comment_body(plan.user_text) or "").strip()
         if not issue_id or not body:
             return AgentExecutionResult(
                 success=False,
                 summary="Linear 댓글 생성 입력이 부족합니다.",
                 user_message="`issue_id`(또는 `identifier`)와 댓글 본문이 필요합니다. 예: `Linear issue_id OPT-35 댓글: 확인 부탁드립니다`",
-                artifacts={"error_code": "validation_error"},
+                artifacts={
+                    "error_code": "validation_error",
+                    "slot_action": "linear_create_comment",
+                    "slot_task_id": (comment_task.id if comment_task else "task_linear_create_comment"),
+                    "missing_slot": ("issue_id" if not issue_id else "body"),
+                    "missing_slots": ("issue_id,body" if not issue_id and not body else ("issue_id" if not issue_id else "body")),
+                    "slot_payload_json": json.dumps(
+                        {
+                            "issue_id": issue_id,
+                            "body": body,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
                 steps=steps + [AgentExecutionStep(name="extract_comment_input", status="error", detail="missing_issue_or_body")],
             )
         created = await execute_tool(
@@ -1856,7 +1881,15 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
     if is_update_intent(text) and "이슈" in text:
         update_task = _find_task(plan.tasks or [], task_type="TOOL", service="linear", tool_token="update_issue")
         update_payload = dict((update_task.payload or {})) if update_task else {}
-        issue_reference = str(update_payload.get("issue_id") or _extract_linear_issue_reference(plan.user_text) or "").strip()
+        collected = collect_slots_from_user_reply(
+            action="linear_update_issue",
+            user_text=plan.user_text,
+            collected_slots=update_payload,
+        )
+        slots = dict(collected.collected_slots)
+        issue_reference = str(slots.get("issue_id") or "").strip()
+        if not issue_reference:
+            issue_reference = str(_extract_linear_issue_reference(plan.user_text) or "").strip()
         issue_id = await _resolve_linear_issue_id_from_reference(
             user_id=user_id,
             plan=plan,
@@ -1864,11 +1897,15 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             steps=steps,
             step_name="linear_search_issue_for_update",
         )
-        extracted_update_fields = _extract_linear_update_fields(plan.user_text)
-        update_fields = dict(extracted_update_fields)
+        update_fields: dict[str, str | int] = {}
         for key in ("title", "description", "state_id", "priority"):
-            if key in update_payload and update_payload.get(key) not in (None, ""):
-                update_fields[key] = update_payload.get(key)
+            value = slots.get(key)
+            if value in (None, ""):
+                continue
+            update_fields[key] = value
+        # Fallback for legacy free-form sentence patterns.
+        if not update_fields:
+            update_fields = dict(_extract_linear_update_fields(plan.user_text))
         if update_fields.get("description"):
             resolved_description, description_err = await _resolve_linear_update_description_from_notion(
                 user_id=user_id,
@@ -1947,17 +1984,28 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
     if is_linear_issue_create_intent(text) or any(token in text for token in ("이슈 만들", "issue 만들")):
         create_task = _find_task(plan.tasks or [], task_type="TOOL", service="linear", tool_token="create_issue")
         create_payload = dict((create_task.payload or {})) if create_task else {}
-        team_reference = str(create_payload.get("team_id") or create_payload.get("team") or _extract_linear_team_reference(plan.user_text) or "").strip()
-        title_match = re.search(r'(?i)(?:제목|title)\s*[:：]\s*(.+)$', plan.user_text)
+        collected = collect_slots_from_user_reply(
+            action="linear_create_issue",
+            user_text=plan.user_text,
+            collected_slots=create_payload,
+        )
+        slots = dict(collected.collected_slots)
+        team_reference = str(slots.get("team_id") or create_payload.get("team") or "").strip()
+        if not team_reference:
+            team_reference = str(_extract_linear_team_reference(plan.user_text) or "").strip()
         team_id = await _resolve_linear_team_id_from_reference(
             user_id=user_id,
             plan=plan,
             team_reference=team_reference,
             steps=steps,
         )
-        title = str(create_payload.get("title") or "").strip()
-        if not title and title_match:
-            title = title_match.group(1).strip(" \"'`")
+        title = str(slots.get("title") or "").strip()
+        if not title:
+            title_match = re.search(r'(?i)(?:제목|title)\s*[:：]\s*(.+)$', plan.user_text)
+            if title_match:
+                title = title_match.group(1).strip(" \"'`")
+        description = str(slots.get("description") or "").strip()
+        priority = slots.get("priority")
         if not team_id or not title:
             missing_slots: list[str] = []
             if not title:
@@ -1991,7 +2039,12 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         created = await execute_tool(
             user_id=user_id,
             tool_name=_pick_tool(plan, "linear_create_issue", "linear_create_issue"),
-            payload={"team_id": team_id, "title": title, "description": ""},
+            payload={
+                "team_id": team_id,
+                "title": title,
+                **({"description": description} if description else {}),
+                **({"priority": priority} if isinstance(priority, int) else {}),
+            },
         )
         issue_create = (created.get("data") or {}).get("issueCreate") or {}
         issue = issue_create.get("issue") or {}

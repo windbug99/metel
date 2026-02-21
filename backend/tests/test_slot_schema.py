@@ -13,6 +13,8 @@ def test_slot_schema_has_required_sections():
         assert schema.action
         assert isinstance(schema.required_slots, tuple)
         assert isinstance(schema.optional_slots, tuple)
+        assert isinstance(schema.auto_fill_slots, tuple)
+        assert isinstance(schema.ask_order, tuple)
         assert isinstance(schema.aliases, dict)
         assert isinstance(schema.validation_rules, dict)
 
@@ -70,3 +72,8 @@ def test_get_action_slot_schema():
     schema = get_action_slot_schema("notion_search")
     assert schema is not None
     assert "query" in schema.required_slots
+
+
+def test_validate_slots_missing_order_follows_ask_order():
+    _, missing, _ = validate_slots("linear_create_issue", {})
+    assert missing == ["title", "team_id"]

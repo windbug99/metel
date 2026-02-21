@@ -10,6 +10,8 @@ class ActionSlotSchema:
     action: str
     required_slots: tuple[str, ...]
     optional_slots: tuple[str, ...]
+    auto_fill_slots: tuple[str, ...]
+    ask_order: tuple[str, ...]
     aliases: dict[str, tuple[str, ...]]
     validation_rules: dict[str, dict[str, Any]]
 
@@ -28,6 +30,8 @@ ACTION_SLOT_SCHEMAS: dict[str, ActionSlotSchema] = {
         action="notion_search",
         required_slots=("query",),
         optional_slots=("page_size",),
+        auto_fill_slots=(),
+        ask_order=("query",),
         aliases={
             "query": ("검색어", "키워드", "title"),
             "page_size": ("개수", "수", "limit", "top"),
@@ -41,6 +45,8 @@ ACTION_SLOT_SCHEMAS: dict[str, ActionSlotSchema] = {
         action="notion_create_page",
         required_slots=(),
         optional_slots=("title", "title_hint", "parent_page_id", "properties"),
+        auto_fill_slots=("parent_page_id",),
+        ask_order=("title",),
         aliases={
             "title": ("제목", "name"),
             "title_hint": ("title_hint", "제목힌트"),
@@ -56,6 +62,8 @@ ACTION_SLOT_SCHEMAS: dict[str, ActionSlotSchema] = {
         action="notion_append_block_children",
         required_slots=("block_id",),
         optional_slots=("children", "content", "content_type"),
+        auto_fill_slots=("block_id",),
+        ask_order=("block_id", "content"),
         aliases={
             "block_id": ("페이지", "page", "대상페이지", "target_page", "page_id", "block_id"),
             "children": ("children", "블록목록"),
@@ -72,6 +80,8 @@ ACTION_SLOT_SCHEMAS: dict[str, ActionSlotSchema] = {
         action="notion_update_page",
         required_slots=("page_id",),
         optional_slots=("title", "archived", "parent_page_id"),
+        auto_fill_slots=("page_id",),
+        ask_order=("page_id", "title", "parent_page_id"),
         aliases={
             "page_id": ("페이지", "page", "target_page"),
             "title": ("제목", "새제목", "new_title"),
@@ -89,6 +99,8 @@ ACTION_SLOT_SCHEMAS: dict[str, ActionSlotSchema] = {
         action="notion_query_data_source",
         required_slots=("data_source_id",),
         optional_slots=("page_size", "query"),
+        auto_fill_slots=("data_source_id",),
+        ask_order=("data_source_id",),
         aliases={
             "data_source_id": ("데이터소스", "datasource", "data_source"),
             "page_size": ("개수", "수", "limit"),
@@ -104,6 +116,8 @@ ACTION_SLOT_SCHEMAS: dict[str, ActionSlotSchema] = {
         action="linear_search_issues",
         required_slots=("query",),
         optional_slots=("first", "team_id"),
+        auto_fill_slots=("query", "team_id"),
+        ask_order=("query",),
         aliases={
             "query": ("검색어", "키워드", "이슈"),
             "first": ("개수", "수", "limit"),
@@ -119,6 +133,8 @@ ACTION_SLOT_SCHEMAS: dict[str, ActionSlotSchema] = {
         action="linear_create_issue",
         required_slots=("title", "team_id"),
         optional_slots=("description", "priority"),
+        auto_fill_slots=("team_id",),
+        ask_order=("title", "team_id", "description"),
         aliases={
             "title": ("제목", "name"),
             "team_id": ("팀", "team"),
@@ -136,6 +152,8 @@ ACTION_SLOT_SCHEMAS: dict[str, ActionSlotSchema] = {
         action="linear_update_issue",
         required_slots=("issue_id",),
         optional_slots=("title", "description", "state_id", "priority"),
+        auto_fill_slots=("issue_id",),
+        ask_order=("issue_id", "description", "title"),
         aliases={
             "issue_id": ("이슈", "issue", "이슈ID"),
             "title": ("제목", "name"),
@@ -155,6 +173,8 @@ ACTION_SLOT_SCHEMAS: dict[str, ActionSlotSchema] = {
         action="linear_create_comment",
         required_slots=("issue_id", "body"),
         optional_slots=(),
+        auto_fill_slots=("issue_id",),
+        ask_order=("issue_id", "body"),
         aliases={
             "issue_id": ("이슈", "issue", "이슈ID"),
             "body": ("코멘트", "댓글", "내용", "본문"),
@@ -203,6 +223,9 @@ def validate_slots(action: str, collected_slots: dict[str, Any]) -> tuple[dict[s
         return normalized, [], []
 
     missing = [name for name in schema.required_slots if _is_missing(normalized.get(name))]
+    if missing and schema.ask_order:
+        priority = {slot: idx for idx, slot in enumerate(schema.ask_order)}
+        missing.sort(key=lambda slot: priority.get(slot, 999))
     errors: list[str] = []
     for slot_name, rule in schema.validation_rules.items():
         value = normalized.get(slot_name)

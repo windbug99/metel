@@ -18,7 +18,8 @@ from agent.pending_action import clear_pending_action, get_pending_action, set_p
 from agent.planner import build_agent_plan
 from agent.planner_llm import try_build_agent_plan_with_llm
 from agent.registry import load_registry
-from agent.slot_schema import get_action_slot_schema, validate_slots
+from agent.slot_collector import collect_slots_from_user_reply, slot_prompt_example
+from agent.slot_schema import get_action_slot_schema
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentRunResult
 from app.core.config import get_settings
 
@@ -409,54 +410,58 @@ def _looks_like_new_request(text: str) -> bool:
     return service_token and action_token
 
 
-def _parse_slot_answer_value(action: str, slot_name: str, user_text: str):
-    schema = get_action_slot_schema(action)
-    raw = (user_text or "").strip()
-    if not raw:
-        return ""
-    if ":" in raw:
-        _, _, candidate = raw.partition(":")
-        raw = candidate.strip() or raw
-    if "=" in raw and len(raw.split("=", 1)[0].strip()) <= 32:
-        _, _, candidate = raw.partition("=")
-        raw = candidate.strip() or raw
-    if not schema:
-        return raw
-    rule = schema.validation_rules.get(slot_name) or {}
-    value_type = str(rule.get("type", "")).strip().lower()
-    if value_type == "integer":
-        digits = re.search(r"-?\d+", raw)
-        if digits:
-            try:
-                return int(digits.group(0))
-            except Exception:
-                return raw
-    if value_type == "boolean":
-        lowered = raw.lower()
-        if lowered in {"true", "yes", "y", "1", "네", "예"}:
-            return True
-        if lowered in {"false", "no", "n", "0", "아니오", "아니요"}:
-            return False
-    return raw.strip(" \"'`")
-
-
-def _slot_prompt_example(action: str, slot_name: str) -> str:
-    schema = get_action_slot_schema(action)
-    if not schema:
-        return f"{slot_name}: <값>"
-    aliases = schema.aliases.get(slot_name) or ()
-    key = aliases[0] if aliases else slot_name
-    rule = schema.validation_rules.get(slot_name) or {}
-    value_type = str(rule.get("type", "")).strip().lower()
-    if value_type == "integer":
-        return f"{key}: 5"
-    if value_type == "boolean":
-        return f"{key}: true"
-    return f'{key}: "값"'
-
-
 def _build_slot_question_message(action: str, slot_name: str) -> str:
-    return f"`{slot_name}` 값을 알려주세요.\n예: {_slot_prompt_example(action, slot_name)}"
+    reason = _slot_reason(action, slot_name)
+    return (
+        f"`{slot_name}` 값이 필요합니다.\n"
+        f"이유: {reason}\n"
+        f"예시: {slot_prompt_example(action, slot_name)}\n"
+        "취소하려면 `취소`라고 입력해주세요."
+    )
+
+
+def _slot_reason(action: str, slot_name: str) -> str:
+    action_key = (action or "").strip()
+    slot_key = (slot_name or "").strip()
+    reasons = {
+        ("linear_create_issue", "title"): "생성할 이슈 제목을 지정해야 작업을 만들 수 있습니다.",
+        ("linear_create_issue", "team_id"): "이슈를 생성할 팀을 지정해야 합니다.",
+        ("linear_update_issue", "issue_id"): "수정할 대상 이슈를 식별해야 합니다.",
+        ("linear_update_issue", "description"): "업데이트할 내용을 반영하려면 설명이 필요합니다.",
+        ("linear_create_comment", "issue_id"): "댓글을 추가할 이슈를 식별해야 합니다.",
+        ("linear_create_comment", "body"): "등록할 댓글 본문이 필요합니다.",
+        ("notion_append_block_children", "block_id"): "본문을 추가할 대상 페이지를 알아야 합니다.",
+        ("notion_append_block_children", "content"): "추가할 본문 내용이 필요합니다.",
+        ("notion_query_data_source", "data_source_id"): "조회할 데이터소스를 식별해야 합니다.",
+        ("notion_search", "query"): "검색할 키워드를 알아야 결과를 찾을 수 있습니다.",
+    }
+    return reasons.get((action_key, slot_key), f"요청을 실행하려면 `{slot_key}` 값이 필요합니다.")
+
+
+def _has_keyed_slot_marker(text: str) -> bool:
+    return bool(re.search(r"[0-9A-Za-z가-힣_]+\s*[:=]\s*", text or ""))
+
+
+def _build_validation_guide_message(action: str, slot_name: str) -> str:
+    return (
+        f"누락 항목: `{slot_name}`\n"
+        f"입력 예시: {slot_prompt_example(action, slot_name)}\n"
+        "다음 동작: 값을 보내주시면 이어서 실행합니다. (취소: `취소`)"
+    )
+
+
+def _is_slot_loop_enabled(settings, user_id: str) -> bool:
+    if not bool(getattr(settings, "slot_loop_enabled", True)):
+        return False
+    rollout = int(getattr(settings, "slot_loop_rollout_percent", 100))
+    rollout = max(0, min(100, rollout))
+    if rollout >= 100:
+        return True
+    if rollout <= 0:
+        return False
+    key = (user_id or "").strip().encode("utf-8")
+    bucket = sum(key) % 100 if key else 0
+    return bucket < rollout
 
 
 async def _try_resume_pending_action(
@@ -470,6 +475,7 @@ async def _try_resume_pending_action(
 
     if _is_cancel_pending_text(user_text):
         clear_pending_action(user_id)
+        pending.plan.notes.append("slot_loop_cancelled")
         execution = AgentExecutionResult(
             success=False,
             summary="보류 중인 작업을 취소했습니다.",
@@ -488,6 +494,7 @@ async def _try_resume_pending_action(
 
     if _looks_like_new_request(user_text):
         clear_pending_action(user_id)
+        pending.plan.notes.append("slot_loop_replaced_new_request")
         return None
 
     if not pending.missing_slots:
@@ -495,11 +502,15 @@ async def _try_resume_pending_action(
         return None
 
     target_slot = pending.missing_slots[0]
-    pending.collected_slots[target_slot] = _parse_slot_answer_value(pending.action, target_slot, user_text)
-    normalized, missing_slots, validation_errors = validate_slots(pending.action, pending.collected_slots)
-    pending.collected_slots = normalized
+    collected = collect_slots_from_user_reply(
+        action=pending.action,
+        user_text=user_text,
+        collected_slots=pending.collected_slots,
+        preferred_slot=target_slot,
+    )
+    pending.collected_slots = collected.collected_slots
 
-    if validation_errors:
+    if collected.validation_errors:
         set_pending_action(
             user_id=pending.user_id,
             intent=pending.intent,
@@ -510,16 +521,23 @@ async def _try_resume_pending_action(
             collected_slots=pending.collected_slots,
             missing_slots=[target_slot],
         )
+        pending.plan.notes.append("slot_loop_validation_error")
         execution = AgentExecutionResult(
             success=False,
             summary="입력 형식이 올바르지 않습니다.",
             user_message=(
                 "입력 형식이 올바르지 않습니다.\n"
-                f"- 오류: {validation_errors[0]}\n"
-                f"- 다시 입력 예시: {_slot_prompt_example(pending.action, target_slot)}"
+                f"- 오류: {collected.validation_errors[0]}\n"
+                f"- 다시 입력 예시: {slot_prompt_example(pending.action, target_slot)}\n"
+                f"- 다음 동작: 값을 다시 보내주시면 이어서 실행합니다. (취소: `취소`)"
             ),
-            artifacts={"error_code": "validation_error", "missing_slot": target_slot, "slot_action": pending.action},
-            steps=[AgentExecutionStep(name="pending_action_validate", status="error", detail=validation_errors[0])],
+            artifacts={
+                "error_code": "validation_error",
+                "missing_slot": target_slot,
+                "slot_action": pending.action,
+                "next_action": "provide_slot_value",
+            },
+            steps=[AgentExecutionStep(name="pending_action_validate", status="error", detail=collected.validation_errors[0])],
         )
         return AgentRunResult(
             ok=False,
@@ -530,8 +548,8 @@ async def _try_resume_pending_action(
             plan_source=pending.plan_source,
         )
 
-    if missing_slots:
-        next_slot = missing_slots[0]
+    confidence = float(collected.confidence_by_slot.get(target_slot, 1.0))
+    if confidence < 0.8 and not _has_keyed_slot_marker(user_text):
         set_pending_action(
             user_id=pending.user_id,
             intent=pending.intent,
@@ -540,13 +558,82 @@ async def _try_resume_pending_action(
             plan=pending.plan,
             plan_source=pending.plan_source,
             collected_slots=pending.collected_slots,
-            missing_slots=missing_slots,
+            missing_slots=[target_slot],
         )
+        pending.plan.notes.append("slot_loop_low_confidence_reask")
+        execution = AgentExecutionResult(
+            success=False,
+            summary="입력 확인이 필요합니다.",
+            user_message=(
+                f"`{target_slot}` 값을 명확히 확인하기 위해 키-값 형식으로 다시 입력해주세요.\n"
+                f"예시: {slot_prompt_example(pending.action, target_slot)}\n"
+                "다음 동작: 위 형식으로 값을 보내주시면 이어서 실행합니다. (취소: `취소`)"
+            ),
+            artifacts={
+                "error_code": "validation_error",
+                "missing_slot": target_slot,
+                "slot_action": pending.action,
+                "next_action": "provide_slot_value",
+            },
+            steps=[AgentExecutionStep(name="pending_action_low_confidence", status="error", detail=f"slot={target_slot}")],
+        )
+        return AgentRunResult(
+            ok=False,
+            stage="validation",
+            plan=pending.plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source=pending.plan_source,
+        )
+
+    if collected.missing_slots:
+        schema = get_action_slot_schema(pending.action)
+        auto_fill_slots = set(schema.auto_fill_slots) if schema else set()
+        if auto_fill_slots and all(slot in auto_fill_slots for slot in collected.missing_slots):
+            for task in pending.plan.tasks:
+                if task.id == pending.task_id or (task.tool_name or "") == pending.action:
+                    task.payload = {**(task.payload or {}), **pending.collected_slots}
+                    break
+            clear_pending_action(user_id)
+            execution = await execute_agent_plan(user_id=user_id, plan=pending.plan)
+            settings = get_settings()
+            finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
+            execution.user_message = finalized_message
+            if finalizer_mode != "disabled":
+                pending.plan.notes.append(f"response_finalizer={finalizer_mode}")
+            pending.plan.notes.append("pending_action_autofill_retry")
+            pending.plan.notes.append("slot_loop_autofill_retry")
+            return AgentRunResult(
+                ok=execution.success,
+                stage="execution",
+                plan=pending.plan,
+                result_summary=execution.summary,
+                execution=execution,
+                plan_source=pending.plan_source,
+            )
+
+        next_slot = collected.ask_next_slot or collected.missing_slots[0]
+        set_pending_action(
+            user_id=pending.user_id,
+            intent=pending.intent,
+            action=pending.action,
+            task_id=pending.task_id,
+            plan=pending.plan,
+            plan_source=pending.plan_source,
+            collected_slots=pending.collected_slots,
+            missing_slots=collected.missing_slots,
+        )
+        pending.plan.notes.append(f"slot_loop_turn:{next_slot}")
         execution = AgentExecutionResult(
             success=False,
             summary="추가 입력이 필요합니다.",
-            user_message=_build_slot_question_message(pending.action, next_slot),
-            artifacts={"error_code": "validation_error", "missing_slot": next_slot, "slot_action": pending.action},
+            user_message=f"{_build_slot_question_message(pending.action, next_slot)}\n\n{_build_validation_guide_message(pending.action, next_slot)}",
+            artifacts={
+                "error_code": "validation_error",
+                "missing_slot": next_slot,
+                "slot_action": pending.action,
+                "next_action": "provide_slot_value",
+            },
             steps=[AgentExecutionStep(name="pending_action_ask_next", status="error", detail=f"missing_slot:{next_slot}")],
         )
         return AgentRunResult(
@@ -577,6 +664,7 @@ async def _try_resume_pending_action(
     if finalizer_mode != "disabled":
         pending.plan.notes.append(f"response_finalizer={finalizer_mode}")
     pending.plan.notes.append("pending_action_resumed")
+    pending.plan.notes.append("slot_loop_completed")
     return AgentRunResult(
         ok=execution.success,
         stage="execution",
@@ -597,11 +685,18 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     4) workflow execution
     5) result summary and return payload generation
     """
-    resumed = await _try_resume_pending_action(user_id=user_id, user_text=user_text)
-    if resumed is not None:
-        return resumed
-
     settings = get_settings()
+    slot_loop_enabled = _is_slot_loop_enabled(settings, user_id)
+    if slot_loop_enabled:
+        resumed = await _try_resume_pending_action(user_id=user_id, user_text=user_text)
+        if resumed is not None:
+            return resumed
+
+    else:
+        _ = get_pending_action(user_id)
+        if _ is not None:
+            clear_pending_action(user_id)
+
     llm_planner_enabled = bool(getattr(settings, "llm_planner_enabled", False))
 
     is_data_source_query, data_source_state = _parse_data_source_query_state(user_text)
@@ -855,6 +950,7 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     execution.user_message = finalized_message
     if finalizer_mode != "disabled":
         plan.notes.append(f"response_finalizer={finalizer_mode}")
+    plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
     if not execution.success and execution.artifacts.get("error_code") == "validation_error":
         action = str(execution.artifacts.get("slot_action", "") or "").strip()
         missing_slot = str(execution.artifacts.get("missing_slot", "") or "").strip()
@@ -870,7 +966,7 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
                 missing_slot = missing_slot or match.group(2)
                 task_id = task_id or action
                 break
-        if action and missing_slot and task_id:
+        if action and missing_slot and task_id and slot_loop_enabled:
             payload = {}
             if payload_json:
                 try:
@@ -892,7 +988,12 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
                 collected_slots=payload,
                 missing_slots=missing_slots,
             )
-            execution.user_message = _build_slot_question_message(action, missing_slot)
+            plan.notes.append("slot_loop_started")
+            execution.user_message = (
+                f"{_build_slot_question_message(action, missing_slot)}\n\n"
+                f"{_build_validation_guide_message(action, missing_slot)}"
+            )
+            execution.artifacts["next_action"] = "provide_slot_value"
 
     summary = execution.summary
     return AgentRunResult(

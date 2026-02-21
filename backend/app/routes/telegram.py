@@ -370,6 +370,13 @@ def _autonomous_fallback_hint(reason: str | None) -> str:
     return guides.get(reason, "")
 
 
+def _slot_loop_metrics_from_notes(notes: list[str]) -> tuple[int, int, int]:
+    started = 1 if any(note == "slot_loop_started" for note in (notes or [])) else 0
+    completed = 1 if any(note == "slot_loop_completed" for note in (notes or [])) else 0
+    turn_count = sum(1 for note in (notes or []) if note.startswith("slot_loop_turn:"))
+    return started, completed, turn_count
+
+
 def _map_natural_text_to_command(text: str) -> tuple[str, str]:
     raw = text.strip()
     lower = raw.lower()
@@ -787,6 +794,17 @@ async def telegram_webhook(
                 mode_extra = f"\n- autonomous_fallback_reason: {autonomous_fallback_reason}"
                 if hint:
                     mode_extra += f"\n- fallback_hint: {hint}"
+            notes = analysis.plan.notes or []
+            slot_loop_started, slot_loop_completed, slot_loop_turns = _slot_loop_metrics_from_notes(notes)
+            slot_loop_enabled = 1 if any(note == "slot_loop_enabled=1" for note in notes) else 0
+            metrics_enabled = bool(getattr(settings, "slot_loop_metrics_enabled", True))
+            if metrics_enabled:
+                mode_extra += (
+                    f"\n- slot_loop_enabled: {slot_loop_enabled}"
+                    f"\n- slot_loop_started: {slot_loop_started}"
+                    f"\n- slot_loop_completed: {slot_loop_completed}"
+                    f"\n- slot_loop_turns: {slot_loop_turns}"
+                )
 
             _record_command_log(
                 user_id=user_id,
@@ -794,7 +812,17 @@ async def telegram_webhook(
                 command="agent_plan",
                 status="success" if analysis.ok else "error",
                 error_code=None if analysis.ok else (execution_error_code or "execution_failed"),
-                detail=f"services={services_text}",
+                detail=(
+                    f"services={services_text}"
+                    if not metrics_enabled
+                    else (
+                        f"services={services_text};"
+                        f"slot_loop_enabled={slot_loop_enabled};"
+                        f"slot_loop_started={slot_loop_started};"
+                        f"slot_loop_completed={slot_loop_completed};"
+                        f"slot_loop_turns={slot_loop_turns}"
+                    )
+                ),
                 plan_source=analysis.plan_source,
                 execution_mode=execution_mode,
                 autonomous_fallback_reason=autonomous_fallback_reason,
