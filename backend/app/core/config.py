@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     slot_loop_enabled: bool = True
     slot_loop_rollout_percent: int = 100
     slot_loop_metrics_enabled: bool = True
+    telegram_user_preface_enabled: bool = True
+    telegram_user_preface_llm_enabled: bool = True
+    telegram_user_preface_max_chars: int = 240
 
 
 @lru_cache

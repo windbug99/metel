@@ -3,8 +3,10 @@ from types import SimpleNamespace
 from app.routes.telegram import (
     _agent_error_guide,
     _autonomous_fallback_hint,
+    _build_user_preface_template,
     _build_capabilities_message,
     _is_capabilities_query,
+    _should_use_preface_llm,
 )
 
 
@@ -93,3 +95,21 @@ def test_build_capabilities_message_all_connected_services(monkeypatch):
     assert "[notion] 지원 API/기능" in msg
     assert "[linear] 지원 API/기능" in msg
     assert "linear_create_issue" in msg
+
+
+def test_build_user_preface_template_success():
+    text = _build_user_preface_template(ok=True, error_code=None, execution_message="요청하신 작업을 완료했습니다.")
+    assert "완료" in text
+
+
+def test_build_user_preface_template_validation_error():
+    text = _build_user_preface_template(ok=False, error_code="validation_error", execution_message="입력이 필요합니다.")
+    assert "입력값" in text
+    assert "보완" in text
+
+
+def test_should_use_preface_llm():
+    assert _should_use_preface_llm(ok=False, error_code=None, execution_message="short")
+    assert _should_use_preface_llm(ok=True, error_code="validation_error", execution_message="short")
+    assert _should_use_preface_llm(ok=True, error_code=None, execution_message="x" * 120)
+    assert not _should_use_preface_llm(ok=True, error_code=None, execution_message="짧은 결과")

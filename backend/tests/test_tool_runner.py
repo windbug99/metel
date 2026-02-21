@@ -176,12 +176,25 @@ def test_linear_query_and_variables_list_teams():
 def test_linear_query_and_variables_update_issue():
     query, variables = _linear_query_and_variables(
         "linear_update_issue",
-        {"issue_id": "issue-1", "title": "Updated", "state_id": "state-1"},
+        {"issue_id": "issue-1", "title": "Updated", "state_id": "state-1", "priority": 2},
     )
     assert "mutation UpdateIssue" in query
     assert variables["input"]["id"] == "issue-1"
     assert variables["input"]["title"] == "Updated"
     assert variables["input"]["stateId"] == "state-1"
+    assert variables["input"]["priority"] == 2
+
+
+def test_linear_query_and_variables_create_issue_with_priority():
+    query, variables = _linear_query_and_variables(
+        "linear_create_issue",
+        {"team_id": "team-1", "title": "New issue", "description": "desc", "priority": 1},
+    )
+    assert "mutation CreateIssue" in query
+    assert variables["input"]["teamId"] == "team-1"
+    assert variables["input"]["title"] == "New issue"
+    assert variables["input"]["description"] == "desc"
+    assert variables["input"]["priority"] == 1
 
 
 def test_linear_query_and_variables_create_comment():

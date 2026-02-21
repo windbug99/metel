@@ -413,3 +413,89 @@ def test_task_orchestration_tool_only_linear_update_missing_issue_id(monkeypatch
     assert result.success is False
     assert result.artifacts.get("slot_action") == "linear_update_issue"
     assert result.artifacts.get("missing_slot") == "issue_id"
+
+
+def test_task_orchestration_linear_update_requires_update_fields(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, dict(payload)))
+        if tool_name == "linear_search_issues":
+            return {"data": {"issues": {"nodes": []}}}
+        if tool_name == "linear_list_issues":
+            return {"data": {"issues": {"nodes": []}}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="linear 이슈 업데이트 이슈: OPT-39",
+        requirements=[AgentRequirement(summary="Linear 이슈 업데이트")],
+        target_services=["linear"],
+        selected_tools=["linear_update_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_linear_update_issue",
+                title="Linear 이슈 수정",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_update_issue",
+                payload={"issue_id": "OPT-39"},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "validation_error"
+    assert result.artifacts.get("slot_action") == "linear_update_issue"
+    assert result.artifacts.get("missing_slot") == "description"
+    assert [name for name, _ in calls] == ["linear_search_issues", "linear_list_issues"]
+
+
+def test_task_orchestration_linear_update_resolves_identifier_to_issue_id(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, dict(payload)))
+        if tool_name == "linear_search_issues":
+            return {"data": {"issues": {"nodes": [{"id": "issue-internal-39", "identifier": "OPT-39", "title": "로그인 오류"}]}}}
+        if tool_name == "linear_update_issue":
+            assert payload.get("issue_id") == "issue-internal-39"
+            return {
+                "data": {
+                    "issueUpdate": {
+                        "issue": {"id": "issue-internal-39", "identifier": "OPT-39", "title": "로그인 오류", "url": "https://linear.app/issue/OPT-39"}
+                    }
+                }
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="linear 이슈 업데이트 이슈: OPT-39 설명: 로그인 버튼 클릭 시 오류",
+        requirements=[AgentRequirement(summary="Linear 이슈 업데이트")],
+        target_services=["linear"],
+        selected_tools=["linear_search_issues", "linear_update_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_linear_update_issue",
+                title="Linear 이슈 수정",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_update_issue",
+                payload={"issue_id": "OPT-39", "description": "로그인 버튼 클릭 시 오류"},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert [name for name, _ in calls] == ["linear_search_issues", "linear_update_issue"]

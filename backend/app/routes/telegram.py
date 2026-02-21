@@ -22,6 +22,8 @@ from app.security.token_vault import TokenVault
 
 router = APIRouter(prefix="/api/telegram", tags=["telegram"])
 logger = logging.getLogger(__name__)
+OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
+GEMINI_GENERATE_CONTENT_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
 
 def _require_telegram_settings():
@@ -375,6 +377,98 @@ def _slot_loop_metrics_from_notes(notes: list[str]) -> tuple[int, int, int]:
     completed = 1 if any(note == "slot_loop_completed" for note in (notes or [])) else 0
     turn_count = sum(1 for note in (notes or []) if note.startswith("slot_loop_turn:"))
     return started, completed, turn_count
+
+
+def _build_user_preface_template(*, ok: bool, error_code: str | None, execution_message: str) -> str:
+    if not ok:
+        if error_code == "validation_error":
+            return "입력값이 아직 부족해서 바로 실행하지 못했어요. 아래 보완 안내대로 한 번만 더 입력해 주세요."
+        return "요청을 처리하는 중 문제가 있어요. 아래 실행 결과와 오류 안내를 먼저 확인해 주세요."
+    summary = (execution_message or "").strip().splitlines()[0] if execution_message else ""
+    if summary:
+        return f"요청하신 작업 처리를 완료했습니다. 핵심 결과는 `{summary}` 입니다."
+    return "요청하신 작업 처리를 완료했습니다. 아래 실행 결과를 확인해 주세요."
+
+
+def _should_use_preface_llm(*, ok: bool, error_code: str | None, execution_message: str) -> bool:
+    if error_code:
+        return True
+    if not ok:
+        return True
+    return len((execution_message or "").strip()) >= 80
+
+
+async def _rewrite_user_preface_with_llm(
+    *,
+    settings,
+    user_text: str,
+    base_preface: str,
+    execution_message: str,
+    error_code: str | None,
+) -> str:
+    provider = (settings.llm_planner_provider or "openai").strip().lower()
+    model = (settings.llm_planner_model or "gpt-4o-mini").strip()
+    timeout_sec = max(5, int(getattr(settings, "llm_request_timeout_sec", 20)))
+    max_chars = max(80, int(getattr(settings, "telegram_user_preface_max_chars", 240)))
+    prompt = (
+        "다음 실행 결과를 사용자에게 전달할 짧은 한국어 문장(1~2문장)으로 바꿔주세요.\n"
+        "규칙:\n"
+        "- 사실 추가/삭제 금지\n"
+        "- ID/링크/수치/에러코드 임의 변경 금지\n"
+        "- 친근하지만 업무용 톤\n"
+        f"- {max_chars}자 이내\n\n"
+        f"[원문 요청]\n{user_text}\n\n"
+        f"[기본 안내문]\n{base_preface}\n\n"
+        f"[실행 결과 요약]\n{execution_message}\n\n"
+        f"[error_code]\n{error_code or '-'}"
+    )
+    try:
+        if provider == "openai":
+            if not settings.openai_api_key:
+                return base_preface
+            async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                response = await client.post(
+                    OPENAI_CHAT_COMPLETIONS_URL,
+                    headers={"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": model,
+                        "temperature": 0.2,
+                        "messages": [
+                            {"role": "system", "content": "당신은 한국어 제품 어시스턴트입니다."},
+                            {"role": "user", "content": prompt},
+                        ],
+                    },
+                )
+            if response.status_code >= 400:
+                return base_preface
+            payload = response.json()
+            text = (((payload.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+            if text:
+                return text[:max_chars]
+            return base_preface
+
+        if provider == "google":
+            if not settings.google_api_key:
+                return base_preface
+            url = GEMINI_GENERATE_CONTENT_URL.format(model=model, api_key=settings.google_api_key)
+            async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                response = await client.post(
+                    url,
+                    headers={"Content-Type": "application/json"},
+                    json={"contents": [{"role": "user", "parts": [{"text": prompt}]}]},
+                )
+            if response.status_code >= 400:
+                return base_preface
+            payload = response.json()
+            candidates = payload.get("candidates") or []
+            parts = (((candidates[0] if candidates else {}).get("content") or {}).get("parts") or [])
+            text = " ".join(str(part.get("text") or "") for part in parts).strip()
+            if text:
+                return text[:max_chars]
+            return base_preface
+    except Exception:
+        return base_preface
+    return base_preface
 
 
 def _map_natural_text_to_command(text: str) -> tuple[str, str]:
@@ -831,22 +925,44 @@ async def telegram_webhook(
                 verification_reason=verification_reason,
             )
 
+            report_text = (
+                "에이전트 실행 결과\n\n"
+                f"[1] 작업 요구사항\n{requirements_text}\n\n"
+                f"[2-3] 타겟 서비스 및 필요 API\n"
+                f"- 서비스: {services_text}\n"
+                f"- API/Tool:\n{tools_text}\n\n"
+                f"[3.5] 작업 분해(TOOL/LLM)\n{tasks_text}\n\n"
+                f"[4] 생성된 워크플로우\n{workflow_text}\n\n"
+                f"[실행 모드]\n- plan_source: {analysis.plan_source}\n- execution_mode: {execution_mode}{mode_extra}\n\n"
+                f"[5-6] 실행/결과 정리\n{execution_message}\n\n"
+                f"[실행 단계 로그]\n{execution_steps_text}"
+            )
+
+            user_preface = ""
+            if bool(getattr(settings, "telegram_user_preface_enabled", True)):
+                user_preface = _build_user_preface_template(
+                    ok=analysis.ok,
+                    error_code=execution_error_code,
+                    execution_message=execution_message,
+                )
+                if bool(getattr(settings, "telegram_user_preface_llm_enabled", True)) and _should_use_preface_llm(
+                    ok=analysis.ok,
+                    error_code=execution_error_code,
+                    execution_message=execution_message,
+                ):
+                    user_preface = await _rewrite_user_preface_with_llm(
+                        settings=settings,
+                        user_text=text,
+                        base_preface=user_preface,
+                        execution_message=execution_message,
+                        error_code=execution_error_code,
+                    )
+
             await _telegram_api(
                 "sendMessage",
                 {
                     "chat_id": chat_id,
-                    "text": (
-                        "에이전트 실행 결과\n\n"
-                        f"[1] 작업 요구사항\n{requirements_text}\n\n"
-                        f"[2-3] 타겟 서비스 및 필요 API\n"
-                        f"- 서비스: {services_text}\n"
-                        f"- API/Tool:\n{tools_text}\n\n"
-                        f"[3.5] 작업 분해(TOOL/LLM)\n{tasks_text}\n\n"
-                        f"[4] 생성된 워크플로우\n{workflow_text}\n\n"
-                        f"[실행 모드]\n- plan_source: {analysis.plan_source}\n- execution_mode: {execution_mode}{mode_extra}\n\n"
-                        f"[5-6] 실행/결과 정리\n{execution_message}\n\n"
-                        f"[실행 단계 로그]\n{execution_steps_text}"
-                    ),
+                    "text": (f"{user_preface}\n\n{report_text}" if user_preface else report_text),
                     "disable_web_page_preview": True,
                 },
             )

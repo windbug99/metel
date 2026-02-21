@@ -788,34 +788,41 @@ async def _autofill_task_payload(
         if team_id:
             filled["team_id"] = team_id
 
-    if "linear_update_issue" in tool_name and _missing(filled.get("issue_id")):
-        issue_id = slot_context.get("recent_linear_issue_id", "")
-        if not issue_id:
-            ref = _extract_linear_issue_reference_for_update(user_text) or _extract_linear_issue_reference(user_text) or ""
-            if ref:
+    if "linear_update_issue" in tool_name:
+        issue_ref = str(filled.get("issue_id") or "").strip()
+        if not issue_ref:
+            issue_ref = slot_context.get("recent_linear_issue_id", "")
+        if not issue_ref:
+            issue_ref = _extract_linear_issue_reference_for_update(user_text) or _extract_linear_issue_reference(user_text) or ""
+        if issue_ref:
+            issue_id = issue_ref
+            if not _looks_like_linear_internal_issue_id(issue_ref):
                 issue_id = await _resolve_linear_issue_id_from_reference(
                     user_id=user_id,
                     plan=plan,
-                    issue_reference=ref,
+                    issue_reference=issue_ref,
                     steps=steps,
                     step_name="slot_fill_linear_search_issue_for_update",
                 )
-        if issue_id:
-            filled["issue_id"] = issue_id
+            if issue_id:
+                filled["issue_id"] = issue_id
 
     if "linear_create_comment" in tool_name:
-        if _missing(filled.get("issue_id")):
-            issue_id = slot_context.get("recent_linear_issue_id", "")
-            if not issue_id:
-                ref = _extract_linear_issue_reference(user_text) or ""
-                if ref:
-                    issue_id = await _resolve_linear_issue_id_from_reference(
-                        user_id=user_id,
-                        plan=plan,
-                        issue_reference=ref,
-                        steps=steps,
-                        step_name="slot_fill_linear_search_issue_for_comment",
-                    )
+        issue_ref = str(filled.get("issue_id") or "").strip()
+        if not issue_ref:
+            issue_ref = slot_context.get("recent_linear_issue_id", "")
+        if not issue_ref:
+            issue_ref = _extract_linear_issue_reference(user_text) or ""
+        if issue_ref:
+            issue_id = issue_ref
+            if not _looks_like_linear_internal_issue_id(issue_ref):
+                issue_id = await _resolve_linear_issue_id_from_reference(
+                    user_id=user_id,
+                    plan=plan,
+                    issue_reference=issue_ref,
+                    steps=steps,
+                    step_name="slot_fill_linear_search_issue_for_comment",
+                )
             if issue_id:
                 filled["issue_id"] = issue_id
         if _missing(filled.get("body")):
@@ -896,6 +903,29 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
                     },
                     steps=steps + [AgentExecutionStep(name=task.id, status="error", detail=f"missing_slot:{missing_slot}")],
                 )
+            if "linear_update_issue" in tool_name:
+                has_update_field = any(
+                    payload.get(key) not in (None, "")
+                    for key in ("title", "description", "state_id", "priority")
+                )
+                if not has_update_field:
+                    return AgentExecutionResult(
+                        success=False,
+                        summary="Linear 이슈 수정 입력이 부족합니다.",
+                        user_message=(
+                            "`issue_id`와 변경할 필드가 필요합니다.\n"
+                            f"예: {_slot_prompt_example(tool_name, 'description')}"
+                        ),
+                        artifacts={
+                            "error_code": "validation_error",
+                            "slot_action": tool_name,
+                            "slot_task_id": task.id,
+                            "missing_slot": "description",
+                            "missing_slots": "description",
+                            "slot_payload_json": json.dumps(payload, ensure_ascii=False),
+                        },
+                        steps=steps + [AgentExecutionStep(name=task.id, status="error", detail="missing_update_fields")],
+                    )
             tool_result = await execute_tool(user_id=user_id, tool_name=tool_name, payload=payload)
             _update_slot_context_from_tool_result(slot_context=slot_context, tool_name=tool_name, tool_result=tool_result)
             task_outputs[task.id] = {"kind": "tool", "tool_name": tool_name, "tool_result": tool_result}
@@ -1416,6 +1446,11 @@ def _extract_linear_issue_reference(user_text: str) -> str | None:
 
 def _looks_like_linear_identifier(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z]{2,10}-\d{1,6}", (value or "").strip()))
+
+
+def _looks_like_linear_internal_issue_id(value: str) -> bool:
+    normalized = (value or "").strip()
+    return bool(re.fullmatch(r"[0-9a-fA-F]{8,}-[0-9a-fA-F-]{8,}", normalized))
 
 
 async def _resolve_linear_issue_id_from_reference(

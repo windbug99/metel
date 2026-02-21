@@ -337,6 +337,13 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
             {"query": query, "first": max(1, min(20, first))},
         )
     if tool_name == "linear_create_issue":
+        input_data: dict[str, Any] = {
+            "teamId": str(payload.get("team_id", "")),
+            "title": str(payload.get("title", "")),
+            "description": str(payload.get("description", "")),
+        }
+        if payload.get("priority") is not None:
+            input_data["priority"] = int(payload.get("priority", 0))
         return (
             """
             mutation CreateIssue($input: IssueCreateInput!) {
@@ -351,13 +358,7 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
               }
             }
             """,
-            {
-                "input": {
-                    "teamId": str(payload.get("team_id", "")),
-                    "title": str(payload.get("title", "")),
-                    "description": str(payload.get("description", "")),
-                }
-            },
+            {"input": input_data},
         )
     if tool_name == "linear_list_teams":
         first = int(payload.get("first", 10))
@@ -382,6 +383,8 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
             input_data["title"] = str(payload.get("title", ""))
         if payload.get("description") is not None:
             input_data["description"] = str(payload.get("description", ""))
+        if payload.get("priority") is not None:
+            input_data["priority"] = int(payload.get("priority", 0))
         if payload.get("state_id") is not None:
             input_data["stateId"] = str(payload.get("state_id", ""))
         return (
