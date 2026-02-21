@@ -194,10 +194,10 @@ def test_linear_query_and_variables_create_comment():
     assert variables["input"]["body"] == "Need review"
 
 
-def test_linear_query_and_variables_search_by_identifier():
+def test_linear_query_and_variables_search_issues_uses_title_filter():
     query, variables = _linear_query_and_variables("linear_search_issues", {"query": "OPT-35", "first": 7})
-    assert "SearchIssuesByIdentifier" in query
-    assert "identifier: { eq: $query }" in query
+    assert "query SearchIssues" in query
+    assert "title: { containsIgnoreCase: $query }" in query
     assert variables["query"] == "OPT-35"
     assert variables["first"] == 7
 
