@@ -1,5 +1,6 @@
 import logging
 import uuid
+import json
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +19,47 @@ logger = logging.getLogger("metel-backend")
 
 app = FastAPI(title="metel backend", version="0.1.0")
 
-origins = [origin.strip() for origin in settings.allowed_origins.split(",") if origin.strip()]
+
+def _normalize_origin(value: str) -> str:
+    # Accept env values with quotes/brackets/trailing slash.
+    return value.strip().strip("\"'").rstrip("/")
+
+
+def _parse_allowed_origins(raw: str, fallback_frontend_url: str) -> list[str]:
+    text = (raw or "").strip()
+    parsed: list[str] = []
+
+    # 1) JSON array form: ["https://a.com","https://b.com"]
+    if text.startswith("[") and text.endswith("]"):
+        try:
+            items = json.loads(text)
+            if isinstance(items, list):
+                parsed.extend(str(item) for item in items if isinstance(item, str))
+        except Exception:
+            pass
+
+    # 2) Comma/newline separated form.
+    if not parsed:
+        normalized_text = text.replace("\n", ",")
+        parsed.extend(part for part in normalized_text.split(",") if part.strip())
+
+    # 3) Ensure frontend_url is always included as fallback.
+    if fallback_frontend_url:
+        parsed.append(fallback_frontend_url)
+
+    origins: list[str] = []
+    seen: set[str] = set()
+    for item in parsed:
+        origin = _normalize_origin(item)
+        if not origin or origin in seen:
+            continue
+        seen.add(origin)
+        origins.append(origin)
+    return origins
+
+
+origins = _parse_allowed_origins(settings.allowed_origins, settings.frontend_url)
+logger.info("cors_allowed_origins=%s", origins)
 
 app.add_middleware(
     CORSMiddleware,
