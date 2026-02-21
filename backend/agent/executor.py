@@ -455,7 +455,9 @@ def _has_task_orchestration_candidate(plan: AgentPlan) -> bool:
     tasks = plan.tasks or []
     if not tasks:
         return False
-    return any(_is_llm_task(task) for task in tasks) and any(_is_tool_task(task) for task in tasks)
+    if not any(_is_tool_task(task) for task in tasks):
+        return False
+    return all(task.task_type.upper() in {"TOOL", "LLM"} for task in tasks)
 
 
 def _extract_page_url_from_tool_result(result: dict) -> str:

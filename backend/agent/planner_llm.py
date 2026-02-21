@@ -223,6 +223,9 @@ def _normalize_structured_slots_payload(
                 slots_by_action[action_name] = dict(slots)
 
     if not slots_by_action:
+        # Intent-only output is still useful for task rewrite/routing.
+        if intent and intent != "unknown":
+            return intent, {}, None
         return intent, {}, "structured_slots_empty"
     return intent, slots_by_action, None
 
@@ -256,6 +259,27 @@ def _apply_structured_slots_to_plan(
         task.payload = {**normalized, **(task.payload or {})}
         notes.append(f"structured_slots_applied:{tool_name}")
     return plan, notes
+
+
+def _maybe_rewrite_tasks_by_intent(*, plan: AgentPlan, intent: str) -> tuple[AgentPlan, str | None]:
+    normalized_intent = (intent or "").strip().lower()
+    if normalized_intent != "update":
+        return plan, None
+    has_update_tool = any(
+        task.task_type == "TOOL" and "update" in str(task.tool_name or "").lower()
+        for task in (plan.tasks or [])
+    )
+    if has_update_tool:
+        return plan, None
+    rewritten = build_execution_tasks(
+        user_text=plan.user_text,
+        target_services=plan.target_services,
+        selected_tools=plan.selected_tools,
+    )
+    if not rewritten:
+        return plan, None
+    plan.tasks = rewritten
+    return plan, "tasks_rewritten_by_structured_intent:update"
 
 
 async def _try_structured_parse_with_llm(
@@ -414,6 +438,9 @@ async def try_build_agent_plan_with_llm(
                 intent=intent,
                 slots_by_action=slots_by_action,
             )
+            plan, rewrite_note = _maybe_rewrite_tasks_by_intent(plan=plan, intent=intent)
+            if rewrite_note:
+                plan.notes.append(rewrite_note)
             if structured_notes:
                 plan.notes.extend(structured_notes)
             plan.notes.append("structured_parser=llm")

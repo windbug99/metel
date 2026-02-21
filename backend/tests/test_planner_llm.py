@@ -252,4 +252,48 @@ def test_try_build_agent_plan_with_llm_structured_parser_fallback(monkeypatch):
     )
     assert err is None
     assert plan is not None
-    assert any(note.startswith("structured_parser_fallback:") for note in plan.notes)
+    assert any(note == "structured_parser=llm" for note in plan.notes)
+    assert any(note == "structured_intent=search" for note in plan.notes)
+
+
+def test_try_build_agent_plan_with_llm_rewrites_update_tasks_by_intent(monkeypatch):
+    async def _fake_request_plan(**kwargs):
+        _ = kwargs
+        return {
+            "requirements": ["linear 이슈 업데이트"],
+            "target_services": ["linear"],
+            "selected_tools": ["linear_search_issues"],
+            "tasks": [
+                {
+                    "id": "task_linear_issues",
+                    "title": "조회",
+                    "task_type": "TOOL",
+                    "service": "linear",
+                    "tool_name": "linear_search_issues",
+                    "depends_on": [],
+                    "payload": {"first": 5},
+                    "output_schema": {"type": "tool_result", "service": "linear", "tool": "linear_search_issues"},
+                }
+            ],
+            "workflow_steps": ["조회"],
+            "notes": [],
+        }, None
+
+    async def _fake_request_structured(**kwargs):
+        _ = kwargs
+        return {"intent": "update", "slots": {}}, None
+
+    monkeypatch.setattr("agent.planner_llm.get_settings", lambda: _settings())
+    monkeypatch.setattr("agent.planner_llm._request_plan_with_provider", _fake_request_plan)
+    monkeypatch.setattr("agent.planner_llm._request_structured_parse_with_provider", _fake_request_structured)
+
+    plan, err = asyncio.run(
+        try_build_agent_plan_with_llm(
+            user_text="linear 이슈 업데이트",
+            connected_services=["linear"],
+        )
+    )
+    assert err is None
+    assert plan is not None
+    assert any((task.tool_name or "") == "linear_update_issue" for task in plan.tasks if task.task_type == "TOOL")
+    assert any(note == "tasks_rewritten_by_structured_intent:update" for note in plan.notes)

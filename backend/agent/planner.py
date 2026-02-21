@@ -174,6 +174,19 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
                     output_schema={"type": "tool_result", "service": "linear", "tool": create_tool},
                 )
             )
+        elif is_update_intent(user_text) and ("이슈" in user_text or "issue" in user_text.lower()):
+            update_tool = _pick_tool_name(selected_tools, "linear", "update", "issue") or "linear_update_issue"
+            tasks.append(
+                AgentTask(
+                    id="task_linear_update_issue",
+                    title="Linear 이슈 수정",
+                    task_type="TOOL",
+                    service="linear",
+                    tool_name=update_tool,
+                    payload={},
+                    output_schema={"type": "tool_result", "service": "linear", "tool": update_tool},
+                )
+            )
         else:
             search_tool = _pick_tool_name(selected_tools, "linear", "search", "issues")
             if not search_tool:
