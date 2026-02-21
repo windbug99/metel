@@ -346,3 +346,26 @@ def test_execute_linear_create_issue_uses_task_payload(monkeypatch):
     result = asyncio.run(execute_agent_plan("user-1", plan))
     assert result.success is True
     assert [name for name, _ in calls] == ["linear_create_issue"]
+
+
+def test_execute_linear_update_issue_returns_slot_metadata_when_missing(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="linear 이슈 업데이트",
+        requirements=[AgentRequirement(summary="Linear 이슈 업데이트")],
+        target_services=["linear"],
+        selected_tools=["linear_search_issues"],
+        workflow_steps=[],
+        tasks=[],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "validation_error"
+    assert result.artifacts.get("slot_action") == "linear_update_issue"
+    assert result.artifacts.get("missing_slot") == "issue_id"

@@ -1852,7 +1852,9 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         )
 
     if is_update_intent(text) and "이슈" in text:
-        issue_reference = _extract_linear_issue_reference(plan.user_text)
+        update_task = _find_task(plan.tasks or [], task_type="TOOL", service="linear", tool_token="update_issue")
+        update_payload = dict((update_task.payload or {})) if update_task else {}
+        issue_reference = str(update_payload.get("issue_id") or _extract_linear_issue_reference(plan.user_text) or "").strip()
         issue_id = await _resolve_linear_issue_id_from_reference(
             user_id=user_id,
             plan=plan,
@@ -1860,7 +1862,11 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             steps=steps,
             step_name="linear_search_issue_for_update",
         )
-        update_fields = _extract_linear_update_fields(plan.user_text)
+        extracted_update_fields = _extract_linear_update_fields(plan.user_text)
+        update_fields = dict(extracted_update_fields)
+        for key in ("title", "description", "state_id", "priority"):
+            if key in update_payload and update_payload.get(key) not in (None, ""):
+                update_fields[key] = update_payload.get(key)
         if update_fields.get("description"):
             resolved_description, description_err = await _resolve_linear_update_description_from_notion(
                 user_id=user_id,
@@ -1887,6 +1893,12 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
                 )
             update_fields["description"] = resolved_description or ""
         if not issue_id or not update_fields:
+            missing_slots: list[str] = []
+            if not issue_id:
+                missing_slots.append("issue_id")
+            if not update_fields:
+                # 대표 변경 필드를 1개씩 질문 루프로 유도한다.
+                missing_slots.append("description")
             return AgentExecutionResult(
                 success=False,
                 summary="Linear 이슈 수정 입력이 부족합니다.",
@@ -1894,7 +1906,20 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
                     "`issue_id`(또는 `identifier`)와 변경 필드가 필요합니다.\n"
                     "예: `Linear 이슈 수정 issue_id OPT-35 설명: 내용입니다.`"
                 ),
-                artifacts={"error_code": "validation_error"},
+                artifacts={
+                    "error_code": "validation_error",
+                    "slot_action": "linear_update_issue",
+                    "slot_task_id": (update_task.id if update_task else "task_linear_update_issue"),
+                    "missing_slot": (missing_slots[0] if missing_slots else "issue_id"),
+                    "missing_slots": ",".join(missing_slots) if missing_slots else "issue_id,description",
+                    "slot_payload_json": json.dumps(
+                        {
+                            "issue_id": issue_id,
+                            **update_fields,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
                 steps=steps + [AgentExecutionStep(name="extract_update_issue_input", status="error", detail="missing_issue_or_fields")],
             )
         updated = await execute_tool(
