@@ -1,5 +1,6 @@
 from agent.pending_action import clear_pending_action
 from agent.pending_action import get_pending_action
+from agent.pending_action import _pending_from_row
 from agent.pending_action import set_pending_action
 from agent.types import AgentPlan
 from agent.types import AgentRequirement
@@ -64,3 +65,22 @@ def test_pending_action_auto_mode_falls_back_to_memory_when_db_fails(monkeypatch
     assert item.action == "linear_update_issue"
     assert item.missing_slots == ["description"]
     clear_pending_action("user-fallback")
+
+
+def test_pending_action_parses_stringified_json_row():
+    row = {
+        "user_id": "u1",
+        "intent": "linear_create_issue",
+        "action": "linear_create_issue",
+        "task_id": "task_linear_create_issue",
+        "plan_json": '{"user_text":"linear 이슈 생성해줘","requirements":[{"summary":"이슈 제목","quantity":null,"constraints":[]}],"target_services":["linear"],"selected_tools":["linear_create_issue"],"workflow_steps":["1"],"tasks":[],"notes":["slot_loop_enabled=1"]}',
+        "plan_source": "llm",
+        "collected_slots": '{"title":"로그인 오류 수정"}',
+        "missing_slots": '["team_id"]',
+        "expires_at": 9999999999,
+    }
+    item = _pending_from_row(row)
+    assert item is not None
+    assert item.plan.user_text == "linear 이슈 생성해줘"
+    assert item.collected_slots.get("title") == "로그인 오류 수정"
+    assert item.missing_slots == ["team_id"]

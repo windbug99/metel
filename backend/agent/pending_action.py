@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import asdict
@@ -121,9 +122,11 @@ def _pending_from_row(row: dict[str, Any]) -> PendingAction | None:
         expires_at = float(row.get("expires_at", 0.0))
     except (TypeError, ValueError):
         expires_at = 0.0
-    plan_payload = row.get("plan_json")
-    if not isinstance(plan_payload, dict):
+    plan_payload = _as_json_dict(row.get("plan_json"))
+    if not plan_payload:
         return None
+    collected_slots = _as_json_dict(row.get("collected_slots"))
+    missing_slots = _as_json_list(row.get("missing_slots"))
     return PendingAction(
         user_id=str(row.get("user_id", "")),
         intent=str(row.get("intent", "")),
@@ -131,10 +134,40 @@ def _pending_from_row(row: dict[str, Any]) -> PendingAction | None:
         task_id=str(row.get("task_id", "")),
         plan=_plan_from_dict(plan_payload),
         plan_source=str(row.get("plan_source", "rule")),
-        collected_slots=dict(row.get("collected_slots") or {}),
-        missing_slots=list(row.get("missing_slots") or []),
+        collected_slots=collected_slots,
+        missing_slots=[str(item).strip() for item in missing_slots if str(item).strip()],
         expires_at=expires_at,
     )
+
+
+def _as_json_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _as_json_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+    return []
 
 
 def _db_get_pending_action(user_id: str) -> PendingAction | None:
