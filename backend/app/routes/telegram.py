@@ -15,6 +15,7 @@ from supabase import create_client
 from agent.loop import run_agent_analysis
 from agent.registry import load_registry
 from agent.service_resolver import resolve_primary_service
+from agent.slot_schema import get_action_slot_schema
 from app.core.auth import get_authenticated_user_id
 from app.core.config import get_settings
 from app.security.token_vault import TokenVault
@@ -331,6 +332,21 @@ def _agent_error_guide(error_code: str | None, verification_reason: str | None =
     if not hint:
         return ""
     return f"\n\n[오류 가이드]\n- 코드: {error_code}\n- 안내: {hint}"
+
+
+def _slot_input_example(action: str, slot_name: str) -> str:
+    schema = get_action_slot_schema(action)
+    if not schema:
+        return f"{slot_name}: <값>"
+    aliases = schema.aliases.get(slot_name) or ()
+    key = aliases[0] if aliases else slot_name
+    rule = schema.validation_rules.get(slot_name) or {}
+    value_type = str(rule.get("type", "")).strip().lower()
+    if value_type == "integer":
+        return f"{key}: 5"
+    if value_type == "boolean":
+        return f"{key}: true"
+    return f'{key}: "값"'
 
 
 def _autonomous_fallback_hint(reason: str | None) -> str:
@@ -718,6 +734,8 @@ async def telegram_webhook(
             llm_provider = None
             llm_model = None
             guardrail_degrade_reason = None
+            missing_slot = None
+            slot_action = None
             for note in analysis.plan.notes:
                 if note.startswith("autonomous_error="):
                     autonomous_fallback_reason = note.split("=", 1)[1]
@@ -734,6 +752,8 @@ async def telegram_webhook(
                 )
                 execution_message = analysis.execution.user_message
                 execution_error_code = analysis.execution.artifacts.get("error_code")
+                missing_slot = analysis.execution.artifacts.get("missing_slot")
+                slot_action = analysis.execution.artifacts.get("slot_action")
                 verification_reason = analysis.execution.artifacts.get("verification_reason")
                 if not llm_provider:
                     llm_provider = analysis.execution.artifacts.get("llm_provider")
@@ -752,6 +772,13 @@ async def telegram_webhook(
                     autonomous_fallback_reason = execution_error_code
                 if execution_error_code:
                     execution_message += _agent_error_guide(execution_error_code, verification_reason)
+                if execution_error_code == "validation_error" and missing_slot:
+                    example = _slot_input_example(str(slot_action or ""), str(missing_slot))
+                    execution_message += (
+                        "\n\n[입력 보완]\n"
+                        f"- 누락 항목: {missing_slot}\n"
+                        f"- 입력 예시: {example}"
+                    )
             if execution_mode == "rule" and guardrail_degrade_reason:
                 autonomous_fallback_reason = guardrail_degrade_reason
             mode_extra = ""

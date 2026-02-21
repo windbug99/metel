@@ -7,6 +7,7 @@ import httpx
 
 from agent.planner import build_agent_plan, build_execution_tasks
 from agent.registry import load_registry
+from agent.slot_schema import validate_slots
 from agent.types import AgentPlan, AgentRequirement, AgentTask
 from app.core.config import get_settings
 
@@ -192,6 +193,140 @@ def _to_agent_plan(
     )
 
 
+def _normalize_structured_slots_payload(
+    payload: dict,
+    *,
+    available_tool_names: set[str],
+) -> tuple[str, dict[str, dict], str | None]:
+    intent = str(payload.get("intent") or "").strip().lower() or "unknown"
+    slots_by_action: dict[str, dict] = {}
+
+    raw_slots = payload.get("slots")
+    if isinstance(raw_slots, dict):
+        for action, slots in raw_slots.items():
+            action_name = str(action or "").strip()
+            if action_name not in available_tool_names:
+                continue
+            if isinstance(slots, dict):
+                slots_by_action[action_name] = dict(slots)
+
+    actions = payload.get("actions")
+    if isinstance(actions, list):
+        for item in actions:
+            if not isinstance(item, dict):
+                continue
+            action_name = str(item.get("action") or item.get("tool_name") or "").strip()
+            if action_name not in available_tool_names:
+                continue
+            slots = item.get("slots")
+            if isinstance(slots, dict):
+                slots_by_action[action_name] = dict(slots)
+
+    if not slots_by_action:
+        return intent, {}, "structured_slots_empty"
+    return intent, slots_by_action, None
+
+
+def _apply_structured_slots_to_plan(
+    *,
+    plan: AgentPlan,
+    intent: str,
+    slots_by_action: dict[str, dict],
+) -> tuple[AgentPlan, list[str]]:
+    notes: list[str] = []
+    if intent:
+        notes.append(f"structured_intent={intent}")
+    if not slots_by_action:
+        return plan, notes
+
+    for task in plan.tasks:
+        if task.task_type != "TOOL":
+            continue
+        tool_name = str(task.tool_name or "").strip()
+        if not tool_name:
+            continue
+        parsed_slots = slots_by_action.get(tool_name)
+        if not isinstance(parsed_slots, dict):
+            continue
+        normalized, _, validation_errors = validate_slots(tool_name, parsed_slots)
+        if validation_errors:
+            notes.append(f"structured_slots_validation_error:{tool_name}:{validation_errors[0]}")
+            continue
+        # Keep task payload precedence for planner-inferred control fields.
+        task.payload = {**normalized, **(task.payload or {})}
+        notes.append(f"structured_slots_applied:{tool_name}")
+    return plan, notes
+
+
+async def _try_structured_parse_with_llm(
+    *,
+    user_text: str,
+    connected_services: list[str],
+    available_tools: list,
+    settings,
+) -> tuple[tuple[str, dict[str, dict]] | None, str | None]:
+    available_tool_names = {tool.tool_name for tool in available_tools}
+    if not available_tool_names:
+        return None, "no_available_tools"
+
+    connected = ", ".join(connected_services) if connected_services else "(없음)"
+    tool_names = ", ".join(sorted(available_tool_names))
+    system_prompt = (
+        "당신은 metel의 구조화 파서입니다. "
+        "반드시 JSON object만 응답하세요. "
+        "intent와 action별 slots를 추출하며, 제공된 tool_name만 사용하세요."
+    )
+    user_prompt = (
+        f"사용자 요청: {user_text}\n"
+        f"연결 서비스: {connected}\n"
+        f"허용 tool_name: {tool_names}\n\n"
+        "JSON 형식:\n"
+        "{\n"
+        '  "intent": "search|create|update|delete|summary|query|unknown",\n'
+        '  "slots": {\n'
+        '    "tool_name": {"slot_key": "value"}\n'
+        "  }\n"
+        "}\n"
+    )
+
+    attempts: list[tuple[str, str]] = []
+    primary_provider = (settings.llm_planner_provider or "openai").strip().lower()
+    primary_model = settings.llm_planner_model
+    attempts.append((primary_provider, primary_model))
+    fallback_provider = (settings.llm_planner_fallback_provider or "").strip().lower()
+    fallback_model = (settings.llm_planner_fallback_model or "").strip()
+    if fallback_provider and fallback_model:
+        attempts.append((fallback_provider, fallback_model))
+
+    errors: list[str] = []
+    used: set[tuple[str, str]] = set()
+    for provider, model in attempts:
+        key = (provider, model)
+        if key in used:
+            continue
+        used.add(key)
+        parsed, err = await _request_structured_parse_with_provider(
+            provider=provider,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            openai_api_key=settings.openai_api_key,
+            google_api_key=settings.google_api_key,
+        )
+        if err:
+            errors.append(f"{provider}:{err}")
+            continue
+        intent, slots_by_action, normalize_err = _normalize_structured_slots_payload(
+            parsed,
+            available_tool_names=available_tool_names,
+        )
+        if normalize_err:
+            errors.append(f"{provider}:{normalize_err}")
+            continue
+        return (intent, slots_by_action), None
+    return None, "|".join(errors) if errors else "structured_parse_unknown_error"
+
+
 async def try_build_agent_plan_with_llm(
     *,
     user_text: str,
@@ -266,6 +401,26 @@ async def try_build_agent_plan_with_llm(
             errors.append(f"{provider}:{err}")
             continue
         plan = _to_agent_plan(user_text=user_text, connected_services=connected_services, payload=parsed)
+        structured, structured_err = await _try_structured_parse_with_llm(
+            user_text=user_text,
+            connected_services=connected_services,
+            available_tools=available_tools,
+            settings=settings,
+        )
+        if structured:
+            intent, slots_by_action = structured
+            plan, structured_notes = _apply_structured_slots_to_plan(
+                plan=plan,
+                intent=intent,
+                slots_by_action=slots_by_action,
+            )
+            if structured_notes:
+                plan.notes.extend(structured_notes)
+            plan.notes.append("structured_parser=llm")
+            plan.notes.append("semantic_parse=llm")
+            plan.notes.append("execution_decision=rule")
+        elif structured_err:
+            plan.notes.append(f"structured_parser_fallback:{structured_err}")
         plan.notes.append(f"llm_provider={provider}")
         plan.notes.append(f"llm_model={model}")
         return plan, None
@@ -357,3 +512,22 @@ async def _request_plan_with_provider(
             return None, f"error:{exc.__class__.__name__}"
 
     return None, "unsupported_provider"
+
+
+async def _request_structured_parse_with_provider(
+    *,
+    provider: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    openai_api_key: str | None,
+    google_api_key: str | None,
+) -> tuple[dict | None, str | None]:
+    return await _request_plan_with_provider(
+        provider=provider,
+        model=model,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        openai_api_key=openai_api_key,
+        google_api_key=google_api_key,
+    )

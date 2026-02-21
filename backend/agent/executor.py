@@ -17,6 +17,7 @@ from agent.intent_keywords import (
     is_summary_intent,
     is_update_intent,
 )
+from agent.slot_schema import get_action_slot_schema, validate_slots
 from agent.tool_runner import execute_tool
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentTask
 from app.core.config import get_settings
@@ -561,6 +562,252 @@ def _build_task_tool_payload(
     return payload
 
 
+def _slot_prompt_example(tool_name: str, slot_name: str) -> str:
+    schema = get_action_slot_schema(tool_name)
+    if not schema:
+        return f"{slot_name}: <값>"
+    aliases = schema.aliases.get(slot_name) or ()
+    hint = aliases[0] if aliases else slot_name
+    rule = schema.validation_rules.get(slot_name) or {}
+    slot_type = str(rule.get("type", "")).strip().lower()
+    if slot_type == "integer":
+        return f"{hint}: 5"
+    if slot_type == "boolean":
+        return f"{hint}: true"
+    return f'{hint}: "값"'
+
+
+def _missing(value: object) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _first_notion_page_id(result: dict) -> str:
+    data = result.get("data") or {}
+    if isinstance(data, dict):
+        page_id = str(data.get("id") or "").strip()
+        if page_id:
+            return page_id
+        results = data.get("results") or []
+        if isinstance(results, list):
+            for item in results:
+                if not isinstance(item, dict):
+                    continue
+                candidate = str(item.get("id") or "").strip()
+                if candidate:
+                    return candidate
+    return ""
+
+
+def _first_linear_issue_id(result: dict) -> str:
+    data = result.get("data") or {}
+    if not isinstance(data, dict):
+        return ""
+    issues = ((data.get("issues") or {}).get("nodes") or [])
+    if isinstance(issues, list):
+        for item in issues:
+            if not isinstance(item, dict):
+                continue
+            candidate = str(item.get("id") or "").strip()
+            if candidate:
+                return candidate
+    for key in ("issueCreate", "issueUpdate"):
+        payload = data.get(key) or {}
+        issue = payload.get("issue") if isinstance(payload, dict) else {}
+        if isinstance(issue, dict):
+            candidate = str(issue.get("id") or "").strip()
+            if candidate:
+                return candidate
+    return ""
+
+
+def _first_linear_team_id(result: dict) -> str:
+    data = result.get("data") or {}
+    teams = ((data.get("teams") or {}).get("nodes") or []) if isinstance(data, dict) else []
+    if isinstance(teams, list):
+        for item in teams:
+            if not isinstance(item, dict):
+                continue
+            candidate = str(item.get("id") or "").strip()
+            if candidate:
+                return candidate
+    return ""
+
+
+def _update_slot_context_from_tool_result(slot_context: dict[str, str], tool_name: str, tool_result: dict) -> None:
+    if "notion" in tool_name:
+        page_id = _first_notion_page_id(tool_result)
+        if page_id:
+            slot_context["recent_notion_page_id"] = page_id
+    if "linear" in tool_name:
+        issue_id = _first_linear_issue_id(tool_result)
+        if issue_id:
+            slot_context["recent_linear_issue_id"] = issue_id
+        team_id = _first_linear_team_id(tool_result)
+        if team_id:
+            slot_context["recent_linear_team_id"] = team_id
+
+
+async def _resolve_notion_page_id_from_title(
+    *,
+    user_id: str,
+    plan: AgentPlan,
+    page_title: str,
+    steps: list[AgentExecutionStep],
+) -> str:
+    title = (page_title or "").strip()
+    if not title:
+        return ""
+    result = await execute_tool(
+        user_id=user_id,
+        tool_name=_pick_tool(plan, "search", "notion_search"),
+        payload={"query": title, "page_size": 5},
+    )
+    pages = ((result.get("data") or {}).get("results") or [])
+    steps.append(AgentExecutionStep(name="slot_fill_notion_search", status="success", detail=f"count={len(pages)}"))
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        page_id = str(page.get("id") or "").strip()
+        if page_id:
+            return page_id
+    return ""
+
+
+def _extract_first_quoted_text(user_text: str) -> str | None:
+    for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', user_text or ""):
+        value = (a or b or "").strip()
+        if value:
+            return value
+    return None
+
+
+async def _autofill_task_payload(
+    *,
+    user_id: str,
+    plan: AgentPlan,
+    task: AgentTask,
+    payload: dict,
+    steps: list[AgentExecutionStep],
+    slot_context: dict[str, str],
+) -> dict:
+    tool_name = (task.tool_name or "").strip().lower()
+    filled = dict(payload or {})
+    user_text = plan.user_text or ""
+
+    if "notion_search" in tool_name and _missing(filled.get("query")):
+        query = _extract_target_page_title(user_text) or _extract_first_quoted_text(user_text) or ""
+        if query:
+            filled["query"] = query
+
+    if "notion_query_data_source" in tool_name and _missing(filled.get("data_source_id")):
+        parsed_id, parsed_page_size, _ = _extract_data_source_query_request(user_text)
+        if parsed_id:
+            filled["data_source_id"] = parsed_id
+        if _missing(filled.get("page_size")):
+            filled["page_size"] = parsed_page_size
+
+    if "notion_update_page" in tool_name and _missing(filled.get("page_id")):
+        page_id = slot_context.get("recent_notion_page_id", "")
+        if not page_id:
+            rename_title, _ = _extract_page_rename_request(user_text)
+            move_title, _ = _extract_move_request(user_text)
+            archive_title = _extract_page_archive_target(user_text)
+            candidate_title = rename_title or move_title or archive_title or _extract_first_quoted_text(user_text) or ""
+            if candidate_title:
+                page_id = await _resolve_notion_page_id_from_title(
+                    user_id=user_id,
+                    plan=plan,
+                    page_title=candidate_title,
+                    steps=steps,
+                )
+        if page_id:
+            filled["page_id"] = page_id
+
+    if "notion_append_block_children" in tool_name and _missing(filled.get("block_id")):
+        page_id = slot_context.get("recent_notion_page_id", "")
+        if not page_id:
+            target_title, content = _extract_append_target_and_content(user_text)
+            candidate_title = target_title or _extract_first_quoted_text(user_text) or ""
+            if candidate_title:
+                page_id = await _resolve_notion_page_id_from_title(
+                    user_id=user_id,
+                    plan=plan,
+                    page_title=candidate_title,
+                    steps=steps,
+                )
+            if _missing(filled.get("children")) and content:
+                filled["children"] = [
+                    {
+                        "object": "block",
+                        "type": "paragraph",
+                        "paragraph": {"rich_text": [{"type": "text", "text": {"content": content[:1800]}}]},
+                    }
+                ]
+        if page_id:
+            filled["block_id"] = page_id
+
+    if "linear_create_issue" in tool_name:
+        if _missing(filled.get("title")):
+            title_match = re.search(r"(?i)(?:제목|title)\s*[:：]\s*(.+)$", user_text)
+            if title_match:
+                filled["title"] = title_match.group(1).strip(" \"'`")
+        if _missing(filled.get("team_id")):
+            team_id = slot_context.get("recent_linear_team_id", "")
+            if not team_id:
+                team_reference = _extract_linear_team_reference(user_text) or ""
+                if team_reference:
+                    team_id = await _resolve_linear_team_id_from_reference(
+                        user_id=user_id,
+                        plan=plan,
+                        team_reference=team_reference,
+                        steps=steps,
+                    )
+            if team_id:
+                filled["team_id"] = team_id
+
+    if "linear_update_issue" in tool_name and _missing(filled.get("issue_id")):
+        issue_id = slot_context.get("recent_linear_issue_id", "")
+        if not issue_id:
+            ref = _extract_linear_issue_reference_for_update(user_text) or _extract_linear_issue_reference(user_text) or ""
+            if ref:
+                issue_id = await _resolve_linear_issue_id_from_reference(
+                    user_id=user_id,
+                    plan=plan,
+                    issue_reference=ref,
+                    steps=steps,
+                    step_name="slot_fill_linear_search_issue_for_update",
+                )
+        if issue_id:
+            filled["issue_id"] = issue_id
+
+    if "linear_create_comment" in tool_name:
+        if _missing(filled.get("issue_id")):
+            issue_id = slot_context.get("recent_linear_issue_id", "")
+            if not issue_id:
+                ref = _extract_linear_issue_reference(user_text) or ""
+                if ref:
+                    issue_id = await _resolve_linear_issue_id_from_reference(
+                        user_id=user_id,
+                        plan=plan,
+                        issue_reference=ref,
+                        steps=steps,
+                        step_name="slot_fill_linear_search_issue_for_comment",
+                    )
+            if issue_id:
+                filled["issue_id"] = issue_id
+        if _missing(filled.get("body")):
+            body = _extract_linear_comment_body(user_text)
+            if body:
+                filled["body"] = body
+
+    if "linear_search_issues" in tool_name and _missing(filled.get("query")):
+        query = _extract_linear_search_query(user_text) or ""
+        if query:
+            filled["query"] = query
+
+    return filled
+
+
 async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExecutionResult | None:
     if not _has_task_orchestration_candidate(plan):
         return None
@@ -568,6 +815,7 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
     tasks = plan.tasks or []
     task_outputs: dict[str, dict] = {}
     steps: list[AgentExecutionStep] = []
+    slot_context: dict[str, str] = {}
 
     for task in tasks:
         missing_deps = [dep for dep in task.depends_on if dep not in task_outputs]
@@ -579,7 +827,54 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
             if not tool_name:
                 return None
             payload = _build_task_tool_payload(plan=plan, task=task, task_outputs=task_outputs)
+            payload = await _autofill_task_payload(
+                user_id=user_id,
+                plan=plan,
+                task=task,
+                payload=payload,
+                steps=steps,
+                slot_context=slot_context,
+            )
+            normalized, missing_slots, validation_errors = validate_slots(tool_name, payload)
+            payload = normalized
+            if validation_errors:
+                return AgentExecutionResult(
+                    success=False,
+                    summary="도구 실행 입력 검증에 실패했습니다.",
+                    user_message=(
+                        "입력 형식이 올바르지 않습니다.\n"
+                        f"- action: {tool_name}\n"
+                        f"- 오류: {validation_errors[0]}"
+                    ),
+                    artifacts={
+                        "error_code": "validation_error",
+                        "slot_action": tool_name,
+                        "slot_task_id": task.id,
+                        "validation_error": validation_errors[0],
+                    },
+                    steps=steps + [AgentExecutionStep(name=task.id, status="error", detail=f"validation:{validation_errors[0]}")],
+                )
+            if missing_slots:
+                missing_slot = missing_slots[0]
+                return AgentExecutionResult(
+                    success=False,
+                    summary="필수 입력 슬롯이 누락되었습니다.",
+                    user_message=(
+                        f"`{missing_slot}` 값을 먼저 알려주세요.\n"
+                        f"예: {_slot_prompt_example(tool_name, missing_slot)}"
+                    ),
+                    artifacts={
+                        "error_code": "validation_error",
+                        "slot_action": tool_name,
+                        "slot_task_id": task.id,
+                        "missing_slot": missing_slot,
+                        "missing_slots": ",".join(missing_slots),
+                        "slot_payload_json": json.dumps(payload, ensure_ascii=False),
+                    },
+                    steps=steps + [AgentExecutionStep(name=task.id, status="error", detail=f"missing_slot:{missing_slot}")],
+                )
             tool_result = await execute_tool(user_id=user_id, tool_name=tool_name, payload=payload)
+            _update_slot_context_from_tool_result(slot_context=slot_context, tool_name=tool_name, tool_result=tool_result)
             task_outputs[task.id] = {"kind": "tool", "tool_name": tool_name, "tool_result": tool_result}
             steps.append(AgentExecutionStep(name=task.id, status="success", detail=f"tool={tool_name}"))
             continue
@@ -1116,14 +1411,21 @@ async def _resolve_linear_issue_id_from_reference(
         return ref
 
     # Resolve identifier/key/name via search.
-    result = await execute_tool(
-        user_id=user_id,
-        tool_name=_pick_tool(plan, "linear_search_issues", "linear_search_issues"),
-        payload={"query": ref, "first": 20},
-    )
-    nodes = (((result.get("data") or {}).get("issues") or {}).get("nodes") or [])
-    steps.append(AgentExecutionStep(name=step_name, status="success", detail=f"count={len(nodes)}"))
-    if not nodes and _looks_like_linear_identifier(ref):
+    nodes: list[dict] = []
+    search_failed = False
+    try:
+        result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "linear_search_issues", "linear_search_issues"),
+            payload={"query": ref, "first": 20},
+        )
+        nodes = (((result.get("data") or {}).get("issues") or {}).get("nodes") or [])
+        steps.append(AgentExecutionStep(name=step_name, status="success", detail=f"count={len(nodes)}"))
+    except HTTPException as exc:
+        search_failed = True
+        steps.append(AgentExecutionStep(name=step_name, status="error", detail=str(exc.detail)))
+
+    if (search_failed or not nodes) and _looks_like_linear_identifier(ref):
         # Fallback for environments where search filter may not match identifier directly.
         listed = await execute_tool(
             user_id=user_id,
