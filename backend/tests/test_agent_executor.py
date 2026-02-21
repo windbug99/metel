@@ -296,3 +296,53 @@ def test_task_orchestration_autofills_notion_append_with_search(monkeypatch):
     result = asyncio.run(execute_agent_plan("user-1", plan))
     assert result.success is True
     assert [name for name, _ in calls] == ["notion_search", "notion_append_block_children"]
+
+
+def test_execute_linear_create_issue_uses_task_payload(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "linear_create_issue":
+            assert payload["team_id"] == "12345678-1234-1234-1234-1234567890ab"
+            assert payload["title"] == "로그인 오류 수정"
+            return {
+                "ok": True,
+                "data": {
+                    "issueCreate": {
+                        "issue": {
+                            "id": "issue-1",
+                            "identifier": "PLAT-1",
+                            "title": payload["title"],
+                            "url": "https://linear.app/i/1",
+                        }
+                    }
+                },
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="Linear 이슈 생성해줘",
+        requirements=[AgentRequirement(summary="Linear 이슈 생성")],
+        target_services=["linear"],
+        selected_tools=["linear_create_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_linear_create_issue",
+                title="Linear 이슈 생성",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_create_issue",
+                payload={"team_id": "12345678-1234-1234-1234-1234567890ab", "title": "로그인 오류 수정"},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert [name for name, _ in calls] == ["linear_create_issue"]

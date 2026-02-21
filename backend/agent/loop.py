@@ -561,7 +561,7 @@ async def _try_resume_pending_action(
     task_found = False
     for task in pending.plan.tasks:
         if task.id == pending.task_id or (task.tool_name or "") == pending.action:
-            task.payload = {**pending.collected_slots, **(task.payload or {})}
+            task.payload = {**(task.payload or {}), **pending.collected_slots}
             task_found = True
             break
     if not task_found:

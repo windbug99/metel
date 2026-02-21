@@ -1918,7 +1918,9 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
         )
 
     if is_linear_issue_create_intent(text) or any(token in text for token in ("이슈 만들", "issue 만들")):
-        team_reference = _extract_linear_team_reference(plan.user_text) or ""
+        create_task = _find_task(plan.tasks or [], task_type="TOOL", service="linear", tool_token="create_issue")
+        create_payload = dict((create_task.payload or {})) if create_task else {}
+        team_reference = str(create_payload.get("team_id") or create_payload.get("team") or _extract_linear_team_reference(plan.user_text) or "").strip()
         title_match = re.search(r'(?i)(?:제목|title)\s*[:：]\s*(.+)$', plan.user_text)
         team_id = await _resolve_linear_team_id_from_reference(
             user_id=user_id,
@@ -1926,9 +1928,16 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
             team_reference=team_reference,
             steps=steps,
         )
-        title = title_match.group(1).strip(" \"'`") if title_match else ""
+        title = str(create_payload.get("title") or "").strip()
+        if not title and title_match:
+            title = title_match.group(1).strip(" \"'`")
         if not team_id or not title:
-            reason = "missing_team_or_title" if not team_reference else "invalid_team_or_title"
+            missing_slots: list[str] = []
+            if not title:
+                missing_slots.append("title")
+            if not team_id:
+                missing_slots.append("team_id")
+            reason = "missing_team_or_title" if missing_slots else ("missing_team_or_title" if not team_reference else "invalid_team_or_title")
             return AgentExecutionResult(
                 success=False,
                 summary="Linear 이슈 생성 입력이 부족합니다.",
@@ -1936,7 +1945,20 @@ async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
                     "Linear 이슈 생성을 위해 `team`(ID/키/이름)과 `title`이 필요합니다.\n"
                     "예: `Linear team_id OPERATE 제목: 로그인 오류 수정 이슈 생성`"
                 ),
-                artifacts={"error_code": "validation_error"},
+                artifacts={
+                    "error_code": "validation_error",
+                    "slot_action": "linear_create_issue",
+                    "slot_task_id": (create_task.id if create_task else "task_linear_create_issue"),
+                    "missing_slot": (missing_slots[0] if missing_slots else "team_id"),
+                    "missing_slots": ",".join(missing_slots) if missing_slots else "team_id,title",
+                    "slot_payload_json": json.dumps(
+                        {
+                            "title": title,
+                            "team_id": team_id,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
                 steps=steps + [AgentExecutionStep(name="extract_create_issue_input", status="error", detail=reason)],
             )
         created = await execute_tool(
