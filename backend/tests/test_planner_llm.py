@@ -89,6 +89,13 @@ def test_try_build_agent_plan_with_llm_primary_openai(monkeypatch):
 
     monkeypatch.setattr("agent.planner_llm.get_settings", lambda: _settings())
     monkeypatch.setattr("agent.planner_llm._request_plan_with_provider", _fake_request)
+    async def _fake_structured(**kwargs):
+        assert kwargs["provider"] == "openai"
+        return {"intent": "search", "slots": {"notion_search": {"query": "최근"}}}, None
+    monkeypatch.setattr(
+        "agent.planner_llm._request_structured_parse_with_provider",
+        _fake_structured,
+    )
 
     plan, err = asyncio.run(
         try_build_agent_plan_with_llm(
@@ -112,6 +119,7 @@ def test_try_build_agent_plan_with_llm_fallback_to_gemini(monkeypatch):
 
     monkeypatch.setattr("agent.planner_llm.get_settings", lambda: _settings())
     monkeypatch.setattr("agent.planner_llm._request_plan_with_provider", _fake_request)
+    monkeypatch.setattr("agent.planner_llm._request_structured_parse_with_provider", _fake_request)
 
     plan, err = asyncio.run(
         try_build_agent_plan_with_llm(
@@ -121,7 +129,7 @@ def test_try_build_agent_plan_with_llm_fallback_to_gemini(monkeypatch):
     )
     assert err is None
     assert plan is not None
-    assert calls == ["openai", "gemini"]
+    assert calls == ["openai", "gemini", "openai", "gemini"]
     assert "llm_provider=gemini" in plan.notes
 
 
@@ -163,3 +171,85 @@ def test_try_build_agent_plan_with_llm_rejects_invalid_task_contract(monkeypatch
     assert plan is not None
     assert any(note.startswith("tasks_contract_rejected:") for note in plan.notes)
     assert any(task.output_schema for task in plan.tasks)
+
+
+def test_try_build_agent_plan_with_llm_applies_structured_slots(monkeypatch):
+    async def _fake_request_plan(**kwargs):
+        _ = kwargs
+        return {
+            "requirements": ["Linear 이슈 생성"],
+            "target_services": ["linear"],
+            "selected_tools": ["linear_create_issue"],
+            "tasks": [
+                {
+                    "id": "task_linear_create",
+                    "title": "이슈 생성",
+                    "task_type": "TOOL",
+                    "service": "linear",
+                    "tool_name": "linear_create_issue",
+                    "depends_on": [],
+                    "payload": {},
+                    "output_schema": {"type": "tool_result", "service": "linear", "tool": "linear_create_issue"},
+                }
+            ],
+            "workflow_steps": ["생성"],
+            "notes": ["ok"],
+        }, None
+
+    async def _fake_request_structured(**kwargs):
+        _ = kwargs
+        return {
+            "intent": "create",
+            "slots": {
+                "linear_create_issue": {
+                    "title": "로그인 오류 수정",
+                    "team_id": "team_123",
+                    "priority": 2,
+                }
+            },
+        }, None
+
+    monkeypatch.setattr("agent.planner_llm.get_settings", lambda: _settings())
+    monkeypatch.setattr("agent.planner_llm._request_plan_with_provider", _fake_request_plan)
+    monkeypatch.setattr("agent.planner_llm._request_structured_parse_with_provider", _fake_request_structured)
+
+    plan, err = asyncio.run(
+        try_build_agent_plan_with_llm(
+            user_text="Linear 이슈 생성: 제목 로그인 오류 수정, 팀 team_123",
+            connected_services=["linear"],
+        )
+    )
+    assert err is None
+    assert plan is not None
+    task = plan.tasks[0]
+    assert task.payload.get("title") == "로그인 오류 수정"
+    assert task.payload.get("team_id") == "team_123"
+    assert task.payload.get("priority") == 2
+    assert any(note == "structured_parser=llm" for note in plan.notes)
+    assert any(note == "semantic_parse=llm" for note in plan.notes)
+    assert any(note == "execution_decision=rule" for note in plan.notes)
+    assert any(note == "structured_intent=create" for note in plan.notes)
+
+
+def test_try_build_agent_plan_with_llm_structured_parser_fallback(monkeypatch):
+    async def _fake_request_plan(**kwargs):
+        _ = kwargs
+        return _sample_payload(), None
+
+    async def _fake_request_structured(**kwargs):
+        _ = kwargs
+        return {"intent": "search", "slots": {}}, None
+
+    monkeypatch.setattr("agent.planner_llm.get_settings", lambda: _settings())
+    monkeypatch.setattr("agent.planner_llm._request_plan_with_provider", _fake_request_plan)
+    monkeypatch.setattr("agent.planner_llm._request_structured_parse_with_provider", _fake_request_structured)
+
+    plan, err = asyncio.run(
+        try_build_agent_plan_with_llm(
+            user_text="노션 최근 페이지 조회",
+            connected_services=["notion"],
+        )
+    )
+    assert err is None
+    assert plan is not None
+    assert any(note.startswith("structured_parser_fallback:") for note in plan.notes)

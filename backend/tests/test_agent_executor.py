@@ -1,6 +1,7 @@
 import asyncio
 
 from agent.executor import (
+    execute_agent_plan,
     _format_summary_output,
     _extract_data_source_query_request,
     _extract_append_target_and_content,
@@ -17,6 +18,7 @@ from agent.executor import (
     _requires_spotify_recent_tracks_to_notion,
 )
 from agent.types import AgentPlan, AgentRequirement
+from agent.types import AgentTask
 
 
 def _build_plan(user_text: str, quantity: int | None = None) -> AgentPlan:
@@ -51,6 +53,11 @@ def test_extract_target_page_title_summary_pattern():
     assert title == "Metel test page"
 
 
+def test_extract_target_page_title_with_trailing_body():
+    title = _extract_target_page_title("노션에서 주간 회의록 페이지의 내용 중 핵심만 요약해줘 그리고 마지막에 TODO를 붙여줘")
+    assert title == "주간 회의록 페이지"
+
+
 def test_extract_requested_line_count():
     count = _extract_requested_line_count("노션에서 Metel test page의 내용 중 상위 10줄 출력")
     assert count == 10
@@ -60,6 +67,12 @@ def test_extract_append_target_and_content():
     title, content = _extract_append_target_and_content("노션에서 Metel test page에 액션 아이템 추가해줘")
     assert title == "Metel test page"
     assert content == "액션 아이템"
+
+
+def test_extract_append_target_and_content_content_first_formal():
+    title, content = _extract_append_target_and_content("다음 요약을 데일리 페이지에 추가해주세요")
+    assert title == "데일리"
+    assert content == "다음 요약을"
 
 
 def test_extract_page_rename_request():
@@ -154,3 +167,132 @@ def test_extract_page_archive_target():
 def test_requires_spotify_recent_tracks_to_notion():
     plan = _build_plan("스포티파이에서 최근 들었던 10곡을 노션에 spotify10 새로운 페이지에 작성하세요")
     assert _requires_spotify_recent_tracks_to_notion(plan) is True
+
+
+def test_task_orchestration_autofills_linear_create_issue_team_from_context(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "linear_list_teams":
+            return {
+                "ok": True,
+                "data": {"teams": {"nodes": [{"id": "team-1", "key": "PLAT", "name": "Platform"}]}},
+            }
+        if tool_name == "linear_create_issue":
+            assert payload["team_id"] == "team-1"
+            assert payload["title"] == "로그인 오류 수정"
+            return {
+                "ok": True,
+                "data": {
+                    "issueCreate": {
+                        "issue": {"id": "issue-1", "identifier": "PLAT-1", "title": payload["title"], "url": "https://linear.app/i/1"}
+                    }
+                },
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="Linear 이슈 생성 제목: 로그인 오류 수정",
+        requirements=[AgentRequirement(summary="Linear 이슈 생성")],
+        target_services=["linear"],
+        selected_tools=["linear_list_teams", "linear_create_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_linear_teams",
+                title="팀 조회",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_list_teams",
+                payload={"first": 5},
+                output_schema={"type": "tool_result"},
+            ),
+            AgentTask(
+                id="task_linear_summary",
+                title="요약",
+                task_type="LLM",
+                depends_on=["task_linear_teams"],
+                payload={"sentences": 1},
+                instruction="요약",
+                output_schema={"type": "text"},
+            ),
+            AgentTask(
+                id="task_linear_create",
+                title="이슈 생성",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_create_issue",
+                depends_on=["task_linear_summary"],
+                payload={"title": "로그인 오류 수정"},
+                output_schema={"type": "tool_result"},
+            ),
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert [name for name, _ in calls] == ["linear_list_teams", "linear_create_issue"]
+
+
+def test_task_orchestration_autofills_notion_append_with_search(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "notion_search":
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {
+                            "id": "30c50e84a3bf8109b781ed4e0e0dacb3",
+                            "url": "https://notion.so/page-1",
+                            "properties": {"title": {"type": "title", "title": [{"plain_text": "데일리"}]}},
+                        }
+                    ]
+                },
+            }
+        if tool_name == "notion_append_block_children":
+            assert payload["block_id"] == "30c50e84a3bf8109b781ed4e0e0dacb3"
+            assert payload.get("children")
+            return {"ok": True, "data": {"results": [{"id": "block-1"}]}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="노션에서 데일리 페이지에 확인 메모 추가해줘",
+        requirements=[AgentRequirement(summary="노션 본문 추가")],
+        target_services=["notion"],
+        selected_tools=["notion_search", "notion_append_block_children"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_llm_seed",
+                title="요약",
+                task_type="LLM",
+                payload={"sentences": 1},
+                instruction="요약",
+                output_schema={"type": "text"},
+            ),
+            AgentTask(
+                id="task_append",
+                title="본문 추가",
+                task_type="TOOL",
+                service="notion",
+                tool_name="notion_append_block_children",
+                depends_on=["task_llm_seed"],
+                payload={},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert [name for name, _ in calls] == ["notion_search", "notion_append_block_children"]

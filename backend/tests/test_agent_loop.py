@@ -2,6 +2,7 @@ import asyncio
 import httpx
 
 from agent.loop import run_agent_analysis
+from agent.pending_action import clear_pending_action, get_pending_action
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRequirement, AgentTask
 
 
@@ -14,6 +15,102 @@ def _sample_plan() -> AgentPlan:
         workflow_steps=["1", "2"],
         notes=[],
     )
+
+
+def test_run_agent_analysis_slot_question_and_resume(monkeypatch):
+    clear_pending_action("user-slot")
+    llm_plan = AgentPlan(
+        user_text="Linear 이슈 생성해줘",
+        requirements=[AgentRequirement(summary="Linear 이슈 생성")],
+        target_services=["linear"],
+        selected_tools=["linear_create_issue"],
+        workflow_steps=["1. create"],
+        tasks=[
+            AgentTask(
+                id="task_linear_create_issue",
+                title="Linear 이슈 생성",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_create_issue",
+                payload={},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    class _Settings:
+        llm_autonomous_enabled = False
+
+    calls = {"count": 0}
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return AgentExecutionResult(
+                success=False,
+                user_message="title missing",
+                summary="validation",
+                artifacts={
+                    "error_code": "validation_error",
+                    "slot_action": "linear_create_issue",
+                    "slot_task_id": "task_linear_create_issue",
+                    "missing_slot": "title",
+                    "missing_slots": "title",
+                    "slot_payload_json": "{}",
+                },
+            )
+        task = plan.tasks[0]
+        assert task.payload.get("title") == "로그인 오류 수정"
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    first = asyncio.run(run_agent_analysis("Linear 이슈 생성해줘", ["linear"], "user-slot"))
+    assert first.ok is False
+    assert first.execution is not None
+    assert "title" in first.execution.user_message
+    assert get_pending_action("user-slot") is not None
+
+    second = asyncio.run(run_agent_analysis('제목: "로그인 오류 수정"', ["linear"], "user-slot"))
+    assert second.ok is False
+    assert second.execution is not None
+    assert "team_id" in second.execution.user_message
+    assert get_pending_action("user-slot") is not None
+
+    third = asyncio.run(run_agent_analysis('팀: "team_123"', ["linear"], "user-slot"))
+    assert third.ok is True
+    assert third.result_summary == "done"
+    assert get_pending_action("user-slot") is None
+    clear_pending_action("user-slot")
+
+
+def test_run_agent_analysis_skips_regex_prescreen_when_llm_planner_enabled(monkeypatch):
+    llm_plan = _sample_plan()
+
+    class _Settings:
+        llm_autonomous_enabled = False
+        llm_planner_enabled = True
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        assert plan is llm_plan
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("노션 데이터소스 invalid-id 조회해줘", ["notion"], "user-1"))
+    assert result.ok is True
+    assert result.result_summary == "done"
 
 
 def test_run_agent_analysis_uses_llm_plan(monkeypatch):
@@ -441,6 +538,10 @@ def test_run_agent_analysis_progress_guard_disabled_allows_rule_fallback(monkeyp
 def test_run_agent_analysis_validates_data_source_id_early(monkeypatch):
     called = {"llm": False, "exec": False}
 
+    class _Settings:
+        llm_autonomous_enabled = False
+        llm_planner_enabled = False
+
     async def _fake_try_build(**kwargs):
         called["llm"] = True
         raise AssertionError("llm planner should not be called for invalid data source id")
@@ -449,6 +550,7 @@ def test_run_agent_analysis_validates_data_source_id_early(monkeypatch):
         called["exec"] = True
         raise AssertionError("executor should not be called for invalid data source id")
 
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
     monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
     monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
 
