@@ -477,6 +477,65 @@ def _looks_like_slot_only_input(text: str) -> bool:
     return not has_service_or_action
 
 
+def _apply_slot_loop_from_validation_error(
+    *,
+    execution: AgentExecutionResult,
+    plan,
+    plan_source: str,
+    user_id: str,
+    enabled: bool,
+) -> None:
+    if not enabled:
+        return
+    if execution.success or execution.artifacts.get("error_code") != "validation_error":
+        return
+    action = str(execution.artifacts.get("slot_action", "") or "").strip()
+    missing_slot = str(execution.artifacts.get("missing_slot", "") or "").strip()
+    task_id = str(execution.artifacts.get("slot_task_id", "") or "").strip()
+    payload_json = str(execution.artifacts.get("slot_payload_json", "") or "").strip()
+    if not (action and missing_slot):
+        for step in execution.steps:
+            detail = str(step.detail or "")
+            match = re.search(r"([a-z_]+):VALIDATION_REQUIRED:([a-z_]+)", detail)
+            if not match:
+                continue
+            action = action or match.group(1)
+            missing_slot = missing_slot or match.group(2)
+            task_id = task_id or action
+            break
+    if not (action and missing_slot and task_id):
+        return
+
+    payload = {}
+    if payload_json:
+        try:
+            parsed = json.loads(payload_json)
+            if isinstance(parsed, dict):
+                payload = parsed
+        except Exception:
+            payload = {}
+    missing_slots = [slot.strip() for slot in str(execution.artifacts.get("missing_slots", "")).split(",") if slot.strip()]
+    if not missing_slots:
+        missing_slots = [missing_slot]
+    plan.notes.append("slot_loop_started")
+    plan.notes.append("slot_loop_restarted_from_validation_error")
+    set_pending_action(
+        user_id=user_id,
+        intent=action,
+        action=action,
+        task_id=task_id,
+        plan=plan,
+        plan_source=plan_source,
+        collected_slots=payload,
+        missing_slots=missing_slots,
+    )
+    execution.user_message = (
+        f"{_build_slot_question_message(action, missing_slot)}\n\n"
+        f"{_build_validation_guide_message(action, missing_slot)}"
+    )
+    execution.artifacts["next_action"] = "provide_slot_value"
+
+
 async def _try_resume_pending_action(
     *,
     user_id: str,
@@ -616,6 +675,13 @@ async def _try_resume_pending_action(
                 pending.plan.notes.append(f"response_finalizer={finalizer_mode}")
             pending.plan.notes.append("pending_action_autofill_retry")
             pending.plan.notes.append("slot_loop_autofill_retry")
+            _apply_slot_loop_from_validation_error(
+                execution=execution,
+                plan=pending.plan,
+                plan_source=pending.plan_source,
+                user_id=user_id,
+                enabled=True,
+            )
             return AgentRunResult(
                 ok=execution.success,
                 stage="execution",
@@ -988,49 +1054,13 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     if finalizer_mode != "disabled":
         plan.notes.append(f"response_finalizer={finalizer_mode}")
     plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
-    if not execution.success and execution.artifacts.get("error_code") == "validation_error":
-        action = str(execution.artifacts.get("slot_action", "") or "").strip()
-        missing_slot = str(execution.artifacts.get("missing_slot", "") or "").strip()
-        task_id = str(execution.artifacts.get("slot_task_id", "") or "").strip()
-        payload_json = str(execution.artifacts.get("slot_payload_json", "") or "").strip()
-        if not (action and missing_slot):
-            for step in execution.steps:
-                detail = str(step.detail or "")
-                match = re.search(r"([a-z_]+):VALIDATION_REQUIRED:([a-z_]+)", detail)
-                if not match:
-                    continue
-                action = action or match.group(1)
-                missing_slot = missing_slot or match.group(2)
-                task_id = task_id or action
-                break
-        if action and missing_slot and task_id and slot_loop_enabled:
-            payload = {}
-            if payload_json:
-                try:
-                    parsed = json.loads(payload_json)
-                    if isinstance(parsed, dict):
-                        payload = parsed
-                except Exception:
-                    payload = {}
-            missing_slots = [slot.strip() for slot in str(execution.artifacts.get("missing_slots", "")).split(",") if slot.strip()]
-            if not missing_slots:
-                missing_slots = [missing_slot]
-            plan.notes.append("slot_loop_started")
-            set_pending_action(
-                user_id=user_id,
-                intent=action,
-                action=action,
-                task_id=task_id,
-                plan=plan,
-                plan_source=plan_source,
-                collected_slots=payload,
-                missing_slots=missing_slots,
-            )
-            execution.user_message = (
-                f"{_build_slot_question_message(action, missing_slot)}\n\n"
-                f"{_build_validation_guide_message(action, missing_slot)}"
-            )
-            execution.artifacts["next_action"] = "provide_slot_value"
+    _apply_slot_loop_from_validation_error(
+        execution=execution,
+        plan=plan,
+        plan_source=plan_source,
+        user_id=user_id,
+        enabled=slot_loop_enabled,
+    )
 
     summary = execution.summary
     return AgentRunResult(

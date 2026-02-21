@@ -63,8 +63,25 @@ def test_run_agent_analysis_slot_question_and_resume(monkeypatch):
                     "slot_payload_json": "{}",
                 },
             )
+        if calls["count"] == 2:
+            task = plan.tasks[0]
+            assert task.payload.get("title") == "로그인 오류 수정"
+            return AgentExecutionResult(
+                success=False,
+                user_message='`team_id` 값을 먼저 알려주세요.\n예: 팀: "값"',
+                summary="validation",
+                artifacts={
+                    "error_code": "validation_error",
+                    "slot_action": "linear_create_issue",
+                    "slot_task_id": "task_linear_create_issue",
+                    "missing_slot": "team_id",
+                    "missing_slots": "team_id",
+                    "slot_payload_json": '{"title":"로그인 오류 수정"}',
+                },
+            )
         task = plan.tasks[0]
         assert task.payload.get("title") == "로그인 오류 수정"
+        assert task.payload.get("team_id") == "team_123"
         return AgentExecutionResult(success=True, user_message="ok", summary="done")
 
     monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
@@ -79,8 +96,14 @@ def test_run_agent_analysis_slot_question_and_resume(monkeypatch):
     assert get_pending_action("user-slot") is not None
 
     second = asyncio.run(run_agent_analysis('제목: "로그인 오류 수정"', ["linear"], "user-slot"))
-    assert second.ok is True
-    assert second.result_summary == "done"
+    assert second.ok is False
+    assert second.execution is not None
+    assert "team_id" in second.execution.user_message
+    assert get_pending_action("user-slot") is not None
+
+    third = asyncio.run(run_agent_analysis('팀: "team_123"', ["linear"], "user-slot"))
+    assert third.ok is True
+    assert third.result_summary == "done"
     assert get_pending_action("user-slot") is None
     clear_pending_action("user-slot")
 

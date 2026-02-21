@@ -750,14 +750,34 @@ async def _autofill_task_payload(
             filled["block_id"] = page_id
 
     if "linear_create_issue" in tool_name:
+        # LLM payload가 과추출한 title/team 값을 보정하기 위해 keyed input을 항상 우선 반영한다.
+        collected = collect_slots_from_user_reply(
+            action="linear_create_issue",
+            user_text=user_text,
+            collected_slots=filled,
+        )
+        for key in ("title", "team_id", "description", "priority"):
+            value = collected.collected_slots.get(key)
+            if value not in (None, ""):
+                filled[key] = value
+
         if _missing(filled.get("title")):
-            title_match = re.search(r"(?i)(?:제목|title)\s*[:：]\s*(.+)$", user_text)
+            title_match = re.search(
+                r'(?i)(?:제목|title)\s*[:：]\s*(.+?)(?:\s*(?:,|;)?\s*(?:팀|team|내용|설명|description|priority|우선순위)\s*[:：]|$)',
+                user_text,
+            )
             if title_match:
-                filled["title"] = title_match.group(1).strip(" \"'`")
-        if _missing(filled.get("team_id")):
+                filled["title"] = title_match.group(1).strip(" \"'`,")
+
+        team_reference = str(filled.get("team_id") or "").strip()
+        team_id = ""
+        if team_reference and _looks_like_linear_team_id(team_reference):
+            team_id = team_reference
+        else:
             team_id = slot_context.get("recent_linear_team_id", "")
             if not team_id:
-                team_reference = _extract_linear_team_reference(user_text) or ""
+                if not team_reference:
+                    team_reference = _extract_linear_team_reference(user_text) or ""
                 if team_reference:
                     team_id = await _resolve_linear_team_id_from_reference(
                         user_id=user_id,
@@ -765,8 +785,8 @@ async def _autofill_task_payload(
                         team_reference=team_reference,
                         steps=steps,
                     )
-            if team_id:
-                filled["team_id"] = team_id
+        if team_id:
+            filled["team_id"] = team_id
 
     if "linear_update_issue" in tool_name and _missing(filled.get("issue_id")):
         issue_id = slot_context.get("recent_linear_issue_id", "")
