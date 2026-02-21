@@ -464,6 +464,19 @@ def _is_slot_loop_enabled(settings, user_id: str) -> bool:
     return bucket < rollout
 
 
+def _looks_like_slot_only_input(text: str) -> bool:
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if not _has_keyed_slot_marker(raw):
+        return False
+    lowered = raw.lower()
+    service_tokens = ("notion", "노션", "linear", "리니어", "spotify", "스포티파이")
+    action_tokens = ("생성", "수정", "삭제", "조회", "검색", "추가", "요약", "create", "update", "delete", "search")
+    has_service_or_action = any(token in lowered for token in service_tokens) or any(token in lowered for token in action_tokens)
+    return not has_service_or_action
+
+
 async def _try_resume_pending_action(
     *,
     user_id: str,
@@ -696,6 +709,30 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
         _ = get_pending_action(user_id)
         if _ is not None:
             clear_pending_action(user_id)
+
+    if slot_loop_enabled and _looks_like_slot_only_input(user_text):
+        plan = build_agent_plan(user_text=user_text, connected_services=connected_services)
+        plan.notes.append("slot_loop_orphan_slot_input")
+        plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+        execution = AgentExecutionResult(
+            success=False,
+            summary="진행 중인 작업을 찾지 못했습니다.",
+            user_message=(
+                "현재 이어서 입력할 보류 작업이 없습니다.\n"
+                "먼저 작업 요청을 입력해주세요.\n"
+                "예: `linear 이슈 생성해줘`"
+            ),
+            artifacts={"error_code": "validation_error", "next_action": "start_new_request"},
+            steps=[AgentExecutionStep(name="slot_loop_orphan_slot_input", status="error", detail="no_pending_action")],
+        )
+        return AgentRunResult(
+            ok=False,
+            stage="validation",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="rule",
+        )
 
     llm_planner_enabled = bool(getattr(settings, "llm_planner_enabled", False))
 
@@ -978,6 +1015,7 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             missing_slots = [slot.strip() for slot in str(execution.artifacts.get("missing_slots", "")).split(",") if slot.strip()]
             if not missing_slots:
                 missing_slots = [missing_slot]
+            plan.notes.append("slot_loop_started")
             set_pending_action(
                 user_id=user_id,
                 intent=action,
@@ -988,7 +1026,6 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
                 collected_slots=payload,
                 missing_slots=missing_slots,
             )
-            plan.notes.append("slot_loop_started")
             execution.user_message = (
                 f"{_build_slot_question_message(action, missing_slot)}\n\n"
                 f"{_build_validation_guide_message(action, missing_slot)}"

@@ -203,6 +203,31 @@ def test_run_agent_analysis_does_not_start_slot_loop_when_disabled(monkeypatch):
     assert any(note == "slot_loop_enabled=0" for note in result.plan.notes)
 
 
+def test_run_agent_analysis_rejects_orphan_slot_only_input(monkeypatch):
+    clear_pending_action("user-orphan-slot")
+
+    class _Settings:
+        llm_autonomous_enabled = False
+        slot_loop_enabled = True
+        slot_loop_rollout_percent = 100
+
+    async def _fake_try_build(**kwargs):
+        raise AssertionError("planner should not run for orphan slot-only input")
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        raise AssertionError("executor should not run for orphan slot-only input")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("팀: operate", ["linear"], "user-orphan-slot"))
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("next_action") == "start_new_request"
+    assert "보류 작업이 없습니다" in result.execution.user_message
+
+
 def test_run_agent_analysis_skips_regex_prescreen_when_llm_planner_enabled(monkeypatch):
     llm_plan = _sample_plan()
 
