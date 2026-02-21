@@ -1377,7 +1377,7 @@ def _extract_linear_issue_reference(user_text: str) -> str | None:
             return value
     # Title/reference form: "이슈: 구글로그인 구현" / "issue: login"
     title_like = re.search(
-        r"(?i)(?:이슈|issue)\s*[:：]\s*(.+?)(?:\s+(?:설명|description|제목|title|상태|state_id)\s*[:：]|$)",
+        r"(?i)(?:이슈|issue)\s*[:：]\s*(.+?)(?:\s+(?:설명|description|본문|내용|제목|title|상태|state_id)\s*[:：]|$)",
         user_text.strip(),
     )
     if title_like:
@@ -1479,10 +1479,10 @@ def _extract_linear_comment_body(user_text: str) -> str | None:
 
 def _extract_linear_update_fields(user_text: str) -> dict:
     fields: dict[str, str] = {}
-    title_match = re.search(r'(?i)(?:제목|title)\s*[:：]\s*(.+?)(?:\s+(?:설명|description|상태|state_id)\s*[:：]|$)', user_text)
+    title_match = re.search(r'(?i)(?:제목|title)\s*[:：]\s*(.+?)(?:\s+(?:설명|description|본문|내용|상태|state_id)\s*[:：]|$)', user_text)
     if title_match:
         fields["title"] = title_match.group(1).strip(" \"'`")
-    description_match = re.search(r'(?i)(?:설명|description)\s*[:：]\s*(.+?)(?:\s+(?:제목|title|상태|state_id)\s*[:：]|$)', user_text)
+    description_match = re.search(r'(?i)(?:설명|description|본문|내용)\s*[:：]\s*(.+?)(?:\s+(?:제목|title|상태|state_id)\s*[:：]|$)', user_text)
     if description_match:
         fields["description"] = description_match.group(1).strip(" \"'`")
     state_match = re.search(r'(?i)(?:상태|state_id)\s*[:：]\s*([0-9a-fA-F\-]{8,})', user_text)

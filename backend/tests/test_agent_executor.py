@@ -16,6 +16,8 @@ from agent.executor import (
     _validate_summary_output,
     _extract_target_page_title,
     _requires_spotify_recent_tracks_to_notion,
+    _extract_linear_issue_reference,
+    _extract_linear_update_fields,
 )
 from agent.types import AgentPlan, AgentRequirement
 from agent.types import AgentTask
@@ -162,6 +164,16 @@ def test_summarize_text_with_llm_retries_once_on_invalid_output(monkeypatch):
 def test_extract_page_archive_target():
     title = _extract_page_archive_target("노션에서 Metel test page 페이지 삭제해줘")
     assert title == "Metel test page"
+
+
+def test_extract_linear_issue_reference_with_body_keyword():
+    ref = _extract_linear_issue_reference("linear 이슈 업데이트 이슈:OPT-36 본문: 로그인 버튼 클릭 시 오류")
+    assert ref == "OPT-36"
+
+
+def test_extract_linear_update_fields_supports_body_keyword():
+    fields = _extract_linear_update_fields("linear 이슈 업데이트 이슈:OPT-36 본문: 로그인 버튼 클릭 시 오류")
+    assert fields.get("description") == "로그인 버튼 클릭 시 오류"
 
 
 def test_requires_spotify_recent_tracks_to_notion():
