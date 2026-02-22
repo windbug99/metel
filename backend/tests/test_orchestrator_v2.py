@@ -123,7 +123,7 @@ def test_route_request_v2_skill_then_llm_for_notion_analysis():
 def test_route_request_v2_llm_then_skill_for_notion_update():
     decision = route_request_v2('노션에서 "스프린트 회고" 페이지 업데이트해줘', ["notion"])
     assert decision.mode == MODE_LLM_THEN_SKILL
-    assert decision.selected_tools == ["notion_append_block_children"]
+    assert decision.selected_tools == ["notion_search", "notion_append_block_children"]
     assert decision.arguments.get("notion_page_title") == "스프린트 회고"
 
 
@@ -183,7 +183,7 @@ def test_route_request_v2_llm_then_skill_for_linear_create_service_first_title()
 def test_route_request_v2_llm_then_skill_for_notion_delete():
     decision = route_request_v2('노션에서 "스프린트 회고" 페이지 삭제해줘', ["notion"])
     assert decision.mode == MODE_LLM_THEN_SKILL
-    assert decision.selected_tools == ["notion_update_page"]
+    assert decision.selected_tools == ["notion_search", "notion_update_page"]
     assert decision.arguments.get("notion_page_title") == "스프린트 회고"
 
 

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "summary": "Search Linear issues",
   "provider": { "service": "linear", "auth": "oauth", "scopes": ["read"] },
-  "runtime_tools": ["linear_search_issues"],
+  "runtime_tools": ["linear_search_issues", "linear_list_issues"],
   "autofill": {
     "sources": ["chat_context.last_issue_reference"],
     "rules": ["if query is null, ask user"]

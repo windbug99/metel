@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "summary": "Update Notion page content/properties",
   "provider": { "service": "notion", "auth": "oauth", "scopes": ["update_content"] },
-  "runtime_tools": ["notion_append_block_children"],
+  "runtime_tools": ["notion_search", "notion_append_block_children"],
   "autofill": {
     "sources": ["chat_context.last_active_page_id"],
     "rules": ["if page_id is null, resolve by title search"]
