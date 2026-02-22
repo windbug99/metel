@@ -659,6 +659,25 @@ def _linear_issue_links_block(tool_result: dict, *, limit: int = 10) -> str:
     return "관련 이슈 링크:\n" + "\n".join(lines)
 
 
+def _linear_issue_list_text(tool_result: dict, *, limit: int = 10) -> str:
+    nodes = _linear_issue_nodes(tool_result)
+    if not nodes:
+        return "조회된 이슈가 없습니다."
+    lines = [f"Linear 최근 이슈 {min(limit, len(nodes))}건"]
+    for idx, node in enumerate(nodes[: max(1, limit)], start=1):
+        identifier = str(node.get("identifier") or "-").strip()
+        title = str(node.get("title") or "(제목 없음)").strip()
+        state = str(((node.get("state") or {}).get("name") or "")).strip()
+        issue_url = str(node.get("url") or "").strip()
+        base = f"{idx}. [{identifier}] {title}"
+        if state:
+            base += f" ({state})"
+        if issue_url:
+            base += f"\n   {issue_url}"
+        lines.append(base)
+    return "\n".join(lines)
+
+
 async def _linear_search_with_issue_ref_fallback(*, user_id: str, issue_ref: str) -> dict:
     query = (issue_ref or "").strip()
     searched = await execute_tool(
@@ -1355,6 +1374,29 @@ async def try_run_v2_orchestration(
                     raise NeedsInputSignal(
                         missing_fields=["target.issue_ref"],
                         questions=[f"'{query or issue_ref or user_text}' 이슈를 찾지 못했습니다. 이슈 키(예: OPT-35)를 확인해 주세요."],
+                    )
+                # "최근/목록/검색" 요청은 해설 생성 대신 결과 리스트를 직접 반환한다.
+                if _is_linear_recent_list_intent(user_text) and not _is_analysis_intent(user_text):
+                    execution = AgentExecutionResult(
+                        success=True,
+                        user_message=_linear_issue_list_text(tool_result, limit=first),
+                        summary="Linear 최근 이슈 조회 완료",
+                        artifacts={"router_mode": decision.mode},
+                        steps=[
+                            AgentExecutionStep(
+                                name="skill_linear_issue_lookup",
+                                status="success",
+                                detail=f"query={query or issue_ref or '-'};first={first}",
+                            )
+                        ],
+                    )
+                    return AgentRunResult(
+                        ok=True,
+                        stage="execution",
+                        plan=plan,
+                        result_summary=execution.summary,
+                        execution=execution,
+                        plan_source="router_v2",
                     )
                 issue_context = _linear_issues_to_context(tool_result)
                 prompt = (

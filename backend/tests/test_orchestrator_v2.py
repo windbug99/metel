@@ -314,8 +314,7 @@ def test_try_run_v2_orchestration_skill_then_llm_linear_recent_list(monkeypatch)
         raise AssertionError(f"unexpected tool call: {tool_name}")
 
     async def _fake_llm(*, prompt: str):
-        assert "OPT-1" in prompt
-        return "최근 이슈 요약", "openai", "gpt-4o-mini"
+        raise AssertionError("llm should not be called for recent issue list intent")
 
     monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
     monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
@@ -332,8 +331,8 @@ def test_try_run_v2_orchestration_skill_then_llm_linear_recent_list(monkeypatch)
     assert result.ok is True
     assert result.execution is not None
     assert calls["list"] == 1
-    assert "최근 이슈 요약" in result.execution.user_message
-    assert "관련 이슈 링크:" in result.execution.user_message
+    assert "Linear 최근 이슈" in result.execution.user_message
+    assert "[OPT-1]" in result.execution.user_message
     assert "https://linear.app/issue/OPT-1" in result.execution.user_message
 
 
