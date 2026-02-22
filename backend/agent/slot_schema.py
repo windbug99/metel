@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import json
+import logging
 import re
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
+from app.core.config import get_settings
+
+
+logger = logging.getLogger("metel-backend.slot_schema")
 
 @dataclass(frozen=True)
 class ActionSlotSchema:
@@ -187,12 +195,100 @@ ACTION_SLOT_SCHEMAS: dict[str, ActionSlotSchema] = {
 }
 
 
+def _to_string_tuple(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    out: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            out.append(text)
+    return tuple(out)
+
+
+def _to_alias_map(value: Any) -> dict[str, tuple[str, ...]]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, tuple[str, ...]] = {}
+    for key, aliases in value.items():
+        slot_name = str(key or "").strip()
+        if not slot_name:
+            continue
+        out[slot_name] = _to_string_tuple(aliases)
+    return out
+
+
+def _to_validation_rules(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for key, rule in value.items():
+        slot_name = str(key or "").strip()
+        if not slot_name or not isinstance(rule, dict):
+            continue
+        out[slot_name] = dict(rule)
+    return out
+
+
+def _parse_external_schema(action: str, payload: Any) -> ActionSlotSchema | None:
+    if not isinstance(payload, dict):
+        return None
+    action_name = str(payload.get("action") or action).strip()
+    if not action_name:
+        return None
+    return ActionSlotSchema(
+        action=action_name,
+        required_slots=_to_string_tuple(payload.get("required_slots")),
+        optional_slots=_to_string_tuple(payload.get("optional_slots")),
+        auto_fill_slots=_to_string_tuple(payload.get("auto_fill_slots")),
+        ask_order=_to_string_tuple(payload.get("ask_order")),
+        aliases=_to_alias_map(payload.get("aliases")),
+        validation_rules=_to_validation_rules(payload.get("validation_rules")),
+    )
+
+
+def _load_external_action_slot_schemas(path: str) -> dict[str, ActionSlotSchema]:
+    text_path = str(path or "").strip()
+    if not text_path:
+        return {}
+    try:
+        payload = json.loads(Path(text_path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        logger.warning("slot_schema_path_not_found path=%s", text_path)
+        return {}
+    except Exception as exc:
+        logger.warning("slot_schema_path_load_failed path=%s err=%s", text_path, exc)
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+
+    external: dict[str, ActionSlotSchema] = {}
+    for action, schema_payload in payload.items():
+        action_name = str(action or "").strip()
+        if not action_name:
+            continue
+        parsed = _parse_external_schema(action_name, schema_payload)
+        if not parsed:
+            continue
+        external[action_name] = parsed
+    return external
+
+
+@lru_cache(maxsize=1)
+def _merged_action_slot_schemas() -> dict[str, ActionSlotSchema]:
+    merged = dict(ACTION_SLOT_SCHEMAS)
+    slot_schema_path = str(getattr(get_settings(), "slot_schema_path", "") or "").strip()
+    if slot_schema_path:
+        merged.update(_load_external_action_slot_schemas(slot_schema_path))
+    return merged
+
+
 def get_action_slot_schema(action: str) -> ActionSlotSchema | None:
-    return ACTION_SLOT_SCHEMAS.get((action or "").strip())
+    return _merged_action_slot_schemas().get((action or "").strip())
 
 
 def list_action_slot_schemas() -> list[ActionSlotSchema]:
-    return list(ACTION_SLOT_SCHEMAS.values())
+    return list(_merged_action_slot_schemas().values())
 
 
 def normalize_slots(action: str, collected_slots: dict[str, Any]) -> dict[str, Any]:

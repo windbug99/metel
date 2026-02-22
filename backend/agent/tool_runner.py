@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import re
 from json import JSONDecodeError
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import httpx
 from fastapi import HTTPException
@@ -497,20 +497,38 @@ async def _execute_generic_http(user_id: str, tool: ToolDefinition, payload: dic
     return _parse_response_data(response)
 
 
+async def _execute_notion_service(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
+    if tool.tool_name.startswith("notion_oauth_token_"):
+        return await _execute_notion_oauth_http(tool=tool, payload=payload)
+    return await _execute_notion_http(user_id=user_id, tool=tool, payload=payload)
+
+
+ServiceExecutor = Callable[[str, ToolDefinition, dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+_SERVICE_EXECUTORS: dict[str, ServiceExecutor] = {
+    "notion": _execute_notion_service,
+    "spotify": _execute_spotify_http,
+    "linear": _execute_linear_http,
+}
+
+
+def _normalize_payload_for_tool(tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    if tool.service != "notion":
+        return normalized
+    normalized = _normalize_notion_payload(tool.tool_name, normalized)
+    if tool.tool_name == "notion_create_page":
+        normalized = _normalize_notion_create_page_payload(normalized)
+    return normalized
+
+
 async def execute_tool(user_id: str, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     registry = load_registry()
     tool = registry.get_tool(tool_name)
-    if tool.service == "notion":
-        payload = _normalize_notion_payload(tool.tool_name, dict(payload))
-        if tool.tool_name == "notion_create_page":
-            payload = _normalize_notion_create_page_payload(payload)
+    payload = _normalize_payload_for_tool(tool, payload)
     _validate_payload_by_schema(tool, payload)
-    if tool.service == "notion":
-        if tool.tool_name.startswith("notion_oauth_token_"):
-            return await _execute_notion_oauth_http(tool=tool, payload=payload)
-        return await _execute_notion_http(user_id=user_id, tool=tool, payload=payload)
-    if tool.service == "spotify":
-        return await _execute_spotify_http(user_id=user_id, tool=tool, payload=payload)
-    if tool.service == "linear":
-        return await _execute_linear_http(user_id=user_id, tool=tool, payload=payload)
+    executor = _SERVICE_EXECUTORS.get(tool.service)
+    if executor:
+        return await executor(user_id, tool, payload)
     return await _execute_generic_http(user_id=user_id, tool=tool, payload=payload)

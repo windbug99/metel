@@ -17,6 +17,17 @@ from agent.service_resolver import resolve_services
 from agent.types import AgentPlan, AgentRequirement, AgentTask
 
 
+def is_user_facing_tool(tool_name: str) -> bool:
+    name = (tool_name or "").strip().lower()
+    if not name:
+        return False
+    blocked_tokens = (
+        "oauth",
+        "token_exchange",
+    )
+    return not any(token in name for token in blocked_tokens)
+
+
 def _extract_quantity(text: str) -> int | None:
     match = re.search(r"(\d{1,2})\s*(개|건|페이지|page|pages|줄|line|lines)?", text, flags=re.IGNORECASE)
     if not match:
@@ -57,12 +68,13 @@ def _tokenize(text: str) -> set[str]:
 
 
 def _select_tools(user_text: str, tools: list[ToolDefinition], max_tools: int = 5) -> list[str]:
-    if not tools:
+    user_tools = [tool for tool in tools if is_user_facing_tool(tool.tool_name)]
+    if not user_tools:
         return []
 
     query_tokens = _tokenize(user_text)
     scored: list[tuple[str, int]] = []
-    for tool in tools:
+    for tool in user_tools:
         corpus = f"{tool.tool_name} {tool.description}"
         tool_tokens = _tokenize(corpus)
         overlap = len(query_tokens & tool_tokens)
@@ -87,7 +99,7 @@ def _select_tools(user_text: str, tools: list[ToolDefinition], max_tools: int = 
     selected = [name for name, score in scored if score > 0][:max_tools]
     if selected:
         return selected
-    return [tool.tool_name for tool in tools[: min(max_tools, len(tools))]]
+    return [tool.tool_name for tool in user_tools[: min(max_tools, len(user_tools))]]
 
 
 def _pick_tool_name(selected_tools: list[str], *tokens: str) -> str | None:
@@ -98,13 +110,82 @@ def _pick_tool_name(selected_tools: list[str], *tokens: str) -> str | None:
     return None
 
 
+def _pick_tool_name_from_pool(tool_names: list[str], *tokens: str) -> str | None:
+    if not tool_names:
+        return None
+    for tool_name in tool_names:
+        lower = str(tool_name or "").strip().lower()
+        if not lower:
+            continue
+        if all(token.lower() in lower for token in tokens):
+            return str(tool_name)
+    return None
+
+
+def _pick_tool_name_for_service(selected_tools: list[str], service: str | None, *tokens: str) -> str | None:
+    normalized_service = str(service or "").strip().lower()
+    for tool_name in selected_tools:
+        name = str(tool_name or "").strip()
+        if not name:
+            continue
+        lower = name.lower()
+        if normalized_service and _tool_service_name(name) != normalized_service:
+            continue
+        if all(token.lower() in lower for token in tokens):
+            return name
+    return None
+
+
+def _tool_service_name(tool_name: str) -> str | None:
+    name = str(tool_name or "").strip()
+    if "_" not in name:
+        return None
+    return name.split("_", 1)[0].strip().lower() or None
+
+
+def _pick_primary_tool_for_intent(user_text: str, selected_tools: list[str]) -> str | None:
+    tools = [str(item or "").strip() for item in selected_tools if str(item or "").strip()]
+    if not tools:
+        return None
+
+    def _first_match(*tokens: str) -> str | None:
+        for tool in tools:
+            lower = tool.lower()
+            if all(token in lower for token in tokens):
+                return tool
+        return None
+
+    if is_delete_intent(user_text):
+        return (
+            _first_match("delete")
+            or _first_match("archive")
+            or _first_match("update", "page")
+            or _first_match("update")
+            or tools[0]
+        )
+    if is_update_intent(user_text):
+        return _first_match("update") or _first_match("append") or _first_match("comment") or tools[0]
+    if is_create_intent(user_text):
+        return _first_match("create") or _first_match("append") or tools[0]
+    if is_read_intent(user_text) or is_summary_intent(user_text):
+        return (
+            _first_match("search")
+            or _first_match("list")
+            or _first_match("retrieve")
+            or _first_match("query")
+            or _first_match("get")
+            or tools[0]
+        )
+    return tools[0]
+
+
 def _extract_linear_query_from_text(user_text: str) -> str | None:
     quoted = re.findall(r'"([^"]+)"|\'([^\']+)\'', user_text)
     for a, b in quoted:
         candidate = (a or b or "").strip()
         if candidate:
             return candidate
-    match = re.search(r"(?i)(?:linear|리니어)(?:의|에서)?\s*(.+?)\s*(?:의)?\s*이슈", user_text.strip())
+    match = re.search(r"(?i)(.+?)\s*(?:의)?\s*이슈", user_text.strip())
     if not match:
         return None
     candidate = match.group(1).strip(" \"'`")
@@ -119,7 +200,7 @@ def _extract_summary_sentence_count(user_text: str) -> int | None:
 
 
 def _extract_output_title_hint(user_text: str) -> str | None:
-    match = re.search(r"(?i)(?:notion|노션)(?:의)?\s*(.+?)\s*(?:새로운|신규|new)\s*페이지", user_text)
+    match = re.search(r"(?i)(?:의)?\s*(.+?)\s*(?:새로운|신규|new)\s*페이지", user_text)
     if match:
         candidate = match.group(1).strip(" \"'`")
         if candidate:
@@ -142,71 +223,90 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
     need_creation = is_create_intent(user_text)
     sentence_count = _extract_summary_sentence_count(user_text) or 3
 
+    registry = load_registry()
+    available_tools = [
+        tool.tool_name
+        for tool in registry.list_available_tools(connected_services=target_services)
+        if is_user_facing_tool(tool.tool_name)
+    ]
+
+    def _pick(tokens: tuple[str, ...]) -> str | None:
+        return _pick_tool_name(selected_tools, *tokens) or _pick_tool_name_from_pool(available_tools, *tokens)
+
     tasks: list[AgentTask] = []
+    primary_service = target_services[0] if target_services else None
 
-    if "notion" in target_services and is_data_source_intent(user_text):
-        query_tool = _pick_tool_name(selected_tools, "notion", "query", "data_source") or "notion_query_data_source"
-        data_source_id = _extract_data_source_id_from_text(user_text)
-        if data_source_id:
+    if is_data_source_intent(user_text):
+        query_tool = _pick(("query", "data_source")) or _pick(("retrieve", "data_source"))
+        service = _tool_service_name(query_tool or "")
+        if query_tool:
+            payload = {"page_size": 5}
+            data_source_id = _extract_data_source_id_from_text(user_text)
+            if data_source_id:
+                payload["data_source_id"] = data_source_id
+            task_id = f"task_{service}_data_source_query" if service else "task_data_source_query"
             tasks.append(
                 AgentTask(
-                    id="task_notion_data_source_query",
-                    title="Notion 데이터소스 조회",
+                    id=task_id,
+                    title="데이터소스 조회",
                     task_type="TOOL",
-                    service="notion",
+                    service=service,
                     tool_name=query_tool,
-                    payload={"data_source_id": data_source_id, "page_size": 5},
-                    output_schema={"type": "tool_result", "service": "notion", "tool": query_tool},
+                    payload=payload,
+                    output_schema={"type": "tool_result", "service": service or "", "tool": query_tool},
                 )
             )
 
-    if "linear" in target_services:
-        if is_linear_issue_create_intent(user_text):
-            create_tool = _pick_tool_name(selected_tools, "linear", "create", "issue") or "linear_create_issue"
-            tasks.append(
-                AgentTask(
-                    id="task_linear_create_issue",
-                    title="Linear 이슈 생성",
-                    task_type="TOOL",
-                    service="linear",
-                    tool_name=create_tool,
-                    payload={},
-                    output_schema={"type": "tool_result", "service": "linear", "tool": create_tool},
-                )
+    issue_create_tool = _pick(("create", "issue"))
+    issue_update_tool = _pick(("update", "issue"))
+    issue_search_tool = _pick(("search", "issues")) or _pick(("list", "issues"))
+
+    if is_linear_issue_create_intent(user_text) and issue_create_tool:
+        service = _tool_service_name(issue_create_tool)
+        task_id = f"task_{service}_create_issue" if service else "task_create_issue"
+        tasks.append(
+            AgentTask(
+                id=task_id,
+                title="이슈 생성",
+                task_type="TOOL",
+                service=service,
+                tool_name=issue_create_tool,
+                payload={},
+                output_schema={"type": "tool_result", "service": service or "", "tool": issue_create_tool},
             )
-        elif is_update_intent(user_text) and ("이슈" in user_text or "issue" in user_text.lower()):
-            update_tool = _pick_tool_name(selected_tools, "linear", "update", "issue") or "linear_update_issue"
-            tasks.append(
-                AgentTask(
-                    id="task_linear_update_issue",
-                    title="Linear 이슈 수정",
-                    task_type="TOOL",
-                    service="linear",
-                    tool_name=update_tool,
-                    payload={},
-                    output_schema={"type": "tool_result", "service": "linear", "tool": update_tool},
-                )
+        )
+    elif is_update_intent(user_text) and ("이슈" in user_text or "issue" in user_text.lower()) and issue_update_tool:
+        service = _tool_service_name(issue_update_tool)
+        task_id = f"task_{service}_update_issue" if service else "task_update_issue"
+        tasks.append(
+            AgentTask(
+                id=task_id,
+                title="이슈 수정",
+                task_type="TOOL",
+                service=service,
+                tool_name=issue_update_tool,
+                payload={},
+                output_schema={"type": "tool_result", "service": service or "", "tool": issue_update_tool},
             )
-        else:
-            search_tool = _pick_tool_name(selected_tools, "linear", "search", "issues")
-            if not search_tool:
-                search_tool = _pick_tool_name(selected_tools, "linear", "list", "issues")
-            query = _extract_linear_query_from_text(user_text)
-            linear_tool_name = search_tool or ("linear_search_issues" if query else "linear_list_issues")
-            payload = {"first": 5}
-            if "search" in linear_tool_name and query:
-                payload["query"] = query
-            tasks.append(
-                AgentTask(
-                    id="task_linear_issues",
-                    title="Linear 이슈 조회",
-                    task_type="TOOL",
-                    service="linear",
-                    tool_name=linear_tool_name,
-                    payload=payload,
-                    output_schema={"type": "tool_result", "service": "linear", "tool": linear_tool_name},
-                )
+        )
+    elif issue_search_tool and (("이슈" in user_text) or ("issue" in user_text.lower()) or is_read_intent(user_text)):
+        service = _tool_service_name(issue_search_tool)
+        task_id = f"task_{service}_issues" if service else "task_issues"
+        issue_query = _extract_linear_query_from_text(user_text)
+        payload = {"first": 5}
+        if "search" in issue_search_tool and issue_query:
+            payload["query"] = issue_query
+        tasks.append(
+            AgentTask(
+                id=task_id,
+                title="이슈 조회",
+                task_type="TOOL",
+                service=service,
+                tool_name=issue_search_tool,
+                payload=payload,
+                output_schema={"type": "tool_result", "service": service or "", "tool": issue_search_tool},
             )
+        )
 
     if need_summary:
         summary_depends = [tasks[-1].id] if tasks else []
@@ -222,43 +322,53 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
             )
         )
 
-    if "notion" in target_services and need_creation and not is_linear_issue_create_intent(user_text):
-        create_tool = _pick_tool_name(selected_tools, "notion", "create", "page")
-        depends = [tasks[-1].id] if tasks else []
-        tasks.append(
-            AgentTask(
-                id="task_notion_create_page",
-                title="Notion 페이지 생성/저장",
-                task_type="TOOL",
-                service="notion",
-                tool_name=create_tool or "notion_create_page",
-                depends_on=depends,
-                payload={"title_hint": _extract_output_title_hint(user_text) or "Metel 자동 요약"},
-                output_schema={"type": "tool_result", "service": "notion", "tool": create_tool or "notion_create_page"},
+    if need_creation and not is_linear_issue_create_intent(user_text):
+        # Prefer create_page tool; otherwise use generic create tool in selected set.
+        create_page_tool = _pick(("create", "page"))
+        fallback_create_tool = _pick(("create",))
+        create_tool = create_page_tool or fallback_create_tool
+        if create_tool:
+            service = _tool_service_name(create_tool)
+            task_id = f"task_{service}_create_page" if create_page_tool and service else "task_create_output"
+            depends = [tasks[-1].id] if tasks else []
+            payload = {"title_hint": _extract_output_title_hint(user_text) or "Metel 자동 요약"}
+            if not create_page_tool:
+                payload = {}
+            tasks.append(
+                AgentTask(
+                    id=task_id,
+                    title="결과물 생성/저장",
+                    task_type="TOOL",
+                    service=service,
+                    tool_name=create_tool,
+                    depends_on=depends,
+                    payload=payload,
+                    output_schema={"type": "tool_result", "service": service or "", "tool": create_tool},
+                )
             )
-        )
 
     if tasks:
         return tasks
 
-    # Fallback: preserve legacy execution by exposing selected tools as TOOL tasks.
-    fallback_tasks: list[AgentTask] = []
-    for idx, tool_name in enumerate(selected_tools, start=1):
-        fallback_tasks.append(
-            AgentTask(
-                id=f"task_tool_{idx}",
-                title=f"도구 실행: {tool_name}",
-                task_type="TOOL",
-                service=tool_name.split("_", 1)[0] if "_" in tool_name else None,
-                tool_name=tool_name,
-                output_schema={
-                    "type": "tool_result",
-                    "service": (tool_name.split("_", 1)[0] if "_" in tool_name else ""),
-                    "tool": tool_name,
-                },
-            )
+    # Generic synthesis path for newly-added services:
+    # when selected tools exist but service-specific branches don't match,
+    # pick one executable primary tool by intent.
+    merged_tool_candidates = list(dict.fromkeys([*selected_tools, *available_tools]))
+    primary = _pick_primary_tool_for_intent(user_text, merged_tool_candidates)
+    if not primary:
+        return []
+    service = _tool_service_name(primary)
+    return [
+        AgentTask(
+            id="task_primary_tool",
+            title=f"도구 실행: {primary}",
+            task_type="TOOL",
+            service=service,
+            tool_name=primary,
+            payload={},
+            output_schema={"type": "tool_result", "service": service or "", "tool": primary},
         )
-    return fallback_tasks
+    ]
 
 
 def build_agent_plan(user_text: str, connected_services: list[str]) -> AgentPlan:
@@ -267,6 +377,7 @@ def build_agent_plan(user_text: str, connected_services: list[str]) -> AgentPlan
 
     registry = load_registry()
     available_tools = registry.list_available_tools(connected_services=target_services or connected_services)
+    available_tools = [tool for tool in available_tools if is_user_facing_tool(tool.tool_name)]
     selected_tools = _select_tools(user_text, available_tools)
 
     notes: list[str] = []

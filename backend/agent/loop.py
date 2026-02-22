@@ -15,6 +15,7 @@ from agent.intent_keywords import (
     is_update_intent,
 )
 from agent.pending_action import PendingActionStorageError, clear_pending_action, get_pending_action, set_pending_action
+from agent.plan_contract import validate_plan_contract
 from agent.planner import build_agent_plan
 from agent.planner_llm import try_build_agent_plan_with_llm
 from agent.registry import load_registry
@@ -64,6 +65,8 @@ def _plan_consistency_reason(user_text: str, selected_tools: list[str]) -> str |
     tools = selected_tools or []
     has_linear = ("linear" in lower) or ("리니어" in text)
     has_notion = ("notion" in lower) or ("노션" in text)
+    if any(("oauth" in str(tool).lower()) or ("token_exchange" in str(tool).lower()) for tool in tools):
+        return "internal_oauth_tool_leak"
 
     if has_linear and not has_notion and any(_tool_service(tool) == "notion" for tool in tools):
         return "cross_service_tool_leak_notion"
@@ -106,6 +109,7 @@ def _required_tokens_for_consistency_error(reason: str) -> tuple[str, ...]:
         "missing_search_tool": ("search",),
         "cross_service_tool_leak_notion": (),
         "cross_service_tool_leak_linear": (),
+        "internal_oauth_tool_leak": (),
     }
     return mapping.get(reason, ())
 
@@ -884,6 +888,13 @@ async def _try_resume_pending_action(
     execution.user_message = finalized_message
     if finalizer_mode != "disabled":
         run_plan.notes.append(f"response_finalizer={finalizer_mode}")
+    _apply_slot_loop_from_validation_error(
+        execution=execution,
+        plan=run_plan,
+        plan_source=pending.plan_source,
+        user_id=user_id,
+        enabled=True,
+    )
     run_plan.notes.append("pending_action_resumed")
     run_plan.notes.append("slot_loop_completed")
     return AgentRunResult(
@@ -1042,6 +1053,26 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             plan=plan,
             result_summary=summary,
             execution=None,
+            plan_source=plan_source,
+        )
+
+    contract_ok, contract_reason = validate_plan_contract(plan)
+    if not contract_ok:
+        plan.notes.append(f"plan_contract_invalid:{contract_reason}")
+        summary = "작업 계획 검증에 실패했습니다."
+        execution = AgentExecutionResult(
+            success=False,
+            summary=summary,
+            user_message="요청을 실행하기 위한 작업 계획 검증에 실패했습니다. 다시 시도해주세요.",
+            artifacts={"error_code": "plan_contract_invalid", "contract_reason": str(contract_reason or "unknown")},
+            steps=[AgentExecutionStep(name="plan_contract", status="error", detail=str(contract_reason or "unknown"))],
+        )
+        return AgentRunResult(
+            ok=False,
+            stage="planning",
+            plan=plan,
+            result_summary=summary,
+            execution=execution,
             plan_source=plan_source,
         )
 

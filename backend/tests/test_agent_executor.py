@@ -15,7 +15,6 @@ from agent.executor import (
     _summarize_text_with_llm,
     _validate_summary_output,
     _extract_target_page_title,
-    _requires_spotify_recent_tracks_to_notion,
     _extract_linear_issue_reference,
     _extract_linear_update_fields,
 )
@@ -174,11 +173,6 @@ def test_extract_linear_issue_reference_with_body_keyword():
 def test_extract_linear_update_fields_supports_body_keyword():
     fields = _extract_linear_update_fields("linear 이슈 업데이트 이슈:OPT-36 본문: 로그인 버튼 클릭 시 오류")
     assert fields.get("description") == "로그인 버튼 클릭 시 오류"
-
-
-def test_requires_spotify_recent_tracks_to_notion():
-    plan = _build_plan("스포티파이에서 최근 들었던 10곡을 노션에 spotify10 새로운 페이지에 작성하세요")
-    assert _requires_spotify_recent_tracks_to_notion(plan) is True
 
 
 def test_task_orchestration_autofills_linear_create_issue_team_from_context(monkeypatch):

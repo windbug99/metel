@@ -41,6 +41,13 @@ def test_run_agent_analysis_slot_question_and_resume(monkeypatch):
 
     class _Settings:
         llm_autonomous_enabled = False
+        slot_loop_enabled = True
+        slot_loop_rollout_percent = 100
+
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
 
     calls = {"count": 0}
 
@@ -85,6 +92,7 @@ def test_run_agent_analysis_slot_question_and_resume(monkeypatch):
         return AgentExecutionResult(success=True, user_message="ok", summary="done")
 
     monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
     monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
     monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
 
@@ -214,6 +222,11 @@ def test_run_agent_analysis_accepts_plain_id_for_action_without_slot_schema(monk
     class _Settings:
         llm_autonomous_enabled = False
 
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
     calls = {"count": 0}
 
     async def _fake_try_build(**kwargs):
@@ -240,6 +253,7 @@ def test_run_agent_analysis_accepts_plain_id_for_action_without_slot_schema(monk
         return AgentExecutionResult(success=True, user_message="ok", summary="done")
 
     monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
     monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
     monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
 
@@ -288,6 +302,11 @@ def test_run_agent_analysis_resumes_with_focused_pending_task_only(monkeypatch):
     class _Settings:
         llm_autonomous_enabled = False
 
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
     calls = {"count": 0}
 
     async def _fake_try_build(**kwargs):
@@ -329,6 +348,7 @@ def test_run_agent_analysis_resumes_with_focused_pending_task_only(monkeypatch):
         return AgentExecutionResult(success=True, user_message="ok", summary="done")
 
     monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
     monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
     monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
 
@@ -338,7 +358,8 @@ def test_run_agent_analysis_resumes_with_focused_pending_task_only(monkeypatch):
 
     second = asyncio.run(run_agent_analysis("이슈: OPT-42", ["linear", "notion"], "user-focused"))
     assert second.ok is False
-    assert get_pending_action("user-focused") is not None
+    assert second.execution is not None
+    assert second.execution.artifacts.get("missing_slot") == "description"
 
     third = asyncio.run(
         run_agent_analysis(
@@ -459,6 +480,11 @@ def test_run_agent_analysis_rejects_orphan_slot_only_input_when_slot_loop_disabl
 def test_plan_consistency_reason_requires_update_tool_for_update_intent():
     reason = _plan_consistency_reason("notion 페이지 업데이트", ["notion_search"])
     assert reason == "missing_update_tool"
+
+
+def test_plan_consistency_reason_blocks_internal_oauth_tool():
+    reason = _plan_consistency_reason("linear 이슈 업데이트", ["notion_oauth_token_exchange"])
+    assert reason == "internal_oauth_tool_leak"
 
 
 def test_run_agent_analysis_returns_persistence_error_when_pending_store_fails(monkeypatch):
@@ -1547,6 +1573,7 @@ def test_run_agent_analysis_aligns_selected_tools_to_tasks(monkeypatch):
                 task_type="TOOL",
                 service="linear",
                 tool_name="linear_search_issues",
+                output_schema={"type": "tool_result", "service": "linear", "tool": "linear_search_issues"},
             ),
         ],
         notes=[],
@@ -1569,6 +1596,47 @@ def test_run_agent_analysis_aligns_selected_tools_to_tasks(monkeypatch):
 
     result = asyncio.run(run_agent_analysis(llm_plan.user_text, ["linear", "notion"], "user-1"))
     assert result.ok is True
+
+
+def test_run_agent_analysis_rejects_invalid_plan_contract(monkeypatch):
+    llm_plan = AgentPlan(
+        user_text="linear 이슈 업데이트",
+        requirements=[AgentRequirement(summary="Linear 이슈 수정")],
+        target_services=["linear"],
+        selected_tools=["linear_update_issue"],
+        workflow_steps=["1. update"],
+        tasks=[
+            AgentTask(
+                id="task_linear_update_issue",
+                title="Linear 이슈 수정",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_update_issue",
+                payload={},
+                output_schema={},
+            )
+        ],
+        notes=[],
+    )
+
+    class _Settings:
+        llm_autonomous_enabled = False
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        raise AssertionError("invalid plan should be blocked before execution")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("linear 이슈 업데이트", ["linear"], "user-1"))
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("error_code") == "plan_contract_invalid"
+    assert result.execution.artifacts.get("contract_reason") == "missing_output_schema:task_linear_update_issue"
     assert result.plan_source == "llm"
 
 

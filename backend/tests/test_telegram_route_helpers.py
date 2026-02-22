@@ -151,34 +151,27 @@ def test_truncate_telegram_message():
 
 def test_compose_telegram_response_text_conversation_only():
     out = _compose_telegram_response_text(
-        conversation_mode_enabled=True,
         debug_report_enabled=False,
         user_message="대화형 응답",
         report_text="에이전트 실행 결과",
-        legacy_user_preface="legacy",
     )
     assert out == "대화형 응답"
 
 
 def test_compose_telegram_response_text_conversation_with_debug():
     out = _compose_telegram_response_text(
-        conversation_mode_enabled=True,
         debug_report_enabled=True,
         user_message="대화형 응답",
         report_text="에이전트 실행 결과",
-        legacy_user_preface="legacy",
     )
     assert out.startswith("대화형 응답")
     assert "에이전트 실행 결과" in out
 
 
-def test_compose_telegram_response_text_legacy_mode():
+def test_compose_telegram_response_text_no_debug_hides_report():
     out = _compose_telegram_response_text(
-        conversation_mode_enabled=False,
         debug_report_enabled=False,
         user_message="대화형 응답",
         report_text="에이전트 실행 결과",
-        legacy_user_preface="요약 안내",
     )
-    assert out.startswith("요약 안내")
-    assert "에이전트 실행 결과" in out
+    assert out == "대화형 응답"

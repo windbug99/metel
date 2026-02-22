@@ -170,6 +170,7 @@ def test_try_build_agent_plan_with_llm_rejects_invalid_task_contract(monkeypatch
     assert err is None
     assert plan is not None
     assert any(note.startswith("tasks_contract_rejected:") for note in plan.notes)
+    assert len(plan.tasks) >= 1
     assert any(task.output_schema for task in plan.tasks)
 
 

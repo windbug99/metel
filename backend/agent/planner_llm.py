@@ -5,7 +5,7 @@ import re
 
 import httpx
 
-from agent.planner import build_agent_plan, build_execution_tasks
+from agent.planner import build_agent_plan, build_execution_tasks, is_user_facing_tool
 from agent.registry import load_registry
 from agent.slot_collector import collect_slots_from_user_reply
 from agent.slot_schema import validate_slots
@@ -138,6 +138,7 @@ def _to_agent_plan(
     registry = load_registry()
     connected_set = {item.lower().strip() for item in connected_services}
     available_tools = registry.list_available_tools(connected_services=connected_services)
+    available_tools = [tool for tool in available_tools if is_user_facing_tool(tool.tool_name)]
     available_tool_names = {tool.tool_name for tool in available_tools}
     available_services = {tool.service for tool in available_tools}
 
@@ -425,6 +426,7 @@ async def try_build_agent_plan_with_llm(
 
     registry = load_registry()
     available_tools = registry.list_available_tools(connected_services=connected_services)
+    available_tools = [tool for tool in available_tools if is_user_facing_tool(tool.tool_name)]
     if not available_tools:
         return None, "no_available_tools"
 

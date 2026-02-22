@@ -116,6 +116,17 @@ source .venv/bin/activate
 python -m pytest -q
 ```
 
+Core regression gate (recommended):
+
+```bash
+cd backend
+./scripts/run_core_regression.sh
+```
+
+Note:
+- `tests/test_agent_executor_e2e.py` is kept as a legacy suite and skipped by default.
+- Current primary quality gate is the common-orchestration regression set above.
+
 Tool spec validation:
 
 ```bash
