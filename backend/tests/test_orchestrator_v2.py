@@ -987,7 +987,14 @@ def test_try_run_v2_orchestration_llm_then_linear_update_title_change_without_ll
             return {
                 "data": {
                     "issues": {
-                        "nodes": [{"id": "issue-internal-35", "identifier": "OPT-35", "title": "이전 제목"}]
+                        "nodes": [
+                            {
+                                "id": "issue-internal-35",
+                                "identifier": "OPT-35",
+                                "title": "이전 제목",
+                                "url": "https://linear.app/pouder/issue/OPT-35",
+                            }
+                        ]
                     }
                 }
             }
@@ -996,7 +1003,7 @@ def test_try_run_v2_orchestration_llm_then_linear_update_title_change_without_ll
             assert payload.get("issue_id") == "issue-internal-35"
             assert payload.get("title") == "새로운 제목"
             assert "description" not in payload
-            return {"data": {"issueUpdate": {"success": True}}}
+            return {"data": {"issueUpdate": {"success": True, "issue": {}}}}
         raise AssertionError(f"unexpected tool call: {tool_name}")
 
     async def _fake_llm(*, prompt: str):
@@ -1019,6 +1026,7 @@ def test_try_run_v2_orchestration_llm_then_linear_update_title_change_without_ll
     assert calls["search"] == 1
     assert calls["update"] == 1
     assert "새로운 제목" in result.execution.user_message
+    assert "https://linear.app/pouder/issue/OPT-35" in result.execution.user_message
 
 
 def test_try_run_v2_orchestration_llm_then_linear_update_description_without_llm(monkeypatch):
@@ -1039,7 +1047,7 @@ def test_try_run_v2_orchestration_llm_then_linear_update_description_without_llm
             assert payload.get("issue_id") == "issue-internal-35"
             assert payload.get("description") == "재현 경로와 콘솔 로그를 추가해줘"
             assert "title" not in payload
-            return {"data": {"issueUpdate": {"success": True}}}
+            return {"data": {"issueUpdate": {"success": True, "issue": {"url": "https://linear.app/pouder/issue/OPT-35"}}}}
         raise AssertionError(f"unexpected tool call: {tool_name}")
 
     async def _fake_llm(*, prompt: str):
@@ -1061,6 +1069,8 @@ def test_try_run_v2_orchestration_llm_then_linear_update_description_without_llm
     assert result.execution is not None
     assert calls["search"] == 1
     assert calls["update"] == 1
+    assert "https://linear.app/pouder/issue/OPT-35" in result.execution.user_message
+    assert result.execution.artifacts.get("updated_issue_url") == "https://linear.app/pouder/issue/OPT-35"
 
 
 def test_try_run_v2_orchestration_llm_then_linear_update_state_priority_without_llm(monkeypatch):

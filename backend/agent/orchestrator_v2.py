@@ -1185,7 +1185,7 @@ async def _resolve_notion_page_for_update(*, user_id: str, title: str) -> tuple[
     return page_id, page_url, title_property_key
 
 
-async def _resolve_linear_issue_id_for_update(*, user_id: str, issue_ref: str) -> str:
+async def _resolve_linear_issue_id_for_update(*, user_id: str, issue_ref: str) -> tuple[str, str]:
     result = await _linear_search_with_issue_ref_fallback(user_id=user_id, issue_ref=issue_ref)
     nodes = _linear_issue_nodes(result)
     if not nodes:
@@ -1205,13 +1205,18 @@ async def _resolve_linear_issue_id_for_update(*, user_id: str, issue_ref: str) -
         title = str(node.get("title") or "").strip()
         if not issue_id:
             continue
-        candidate = {"label": f"{identifier.upper() if identifier else issue_id} {title}".strip(), "issue_id": issue_id}
+        issue_url = str(node.get("url") or "").strip()
+        candidate = {
+            "label": f"{identifier.upper() if identifier else issue_id} {title}".strip(),
+            "issue_id": issue_id,
+            "issue_url": issue_url,
+        }
         candidates.append(candidate)
         if issue_ref_lower and issue_ref_lower == identifier:
             exact.append(candidate)
 
     if len(exact) == 1:
-        return str(exact[0].get("issue_id") or "")
+        return str(exact[0].get("issue_id") or ""), str(exact[0].get("issue_url") or "")
     if len(exact) > 1 or len(candidates) > 1:
         raise NeedsInputSignal(
             missing_fields=["target.issue_id"],
@@ -1219,7 +1224,7 @@ async def _resolve_linear_issue_id_for_update(*, user_id: str, issue_ref: str) -
             choices={"candidates": (exact or candidates)[:5]},
         )
     if len(candidates) == 1:
-        return str(candidates[0].get("issue_id") or "")
+        return str(candidates[0].get("issue_id") or ""), str(candidates[0].get("issue_url") or "")
     raise NeedsInputSignal(
         missing_fields=["target.issue_id"],
         questions=["업데이트할 Linear 이슈를 확인해 주세요."],
@@ -1687,7 +1692,7 @@ async def try_run_v2_orchestration(
                             "어떤 항목을 업데이트할까요? 예: 제목을 \"...\"로 변경 / 설명 업데이트: ... / state_id: <id> / priority: 0~4"
                         ],
                     )
-                issue_id = await _resolve_linear_issue_id_for_update(user_id=user_id, issue_ref=issue_ref)
+                issue_id, resolved_issue_url = await _resolve_linear_issue_id_for_update(user_id=user_id, issue_ref=issue_ref)
                 patch_payload: dict = {"issue_id": issue_id}
                 if linear_update_new_title:
                     patch_payload["title"] = linear_update_new_title[:120]
@@ -1704,11 +1709,16 @@ async def try_run_v2_orchestration(
                     and "priority" not in patch_payload
                 ):
                     patch_payload["description"] = llm_text
-                await execute_tool(
+                update_result = await execute_tool(
                     user_id=user_id,
                     tool_name="linear_update_issue",
                     payload=patch_payload,
                 )
+                issue_url = str(
+                    (((update_result.get("data") or {}).get("issueUpdate") or {}).get("issue") or {}).get("url") or ""
+                ).strip()
+                if not issue_url:
+                    issue_url = resolved_issue_url
                 if linear_update_new_title:
                     user_message = f"Linear 이슈 제목이 \"{linear_update_new_title[:120]}\"로 업데이트되었습니다.\n\n대상 이슈: {issue_ref}"
                 elif linear_update_description_text:
@@ -1722,6 +1732,8 @@ async def try_run_v2_orchestration(
                     user_message = f"Linear 이슈 속성이 업데이트되었습니다. ({', '.join(updates)})\n\n대상 이슈: {issue_ref}"
                 else:
                     user_message = f"{llm_text}\n\nLinear 이슈 업데이트 완료: {issue_ref}"
+                if issue_url:
+                    user_message += f"\n링크: {issue_url}"
                 execution = AgentExecutionResult(
                     success=True,
                     user_message=user_message,
@@ -1729,6 +1741,7 @@ async def try_run_v2_orchestration(
                     artifacts={
                         "router_mode": decision.mode,
                         "updated_issue_id": issue_id,
+                        "updated_issue_url": issue_url,
                         "llm_provider": provider,
                         "llm_model": model,
                     },
@@ -1795,7 +1808,7 @@ async def try_run_v2_orchestration(
                 issue_ref = str(decision.arguments.get("linear_issue_ref") or "").strip()
                 if not issue_ref:
                     raise HTTPException(status_code=400, detail="validation_error")
-                issue_id = await _resolve_linear_issue_id_for_update(user_id=user_id, issue_ref=issue_ref)
+                issue_id, _ = await _resolve_linear_issue_id_for_update(user_id=user_id, issue_ref=issue_ref)
                 await execute_tool(
                     user_id=user_id,
                     tool_name="linear_update_issue",
