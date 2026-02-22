@@ -666,6 +666,9 @@ ERROR
   - 대상: `notion.page_{create,search,update,delete}`, `linear.issue_{create,search,update,delete}`
   - 계약 검사기: `backend/scripts/check_skill_contracts.py`
   - 계약 테스트: `backend/tests/test_skill_contracts.py`
+- [x] URL 본문 수집용 최소 스킬 계약 추가
+  - `web.url_fetch_text` (`backend/agent/skills/contracts/web_url_fetch_text.json`)
+  - 현재 단계는 계약 추가까지이며, 런타임 도구(`http_fetch_url_text`) 연결은 다음 단계에서 진행
 - [x] 계약 파일을 런타임(오케스트레이터/runner)에서 직접 로드/검증하는 경로 연결
   - 오케스트레이터 allowlist를 계약 기반 `runtime_tools`로 전환
   - V2 실행 전 계약 검증(`validate_all_contracts`) 실패 시 fail-closed 처리

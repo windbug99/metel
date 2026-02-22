@@ -1,0 +1,47 @@
+{
+  "name": "web.url_fetch_text",
+  "version": "1.0.0",
+  "summary": "Fetch readable text content from a public URL",
+  "provider": { "service": "web", "auth": "none", "scopes": [] },
+  "runtime_tools": ["http_fetch_url_text"],
+  "autofill": {
+    "sources": ["chat_context.last_url"],
+    "rules": [
+      "if url is null, extract first URL from user text",
+      "if language_hint is null, use chat locale"
+    ]
+  },
+  "input_schema": {
+    "type": "object",
+    "required": ["url"],
+    "properties": {
+      "url": { "type": "string" },
+      "max_chars": { "type": "integer", "minimum": 500, "maximum": 20000 },
+      "include_metadata": { "type": "boolean" },
+      "language_hint": { "type": ["string", "null"] }
+    },
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["status"],
+    "properties": {
+      "status": { "type": "string", "enum": ["success", "needs_input", "error"] },
+      "result": { "type": ["object", "null"] },
+      "needs_input": { "type": ["object", "null"] },
+      "error": { "type": ["object", "null"] }
+    },
+    "additionalProperties": false
+  },
+  "examples": [
+    {
+      "name": "fetch_article",
+      "input": {
+        "url": "https://example.com/article",
+        "max_chars": 8000,
+        "include_metadata": true,
+        "language_hint": "ko"
+      }
+    }
+  ]
+}

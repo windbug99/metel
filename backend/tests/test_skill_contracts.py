@@ -20,6 +20,7 @@ def test_contract_files_exist_for_core_skills():
     assert "linear_issue_search.json" in names
     assert "linear_issue_update.json" in names
     assert "linear_issue_delete.json" in names
+    assert "web_url_fetch_text.json" in names
 
 
 def test_all_skill_contracts_validate():
