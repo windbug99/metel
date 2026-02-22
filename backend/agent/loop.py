@@ -418,6 +418,11 @@ def _looks_like_new_request(text: str) -> bool:
     return service_token and action_token
 
 
+def _is_force_new_request_text(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (text or "").strip().lower())
+    return normalized in {"/new", "new", "new request", "새 요청", "새요청"}
+
+
 def _build_slot_question_message(action: str, slot_name: str) -> str:
     display_slot = _display_slot_name(action, slot_name)
     reason = _slot_reason(action, slot_name)
@@ -727,7 +732,7 @@ async def _try_resume_pending_action(
             plan_source=pending.plan_source,
         )
 
-    if _looks_like_new_request(user_text):
+    if _is_force_new_request_text(user_text):
         clear_pending_action(user_id)
         pending.plan.notes.append("slot_loop_replaced_new_request")
         return None

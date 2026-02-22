@@ -374,6 +374,84 @@ def test_run_agent_analysis_resumes_with_focused_pending_task_only(monkeypatch):
     clear_pending_action("user-focused")
 
 
+def test_run_agent_analysis_does_not_replace_pending_on_service_action_text(monkeypatch):
+    clear_pending_action("user-pending-keep")
+    llm_plan = AgentPlan(
+        user_text="notion 페이지 본문 업데이트",
+        requirements=[AgentRequirement(summary="Notion 페이지 본문 추가")],
+        target_services=["notion"],
+        selected_tools=["notion_append_block_children"],
+        workflow_steps=["1. append"],
+        tasks=[
+            AgentTask(
+                id="task_notion_append",
+                title="본문 추가",
+                task_type="TOOL",
+                service="notion",
+                tool_name="notion_append_block_children",
+                payload={},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=["planner=llm"],
+    )
+
+    class _Settings:
+        llm_autonomous_enabled = False
+
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    calls = {"count": 0}
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return AgentExecutionResult(
+                success=False,
+                user_message="block_id missing",
+                summary="validation",
+                artifacts={
+                    "error_code": "validation_error",
+                    "slot_action": "notion_append_block_children",
+                    "slot_task_id": "task_notion_append",
+                    "missing_slot": "block_id",
+                    "missing_slots": "block_id",
+                    "slot_payload_json": "{}",
+                },
+            )
+        # If pending was not replaced, next successful execution should still be focused append task.
+        tool_names = [str(task.tool_name or "") for task in plan.tasks if task.task_type == "TOOL"]
+        assert tool_names == ["notion_append_block_children"]
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    first = asyncio.run(run_agent_analysis("notion 페이지 본문 업데이트", ["notion"], "user-pending-keep"))
+    assert first.ok is False
+    assert get_pending_action("user-pending-keep") is not None
+
+    # Previously this kind of text replaced pending as "new request".
+    second = asyncio.run(run_agent_analysis("notion 내용 추가", ["notion"], "user-pending-keep"))
+    assert second.ok is False
+    assert second.execution is not None
+    assert second.execution.artifacts.get("error_code") == "validation_error"
+    assert get_pending_action("user-pending-keep") is not None
+
+    third = asyncio.run(run_agent_analysis("30d50e84a3bf8012abfeea8321ff12ea", ["notion"], "user-pending-keep"))
+    assert third.ok is True
+    assert third.result_summary == "done"
+    clear_pending_action("user-pending-keep")
+
+
 def test_run_agent_analysis_does_not_start_slot_loop_when_disabled(monkeypatch):
     clear_pending_action("user-slot-off")
     llm_plan = AgentPlan(
