@@ -83,6 +83,9 @@ def _plan_consistency_reason(user_text: str, selected_tools: list[str]) -> str |
     if is_create_intent(text) and not _has_any_tool(tools, "create_page", "create_issue", "create_"):
         return "missing_create_tool"
 
+    if is_update_intent(text) and not _has_any_tool(tools, "update_", "append_block_children", "create_comment"):
+        return "missing_update_tool"
+
     if is_summary_intent(text) and not _has_any_tool(tools, "retrieve_block_children", "retrieve_page"):
         return "missing_summary_read_tool"
 
@@ -98,6 +101,7 @@ def _required_tokens_for_consistency_error(reason: str) -> tuple[str, ...]:
         "missing_data_source_tool": ("query_data_source", "retrieve_data_source"),
         "missing_append_tool": ("append_block_children",),
         "missing_create_tool": ("create_", "append_block_children"),
+        "missing_update_tool": ("update_", "append_block_children"),
         "missing_summary_read_tool": ("retrieve_block_children", "retrieve_page"),
         "missing_search_tool": ("search",),
         "cross_service_tool_leak_notion": (),
@@ -778,52 +782,8 @@ async def _try_resume_pending_action(
             plan_source=pending.plan_source,
         )
 
-    confidence = float(collected.confidence_by_slot.get(target_slot, 1.0))
-    if _should_reask_low_confidence(
-        action=pending.action,
-        slot_name=target_slot,
-        slot_value=collected.collected_slots.get(target_slot),
-        confidence=confidence,
-        user_text=user_text,
-    ):
-        try:
-            set_pending_action(
-                user_id=pending.user_id,
-                intent=pending.intent,
-                action=pending.action,
-                task_id=pending.task_id,
-                plan=pending.plan,
-                plan_source=pending.plan_source,
-                collected_slots=pending.collected_slots,
-                missing_slots=[target_slot],
-            )
-        except PendingActionStorageError:
-            return _pending_persistence_error_result(plan=pending.plan, plan_source=pending.plan_source)
-        pending.plan.notes.append("slot_loop_low_confidence_reask")
-        execution = AgentExecutionResult(
-            success=False,
-            summary="입력 확인이 필요합니다.",
-            user_message=(
-                f"`{target_slot}` 값을 명확히 확인하기 위해 키-값 형식으로 다시 입력해주세요.\n"
-                f"예시: {slot_prompt_example(pending.action, target_slot)}\n"
-                "다음 동작: 위 형식으로 값을 보내주시면 이어서 실행합니다. (취소: `취소`)"
-            ),
-            artifacts={
-                "error_code": "validation_error",
-                "missing_slot": target_slot,
-                "slot_action": pending.action,
-                "next_action": "provide_slot_value",
-            },
-            steps=[AgentExecutionStep(name="pending_action_low_confidence", status="error", detail=f"slot={target_slot}")],
-        )
-        return AgentRunResult(
-            ok=False,
-            stage="validation",
-            plan=pending.plan,
-            result_summary=execution.summary,
-            execution=execution,
-            plan_source=pending.plan_source,
-        )
+    # UX rule: when a specific slot is asked, plain value-only input is accepted.
+    # Do not force key-value re-entry for low-confidence plain text.
 
     if collected.missing_slots:
         schema = get_action_slot_schema(pending.action)

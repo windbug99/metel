@@ -1,7 +1,7 @@
 import asyncio
 import httpx
 
-from agent.loop import run_agent_analysis
+from agent.loop import _plan_consistency_reason, run_agent_analysis
 from agent.pending_action import PendingActionStorageError, clear_pending_action, get_pending_action
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRequirement, AgentTask
 
@@ -108,7 +108,7 @@ def test_run_agent_analysis_slot_question_and_resume(monkeypatch):
     clear_pending_action("user-slot")
 
 
-def test_run_agent_analysis_reasks_on_low_confidence_plain_slot_answer(monkeypatch):
+def test_run_agent_analysis_accepts_plain_slot_answer_without_key_prefix(monkeypatch):
     clear_pending_action("user-low-confidence")
     llm_plan = AgentPlan(
         user_text="Linear 이슈 생성해줘",
@@ -134,6 +134,7 @@ def test_run_agent_analysis_reasks_on_low_confidence_plain_slot_answer(monkeypat
         llm_autonomous_enabled = False
 
     calls = {"count": 0}
+    pending_store: dict[str, object] = {}
 
     async def _fake_try_build(**kwargs):
         return llm_plan, None
@@ -154,21 +155,37 @@ def test_run_agent_analysis_reasks_on_low_confidence_plain_slot_answer(monkeypat
                     "slot_payload_json": "{}",
                 },
             )
-        raise AssertionError("should not execute tool call when low-confidence answer needs confirmation")
+        task = plan.tasks[0]
+        assert task.payload.get("title") == "로그인 오류 수정"
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
 
     monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
     monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
     monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+    monkeypatch.setattr("agent.loop.set_pending_action", lambda **kwargs: pending_store.__setitem__(kwargs["user_id"], kwargs))
+    monkeypatch.setattr("agent.loop.clear_pending_action", lambda user_id: pending_store.pop(user_id, None))
+
+    class _PendingObj:
+        def __init__(self, payload):
+            self.user_id = payload["user_id"]
+            self.intent = payload["intent"]
+            self.action = payload["action"]
+            self.task_id = payload["task_id"]
+            self.plan = payload["plan"]
+            self.plan_source = payload["plan_source"]
+            self.collected_slots = dict(payload["collected_slots"])
+            self.missing_slots = list(payload["missing_slots"])
+
+    monkeypatch.setattr("agent.loop.get_pending_action", lambda user_id: (_PendingObj(pending_store[user_id]) if user_id in pending_store else None))
 
     first = asyncio.run(run_agent_analysis("Linear 이슈 생성해줘", ["linear"], "user-low-confidence"))
     assert first.ok is False
-    assert get_pending_action("user-low-confidence") is not None
+    assert "user-low-confidence" in pending_store
 
     second = asyncio.run(run_agent_analysis("로그인 오류 수정", ["linear"], "user-low-confidence"))
-    assert second.ok is False
-    assert second.execution is not None
-    assert "키-값 형식" in second.execution.user_message
-    assert get_pending_action("user-low-confidence") is not None
+    assert second.ok is True
+    assert second.result_summary == "done"
+    assert "user-low-confidence" not in pending_store
     clear_pending_action("user-low-confidence")
 
 
@@ -437,6 +454,11 @@ def test_run_agent_analysis_rejects_orphan_slot_only_input_when_slot_loop_disabl
     assert result.execution is not None
     assert result.execution.artifacts.get("next_action") == "start_new_request"
     assert "보류 작업이 없습니다" in result.execution.user_message
+
+
+def test_plan_consistency_reason_requires_update_tool_for_update_intent():
+    reason = _plan_consistency_reason("notion 페이지 업데이트", ["notion_search"])
+    assert reason == "missing_update_tool"
 
 
 def test_run_agent_analysis_returns_persistence_error_when_pending_store_fails(monkeypatch):

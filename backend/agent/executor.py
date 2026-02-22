@@ -461,6 +461,34 @@ def _has_task_orchestration_candidate(plan: AgentPlan) -> bool:
     return all(task.task_type.upper() in {"TOOL", "LLM"} for task in tasks)
 
 
+def _ensure_common_tool_tasks(plan: AgentPlan) -> AgentPlan:
+    if plan.tasks:
+        return plan
+    if not plan.selected_tools:
+        return plan
+    synthesized: list[AgentTask] = []
+    for idx, tool_name in enumerate(plan.selected_tools, start=1):
+        name = str(tool_name or "").strip()
+        if not name:
+            continue
+        service = name.split("_", 1)[0] if "_" in name else None
+        synthesized.append(
+            AgentTask(
+                id=f"task_tool_{idx}",
+                title=f"도구 실행: {name}",
+                task_type="TOOL",
+                service=service,
+                tool_name=name,
+                payload={},
+                output_schema={"type": "tool_result", "service": service or "", "tool": name},
+            )
+        )
+    if synthesized:
+        plan.tasks = synthesized
+        plan.notes.append("tasks_synthesized_for_common_slot_loop")
+    return plan
+
+
 def _extract_page_url_from_tool_result(result: dict) -> str:
     data = result.get("data")
     if isinstance(data, dict):
@@ -3368,6 +3396,7 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
 
 async def execute_agent_plan(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
     try:
+        plan = _ensure_common_tool_tasks(plan)
         cross_copy_result = await _execute_cross_service_copy_flow(user_id=user_id, plan=plan)
         if cross_copy_result is not None:
             return cross_copy_result
