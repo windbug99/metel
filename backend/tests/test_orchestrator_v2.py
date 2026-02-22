@@ -293,8 +293,20 @@ def test_try_run_v2_orchestration_skill_then_llm_linear_recent_list(monkeypatch)
                 "data": {
                     "issues": {
                         "nodes": [
-                            {"id": "i1", "identifier": "OPT-1", "title": "첫 이슈", "description": "desc1"},
-                            {"id": "i2", "identifier": "OPT-2", "title": "둘째 이슈", "description": "desc2"},
+                            {
+                                "id": "i1",
+                                "identifier": "OPT-1",
+                                "title": "첫 이슈",
+                                "description": "desc1",
+                                "url": "https://linear.app/issue/OPT-1",
+                            },
+                            {
+                                "id": "i2",
+                                "identifier": "OPT-2",
+                                "title": "둘째 이슈",
+                                "description": "desc2",
+                                "url": "https://linear.app/issue/OPT-2",
+                            },
                         ]
                     }
                 }
@@ -321,6 +333,8 @@ def test_try_run_v2_orchestration_skill_then_llm_linear_recent_list(monkeypatch)
     assert result.execution is not None
     assert calls["list"] == 1
     assert "최근 이슈 요약" in result.execution.user_message
+    assert "관련 이슈 링크:" in result.execution.user_message
+    assert "https://linear.app/issue/OPT-1" in result.execution.user_message
 
 
 def test_try_run_v2_orchestration_skill_then_llm_linear_returns_needs_input_when_not_found(monkeypatch):

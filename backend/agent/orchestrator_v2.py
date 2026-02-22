@@ -641,6 +641,24 @@ def _linear_issue_nodes(tool_result: dict) -> list[dict]:
     return [node for node in nodes if isinstance(node, dict)]
 
 
+def _linear_issue_links_block(tool_result: dict, *, limit: int = 10) -> str:
+    nodes = _linear_issue_nodes(tool_result)
+    lines: list[str] = []
+    for node in nodes[: max(1, limit)]:
+        issue_url = str(node.get("url") or "").strip()
+        if not issue_url:
+            continue
+        identifier = str(node.get("identifier") or "").strip() or "-"
+        title = str(node.get("title") or "").strip()
+        if title:
+            lines.append(f"- [{identifier}] {title}: {issue_url}")
+        else:
+            lines.append(f"- [{identifier}] {issue_url}")
+    if not lines:
+        return ""
+    return "관련 이슈 링크:\n" + "\n".join(lines)
+
+
 async def _linear_search_with_issue_ref_fallback(*, user_id: str, issue_ref: str) -> dict:
     query = (issue_ref or "").strip()
     searched = await execute_tool(
@@ -1348,9 +1366,13 @@ async def try_run_v2_orchestration(
                 answer, provider, model = await _request_llm_text(prompt=prompt)
                 plan.notes.append(f"llm_provider={provider}")
                 plan.notes.append(f"llm_model={model}")
+                links_block = _linear_issue_links_block(tool_result, limit=10)
+                user_message = answer
+                if links_block:
+                    user_message = f"{answer}\n\n{links_block}"
                 execution = AgentExecutionResult(
                     success=True,
-                    user_message=answer,
+                    user_message=user_message,
                     summary="Linear 조회 후 LLM 정리 완료",
                     artifacts={"router_mode": decision.mode, "llm_provider": provider, "llm_model": model},
                     steps=[
