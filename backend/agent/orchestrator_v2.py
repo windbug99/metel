@@ -311,11 +311,26 @@ def _extract_count_limit(text: str, *, default: int = 5, minimum: int = 1, maxim
     return max(minimum, min(maximum, value))
 
 
+def _safe_int(value: object, *, default: int, minimum: int = 1, maximum: int = 20) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except Exception:
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
 def _is_linear_recent_list_intent(text: str) -> bool:
     lower = (text or "").lower()
     has_issue_token = ("이슈" in text) or ("issue" in lower)
     has_list_token = any(token in lower for token in ("최근", "latest", "list", "목록", "검색", "조회"))
     return has_issue_token and has_list_token
+
+
+def _is_notion_recent_list_intent(text: str) -> bool:
+    lower = (text or "").lower()
+    has_page_token = ("페이지" in text) or ("page" in lower)
+    has_list_token = any(token in lower for token in ("최근", "latest", "list", "목록", "검색", "조회"))
+    return has_page_token and has_list_token
 
 
 def _normalize_router_arguments(*, decision: RouterDecision, user_text: str) -> RouterDecision:
@@ -328,7 +343,12 @@ def _normalize_router_arguments(*, decision: RouterDecision, user_text: str) -> 
             ref = _extract_linear_issue_reference(text)
             if ref:
                 args["linear_query"] = ref
-        args["linear_first"] = int(args.get("linear_first") or _extract_count_limit(text, default=5))
+        args["linear_first"] = _safe_int(
+            args.get("linear_first"),
+            default=_extract_count_limit(text, default=5),
+            minimum=1,
+            maximum=20,
+        )
     elif skill_name == "linear.issue_create":
         if not str(args.get("linear_team_ref") or "").strip():
             args["linear_team_ref"] = _extract_linear_team_reference(text)
@@ -340,6 +360,13 @@ def _normalize_router_arguments(*, decision: RouterDecision, user_text: str) -> 
     elif skill_name in {"notion.page_update", "notion.page_delete"}:
         if not str(args.get("notion_page_title") or "").strip():
             args["notion_page_title"] = _extract_notion_page_title(text)
+    elif skill_name == "notion.page_search":
+        args["notion_first"] = _safe_int(
+            args.get("notion_first"),
+            default=_extract_count_limit(text, default=5),
+            minimum=1,
+            maximum=20,
+        )
 
     return RouterDecision(
         mode=str(getattr(decision, "mode", MODE_LLM_ONLY)),
@@ -426,6 +453,15 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
         )
 
     # Read/search/analysis intents
+    if has_notion and _is_notion_recent_list_intent(text):
+        return _decision_for_skill(
+            mode=MODE_SKILL_THEN_LLM,
+            reason="notion_recent_pages_list",
+            skill_name="notion.page_search",
+            target_services=["notion"],
+            arguments={"notion_page_title": "", "notion_first": _extract_count_limit(text, default=5)},
+        )
+
     if has_linear and _is_linear_recent_list_intent(text):
         return _decision_for_skill(
             mode=MODE_SKILL_THEN_LLM,
@@ -675,6 +711,23 @@ def _linear_issue_list_text(tool_result: dict, *, limit: int = 10) -> str:
         if issue_url:
             base += f"\n   {issue_url}"
         lines.append(base)
+    return "\n".join(lines)
+
+
+def _notion_page_list_text(tool_result: dict, *, limit: int = 10) -> str:
+    pages = ((tool_result.get("data") or {}).get("results") or [])
+    if not isinstance(pages, list) or not pages:
+        return "조회된 페이지가 없습니다."
+    lines = [f"Notion 최근 페이지 {min(limit, len(pages))}건"]
+    for idx, page in enumerate(pages[: max(1, limit)], start=1):
+        if not isinstance(page, dict):
+            continue
+        title = _extract_notion_page_title_from_search_result(page) or "(제목 없음)"
+        page_url = str(page.get("url") or "").strip()
+        line = f"{idx}. {title}"
+        if page_url:
+            line += f"\n   {page_url}"
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -1352,8 +1405,12 @@ async def try_run_v2_orchestration(
             )
             if skill_name == "linear.issue_search" or ("linear" in decision.target_services and not skill_name):
                 query = str(decision.arguments.get("linear_query") or "").strip()
-                first = int(decision.arguments.get("linear_first") or _extract_count_limit(user_text, default=5))
-                first = max(1, min(20, first))
+                first = _safe_int(
+                    decision.arguments.get("linear_first"),
+                    default=_extract_count_limit(user_text, default=5),
+                    minimum=1,
+                    maximum=20,
+                )
                 issue_ref = _extract_linear_issue_reference(query or user_text)
                 if issue_ref:
                     tool_result = await _linear_search_with_issue_ref_fallback(user_id=user_id, issue_ref=issue_ref)
@@ -1436,6 +1493,39 @@ async def try_run_v2_orchestration(
                 )
 
             if skill_name == "notion.page_search" or ("notion" in decision.target_services and not skill_name):
+                if _is_notion_recent_list_intent(user_text):
+                    first = _safe_int(
+                        decision.arguments.get("notion_first"),
+                        default=_extract_count_limit(user_text, default=5),
+                        minimum=1,
+                        maximum=20,
+                    )
+                    tool_result = await execute_tool(
+                        user_id=user_id,
+                        tool_name="notion_search",
+                        payload={"query": "", "page_size": first},
+                    )
+                    execution = AgentExecutionResult(
+                        success=True,
+                        user_message=_notion_page_list_text(tool_result, limit=first),
+                        summary="Notion 최근 페이지 조회 완료",
+                        artifacts={"router_mode": decision.mode},
+                        steps=[
+                            AgentExecutionStep(
+                                name="skill_notion_search",
+                                status="success",
+                                detail=f"query=;page_size={first}",
+                            )
+                        ],
+                    )
+                    return AgentRunResult(
+                        ok=True,
+                        stage="execution",
+                        plan=plan,
+                        result_summary=execution.summary,
+                        execution=execution,
+                        plan_source="router_v2",
+                    )
                 page_title = str(decision.arguments.get("notion_page_title") or "").strip()
                 if not page_title:
                     raise HTTPException(status_code=400, detail="validation_error")

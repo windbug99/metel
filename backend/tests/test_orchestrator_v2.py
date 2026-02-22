@@ -336,6 +336,91 @@ def test_try_run_v2_orchestration_skill_then_llm_linear_recent_list(monkeypatch)
     assert "https://linear.app/issue/OPT-1" in result.execution.user_message
 
 
+def test_try_run_v2_orchestration_skill_then_llm_linear_recent_list_handles_non_numeric_first(monkeypatch):
+    class _Settings:
+        skill_router_v2_llm_enabled = True
+
+    async def _fake_router(**kwargs):
+        return (
+            type(
+                "_Decision",
+                (),
+                {
+                    "mode": MODE_SKILL_THEN_LLM,
+                    "reason": "linear_recent",
+                    "skill_name": "linear.issue_search",
+                    "target_services": ["linear"],
+                    "selected_tools": ["linear_search_issues"],
+                    "arguments": {"linear_query": "", "linear_first": "10개"},
+                },
+            )(),
+            "openai",
+            "gpt-4o-mini",
+        )
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        if tool_name == "linear_list_issues":
+            assert payload.get("first") == 10
+            return {"data": {"issues": {"nodes": [{"id": "i1", "identifier": "OPT-1", "title": "첫 이슈"}]}}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    monkeypatch.setattr("agent.orchestrator_v2.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.orchestrator_v2._request_router_decision_with_llm", _fake_router)
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear 최근 이슈 10개 검색해줘",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert "Linear 최근 이슈" in result.execution.user_message
+
+
+def test_try_run_v2_orchestration_skill_then_llm_notion_recent_pages_list(monkeypatch):
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        if tool_name == "notion_search":
+            assert payload.get("page_size") == 3
+            return {
+                "data": {
+                    "results": [
+                        {
+                            "id": "p1",
+                            "url": "https://notion.so/p1",
+                            "properties": {"title": {"type": "title", "title": [{"plain_text": "회고"}]}},
+                        },
+                        {
+                            "id": "p2",
+                            "url": "https://notion.so/p2",
+                            "properties": {"title": {"type": "title", "title": [{"plain_text": "회의록"}]}},
+                        },
+                    ]
+                }
+            }
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="notion 최근 페이지 3개 검색해줘",
+            connected_services=["notion"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert "Notion 최근 페이지" in result.execution.user_message
+    assert "https://notion.so/p1" in result.execution.user_message
+
+
 def test_try_run_v2_orchestration_skill_then_llm_linear_returns_needs_input_when_not_found(monkeypatch):
     async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
         if tool_name == "linear_search_issues":
