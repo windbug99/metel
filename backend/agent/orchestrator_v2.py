@@ -541,7 +541,7 @@ async def _linear_search_with_issue_ref_fallback(*, user_id: str, issue_ref: str
     listed = await execute_tool(
         user_id=user_id,
         tool_name="linear_list_issues",
-        payload={"first": 100},
+        payload={"first": 20},
     )
     ref_norm = query.lower()
     listed_nodes = _linear_issue_nodes(listed)

@@ -310,7 +310,7 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
               }
             }
             """,
-            {"first": max(1, min(100, first))},
+            {"first": max(1, min(20, first))},
         )
     if tool_name == "linear_search_issues":
         first = int(payload.get("first", 5))
