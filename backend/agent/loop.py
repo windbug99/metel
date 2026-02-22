@@ -744,6 +744,20 @@ async def _try_resume_pending_action(
         preferred_slot=target_slot,
     )
     pending.collected_slots = collected.collected_slots
+    # Defensive guard: when asking a single slot and user sends plain sentence,
+    # keep it as the target slot even if keyed parsing misses it.
+    if (
+        target_slot
+        and target_slot not in pending.collected_slots
+        and (user_text or "").strip()
+        and not _has_keyed_slot_marker(user_text)
+    ):
+        pending.collected_slots[target_slot] = (user_text or "").strip()
+        normalized, missing_slots, validation_errors = validate_slots(pending.action, pending.collected_slots)
+        pending.collected_slots = normalized
+        collected.missing_slots = missing_slots
+        collected.validation_errors = validation_errors
+        collected.ask_next_slot = missing_slots[0] if missing_slots else None
 
     if collected.validation_errors:
         try:

@@ -455,8 +455,16 @@ async def _execute_linear_http(user_id: str, tool: ToolDefinition, payload: dict
         raise HTTPException(status_code=400, detail=f"{tool.tool_name}:TOOL_FAILED|invalid_json")
 
     if data.get("errors"):
-        message = str(data.get("errors"))[:300]
-        raise HTTPException(status_code=400, detail=f"{tool.tool_name}:TOOL_FAILED|message={message}")
+        errors = data.get("errors") or []
+        first = errors[0] if isinstance(errors, list) and errors else {}
+        message = str(first.get("message") or str(errors))[:300] if isinstance(first, dict) else str(errors)[:300]
+        code = ""
+        if isinstance(first, dict):
+            code = str((first.get("extensions") or {}).get("code") or "")
+        detail = f"{tool.tool_name}:TOOL_FAILED|message={message}"
+        if code:
+            detail = f"{detail}|code={code}"
+        raise HTTPException(status_code=400, detail=detail)
     return {"ok": True, "data": data.get("data", {})}
 
 

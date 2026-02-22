@@ -215,6 +215,58 @@ def test_linear_query_and_variables_search_issues_uses_title_filter():
     assert variables["first"] == 7
 
 
+def test_execute_tool_linear_graphql_error_contains_message_and_code(monkeypatch):
+    tool = ToolDefinition(
+        service="linear",
+        base_url="https://api.linear.app",
+        tool_name="linear_update_issue",
+        description="update issue",
+        method="POST",
+        path="/graphql",
+        adapter_function="linear_update_issue",
+        input_schema={"type": "object", "properties": {"issue_id": {"type": "string"}}, "required": ["issue_id"]},
+        required_scopes=("write",),
+        idempotency_key_policy="optional",
+        error_map={},
+    )
+
+    class _Registry:
+        def get_tool(self, tool_name: str):
+            assert tool_name == "linear_update_issue"
+            return tool
+
+    class _FakeResponse:
+        status_code = 200
+        text = '{"errors":[{"message":"Invalid issue id","extensions":{"code":"BAD_USER_INPUT"}}]}'
+
+        def json(self):
+            return {"errors": [{"message": "Invalid issue id", "extensions": {"code": "BAD_USER_INPUT"}}]}
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            return _FakeResponse()
+
+    monkeypatch.setattr("agent.tool_runner.load_registry", lambda: _Registry())
+    monkeypatch.setattr("agent.tool_runner._load_oauth_access_token", lambda user_id, provider: "linear-token")
+    monkeypatch.setattr("agent.tool_runner.httpx.AsyncClient", lambda *args, **kwargs: _FakeClient())
+
+    try:
+        asyncio.run(execute_tool("user-1", "linear_update_issue", {"issue_id": "issue-1"}))
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert "TOOL_FAILED" in str(exc.detail)
+        assert "Invalid issue id" in str(exc.detail)
+        assert "BAD_USER_INPUT" in str(exc.detail)
+    else:
+        assert False, "expected HTTPException"
+
+
 def test_execute_tool_notion_oauth_token_introspect_uses_basic_auth(monkeypatch):
     tool = ToolDefinition(
         service="notion",

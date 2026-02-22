@@ -41,6 +41,8 @@ class CopyRequest:
 def _map_execution_error(detail: str) -> tuple[str, str, str]:
     code = detail or "unknown_error"
     lower = code.lower()
+    upstream_message_match = re.search(r"\|message=([^|]+)", code)
+    upstream_message = upstream_message_match.group(1).strip() if upstream_message_match else ""
 
     if "notion_not_connected" in lower or lower.endswith("_not_connected"):
         return (
@@ -79,9 +81,12 @@ def _map_execution_error(detail: str) -> tuple[str, str, str]:
             "validation_error",
         )
     if "tool_failed" in lower or "notion_api_failed" in lower or "notion_parse_failed" in lower:
+        hint = ""
+        if upstream_message:
+            hint = f"\n세부: {upstream_message[:200]}"
         return (
             "외부 서비스 처리 중 오류가 발생했습니다.",
-            "외부 서비스 응답 처리에 실패했습니다. 잠시 후 다시 시도해주세요.",
+            f"외부 서비스 응답 처리에 실패했습니다. 잠시 후 다시 시도해주세요.{hint}",
             "upstream_error",
         )
     return (

@@ -363,7 +363,7 @@ def test_run_agent_analysis_resumes_with_focused_pending_task_only(monkeypatch):
 
     third = asyncio.run(
         run_agent_analysis(
-            "본문: 구글 계정을 통한 간편한 로그인 및 회원가입 기능이 구현되었습니다.",
+            "구글 계정을 통한 간편한 로그인 및 회원가입 기능이 구현되었습니다.",
             ["linear", "notion"],
             "user-focused",
         )
