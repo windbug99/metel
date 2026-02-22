@@ -277,6 +277,64 @@ def _extract_notion_page_title(text: str) -> str | None:
     return None
 
 
+def _extract_notion_page_title_for_create(text: str) -> str | None:
+    normalized = " ".join((text or "").strip().split())
+    def _sanitize(candidate: str | None) -> str | None:
+        value = str(candidate or "").strip(" \"'`.,")
+        if not value:
+            return None
+        lowered = value.lower()
+        if value in {"에", "의", "에서"} or lowered in {"at", "in", "on"}:
+            return None
+        if len(value) < 2:
+            return None
+        return value[:100]
+
+    labeled = re.search(
+        r"(?i)(?:제목은|title is|제목|title)\s*[:：]?\s*['\"“”]?"
+        r"(.+?)"
+        r"(?=(?:\s*(?:이고|이며|,|\.)?\s*(?:내용|본문|설명|description)\s*[:：])|$)",
+        normalized,
+    )
+    if labeled:
+        candidate = _sanitize(labeled.group(1))
+        if candidate:
+            return candidate
+    page_labeled = re.search(
+        r"(?i)(?:페이지\s*제목|page\s*title)\s*[:：]?\s*['\"“”]?(.+?)['\"“”]?"
+        r"(?=(?:\s*(?:이고|이며|,|\.)?\s*(?:내용|본문|설명|description)\s*[:：])|$)",
+        normalized,
+    )
+    if page_labeled:
+        candidate = _sanitize(page_labeled.group(1))
+        if candidate:
+            return candidate
+    for pattern in [
+        r'(?i)(?:notion|노션)(?:에서|에|의)?\s*["“]([^"”]+)["”]\s*페이지',
+        r"(?i)(?:notion|노션)(?:에서|에|의)?\s*'([^']+)'\s*페이지",
+        r'(?i)["“]([^"”]+)["”]\s*(?:페이지)\s*(?:생성|만들|작성|create)',
+    ]:
+        match = re.search(pattern, text.strip())
+        if match:
+            candidate = _sanitize(match.group(1))
+            if candidate:
+                return candidate
+
+    # e.g. "오늘 서울 날씨를 notion에 페이지로 생성해줘" -> "오늘 서울 날씨"
+    prefix_intent = re.search(
+        r"(?i)^\s*(.+?)\s*(?:을|를)\s*(?:notion|노션)(?:에서|에|의)?.*(?:페이지).*(?:생성|만들|작성|create)",
+        normalized,
+    )
+    if prefix_intent:
+        candidate = re.sub(r"(?i)^(?:기사|문서|내용)\s*", "", prefix_intent.group(1)).strip()
+        candidate = _sanitize(candidate)
+        if candidate:
+            return candidate
+
+    candidate = _extract_notion_page_title(text)
+    return _sanitize(candidate)
+
+
 def _extract_linear_team_reference(text: str) -> str | None:
     keyed = re.search(r"(?i)(?:팀|team)\s*[:：]?\s*([^\s,]+)", text.strip())
     if keyed:
@@ -287,11 +345,32 @@ def _extract_linear_team_reference(text: str) -> str | None:
 
 
 def _extract_linear_issue_title_for_create(text: str) -> str | None:
+    normalized = " ".join((text or "").strip().split())
+    labeled = re.search(
+        r"(?i)(?:제목은|title is|제목|title)\s*[:：]?\s*['\"“”]?"
+        r"(.+?)"
+        r"(?=(?:\s+(?:설명|내용|description|본문|priority|우선순위|라벨|label|담당자|assignee)\s*[:：])|$)",
+        normalized,
+    )
+    if labeled:
+        candidate = labeled.group(1).strip(" \"'`.,")
+        if candidate:
+            return candidate[:120]
     quoted = re.findall(r'"([^"]+)"|\'([^\']+)\'', text)
     for a, b in quoted:
         candidate = (a or b or "").strip()
         if candidate:
             return candidate
+    # e.g. "linear에서 비밀번호 찾기 오류 이슈 생성해줘"
+    service_first = re.search(
+        r"(?i)(?:linear|리니어)(?:에서|에|의)?\s*(.+?)\s*(?:이슈)\s*(?:생성|만들|작성|create)",
+        normalized,
+    )
+    if service_first:
+        candidate = service_first.group(1).strip(" \"'`.,")
+        candidate = re.sub(r"(?i)^(?:팀|team)\s*[:：]?\s*[^\s,]+\s*", "", candidate).strip()
+        if candidate:
+            return candidate[:120]
     pattern = re.search(r"(?i)(.+?)\s*(?:linear|리니어).*(?:이슈).*(?:생성|만들|작성|create)", text.strip())
     if pattern:
         candidate = pattern.group(1).strip(" \"'`")
@@ -354,6 +433,9 @@ def _normalize_router_arguments(*, decision: RouterDecision, user_text: str) -> 
             args["linear_team_ref"] = _extract_linear_team_reference(text)
         if not str(args.get("linear_issue_title") or "").strip():
             args["linear_issue_title"] = _extract_linear_issue_title_for_create(text)
+    elif skill_name == "notion.page_create":
+        if not str(args.get("notion_page_title") or "").strip():
+            args["notion_page_title"] = _extract_notion_page_title_for_create(text)
     elif skill_name in {"linear.issue_update", "linear.issue_delete"}:
         if not str(args.get("linear_issue_ref") or "").strip():
             args["linear_issue_ref"] = _extract_linear_issue_reference(text)
@@ -423,6 +505,23 @@ def _apply_decision_safety_overrides(
             decision=route_request_v2(user_text=text, connected_services=connected_services),
             user_text=text,
         ), "force_rule_notion_recent_list"
+
+    # Explicit mutation intent on connected service should always be rule-routed.
+    notion_mutation_intent = "notion" in connected and _mentions_service(text, "notion") and (
+        _is_create_intent(text) or _is_update_intent(text) or _is_delete_intent(text)
+    )
+    linear_mutation_intent = "linear" in connected and _mentions_service(text, "linear") and (
+        (_is_create_intent(text) and (("이슈" in text) or ("issue" in text.lower())))
+        or _is_update_intent(text)
+        or _is_delete_intent(text)
+    )
+    if notion_mutation_intent or linear_mutation_intent:
+        forced = _normalize_router_arguments(
+            decision=route_request_v2(user_text=text, connected_services=connected_services),
+            user_text=text,
+        )
+        if forced.mode != decision.mode or forced.skill_name != decision.skill_name:
+            return forced, "force_rule_explicit_mutation_intent"
 
     # If LLM picks search skill with mutation mode, coerce to read mode.
     if decision.mode == MODE_LLM_THEN_SKILL and skill_name in {"linear.issue_search", "notion.page_search"}:
@@ -524,6 +623,7 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
             reason="llm_result_to_notion_page",
             skill_name="notion.page_create",
             target_services=["notion"],
+            arguments={"notion_page_title": _extract_notion_page_title_for_create(text)},
         )
 
     # Read/search/analysis intents
@@ -1218,7 +1318,11 @@ async def try_run_v2_orchestration(
                 )
 
             if skill_name == "notion.page_create":
-                title = f"metel 결과 - {user_text[:40]}".strip()
+                title = str(decision.arguments.get("notion_page_title") or "").strip()
+                if not title:
+                    title = _extract_notion_page_title_for_create(user_text) or ""
+                if not title:
+                    title = "new page"
                 children = [
                     {
                         "object": "block",
@@ -1278,7 +1382,10 @@ async def try_run_v2_orchestration(
             if skill_name == "notion.page_update":
                 page_title = str(decision.arguments.get("notion_page_title") or "").strip()
                 if not page_title:
-                    raise HTTPException(status_code=400, detail="validation_error")
+                    raise NeedsInputSignal(
+                        missing_fields=["target.page_title"],
+                        questions=["업데이트할 Notion 페이지 제목을 알려주세요. 예: 제목: 스프린트 회고"],
+                    )
                 page_id, page_url = await _resolve_notion_page_for_update(user_id=user_id, title=page_title)
                 children = [
                     {
@@ -1368,7 +1475,11 @@ async def try_run_v2_orchestration(
                 )
 
             if skill_name == "linear.issue_create":
-                issue_title = str(decision.arguments.get("linear_issue_title") or "").strip() or f"metel 요청 - {user_text[:50]}"
+                issue_title = str(decision.arguments.get("linear_issue_title") or "").strip()
+                if not issue_title:
+                    issue_title = _extract_linear_issue_title_for_create(user_text) or ""
+                if not issue_title:
+                    issue_title = "new issue"
                 team_ref = str(decision.arguments.get("linear_team_ref") or "").strip() or None
                 team_id = await _resolve_linear_team_id_for_create(user_id=user_id, team_ref=team_ref)
                 result = await execute_tool(
@@ -1445,7 +1556,10 @@ async def try_run_v2_orchestration(
             if skill_name == "notion.page_delete":
                 page_title = str(decision.arguments.get("notion_page_title") or "").strip()
                 if not page_title:
-                    raise HTTPException(status_code=400, detail="validation_error")
+                    raise NeedsInputSignal(
+                        missing_fields=["target.page_title"],
+                        questions=["삭제할 Notion 페이지 제목을 알려주세요. 예: 제목: 스프린트 회고"],
+                    )
                 page_id, page_url = await _resolve_notion_page_for_update(user_id=user_id, title=page_title)
                 await execute_tool(
                     user_id=user_id,
@@ -1610,7 +1724,10 @@ async def try_run_v2_orchestration(
                     )
                 page_title = str(decision.arguments.get("notion_page_title") or "").strip()
                 if not page_title:
-                    raise HTTPException(status_code=400, detail="validation_error")
+                    raise NeedsInputSignal(
+                        missing_fields=["target.page_title"],
+                        questions=["조회할 Notion 페이지 제목을 알려주세요. 예: 제목: 스프린트 회고"],
+                    )
                 page_id, page_url = await _resolve_notion_page_for_update(user_id=user_id, title=page_title)
                 block_result = await execute_tool(
                     user_id=user_id,

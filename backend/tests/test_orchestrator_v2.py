@@ -86,6 +86,20 @@ def test_route_request_v2_llm_then_skill_for_notion_write():
     assert decision.selected_tools == ["notion_create_page"]
 
 
+def test_route_request_v2_llm_then_skill_for_notion_write_with_labeled_title():
+    decision = route_request_v2("notion 페이지 생성 제목: 구글로그인 구현방법 내용: 자세히 작성", ["notion"])
+    assert decision.mode == MODE_LLM_THEN_SKILL
+    assert decision.skill_name == "notion.page_create"
+    assert decision.arguments.get("notion_page_title") == "구글로그인 구현방법"
+
+
+def test_route_request_v2_llm_then_skill_for_notion_write_with_prefix_object_title():
+    decision = route_request_v2("오늘 서울 날씨를 notion에 페이지로 생성해줘", ["notion"])
+    assert decision.mode == MODE_LLM_THEN_SKILL
+    assert decision.skill_name == "notion.page_create"
+    assert decision.arguments.get("notion_page_title") == "오늘 서울 날씨"
+
+
 def test_route_request_v2_skill_then_llm_for_linear_analysis():
     decision = route_request_v2("linear의 OPT-35 이슈 설명을 해결하는 방법을 정리해줘", ["linear"])
     assert decision.mode == MODE_SKILL_THEN_LLM
@@ -149,6 +163,21 @@ def test_route_request_v2_llm_then_skill_for_linear_create():
     assert "linear_list_teams" in decision.selected_tools
     assert decision.arguments.get("linear_team_ref") == "OPS"
     assert decision.arguments.get("linear_issue_title") == "로그인 실패 대응"
+
+
+def test_route_request_v2_llm_then_skill_for_linear_create_with_labeled_title():
+    decision = route_request_v2("linear 이슈 생성 팀: operate 제목: 비밀번호 찾기 오류", ["linear"])
+    assert decision.mode == MODE_LLM_THEN_SKILL
+    assert decision.skill_name == "linear.issue_create"
+    assert decision.arguments.get("linear_team_ref") == "operate"
+    assert decision.arguments.get("linear_issue_title") == "비밀번호 찾기 오류"
+
+
+def test_route_request_v2_llm_then_skill_for_linear_create_service_first_title():
+    decision = route_request_v2("linear에서 비밀번호 찾기 오류 이슈 생성해줘", ["linear"])
+    assert decision.mode == MODE_LLM_THEN_SKILL
+    assert decision.skill_name == "linear.issue_create"
+    assert decision.arguments.get("linear_issue_title") == "비밀번호 찾기 오류"
 
 
 def test_route_request_v2_llm_then_skill_for_notion_delete():
@@ -1090,3 +1119,109 @@ def test_try_run_v2_orchestration_returns_needs_input_for_ambiguous_notion_updat
     assert result.execution.artifacts.get("needs_input") == "true"
     assert result.execution.artifacts.get("error_code") == "validation_error"
     assert "선택 가능한 항목" in result.execution.user_message
+
+
+def test_try_run_v2_orchestration_linear_create_uses_default_title_when_missing(monkeypatch):
+    captured: dict = {}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        if tool_name == "linear_list_teams":
+            return {"data": {"teams": {"nodes": [{"id": "team-1", "key": "operate", "name": "Operate"}]}}}
+        if tool_name == "linear_create_issue":
+            captured["title"] = payload.get("title")
+            return {"data": {"issueCreate": {"issue": {"url": "https://linear.app/issue/OPS-1"}}}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        return "이슈 설명", "openai", "gpt-4o-mini"
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear 이슈 생성 팀: operate",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert captured.get("title") == "new issue"
+
+
+def test_try_run_v2_orchestration_notion_create_uses_default_title_when_missing(monkeypatch):
+    captured: dict = {}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        if tool_name == "notion_create_page":
+            title_nodes = (((payload.get("properties") or {}).get("title") or {}).get("title") or [])
+            captured["title"] = (((title_nodes[0] or {}).get("text") or {}).get("content") if title_nodes else "")
+            return {"data": {"url": "https://notion.so/new-page"}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        return "생성 본문", "openai", "gpt-4o-mini"
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="notion에 페이지 생성해줘",
+            connected_services=["notion"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert captured.get("title") == "new page"
+
+
+def test_try_run_v2_orchestration_forces_rule_on_explicit_notion_mutation_intent(monkeypatch):
+    class _Settings:
+        skill_router_v2_llm_enabled = True
+
+    async def _fake_router(**kwargs):
+        # Deliberately wrong: read flow for explicit update intent.
+        return (
+            type(
+                "_Decision",
+                (),
+                {
+                    "mode": MODE_SKILL_THEN_LLM,
+                    "reason": "bad_router_pick",
+                    "skill_name": "notion.page_search",
+                    "target_services": ["notion"],
+                    "selected_tools": ["notion_search"],
+                    "arguments": {},
+                },
+            )(),
+            "openai",
+            "gpt-4o-mini",
+        )
+
+    async def _fake_llm(*, prompt: str):
+        return "업데이트 본문", "openai", "gpt-4o-mini"
+
+    monkeypatch.setattr("agent.orchestrator_v2.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.orchestrator_v2._request_router_decision_with_llm", _fake_router)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="notion 페이지 업데이트",
+            connected_services=["notion"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("needs_input") == "true"
+    assert any(note == "router_decision_override=force_rule_explicit_mutation_intent" for note in result.plan.notes)
