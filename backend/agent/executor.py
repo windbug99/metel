@@ -503,6 +503,13 @@ def _extract_linear_issue_url_from_tool_result(result: dict) -> str:
     return ""
 
 
+def _extract_upstream_message(detail: str) -> str:
+    match = re.search(r"\|message=([^|]+)", detail or "")
+    if not match:
+        return ""
+    return unescape(match.group(1).strip())
+
+
 def _task_output_as_text(value: dict) -> str:
     if "summary_text" in value:
         return str(value.get("summary_text") or "")
@@ -982,7 +989,43 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
                         steps=steps + [AgentExecutionStep(name=task.id, status="error", detail="missing_update_fields")],
                     )
             validated_payloads.append({"task_id": task.id, "tool_name": tool_name, "payload": payload})
-            tool_result = await execute_tool(user_id=user_id, tool_name=tool_name, payload=payload)
+            try:
+                tool_result = await execute_tool(user_id=user_id, tool_name=tool_name, payload=payload)
+            except HTTPException as exc:
+                # Linear update can fail when planner/slot stage keeps identifier-like issue text.
+                # Retry once by re-resolving issue reference from user text.
+                detail = str(exc.detail or "")
+                if "linear_update_issue" in tool_name and "TOOL_FAILED" in detail:
+                    issue_ref = _extract_linear_issue_reference_for_update(plan.user_text) or _extract_linear_issue_reference(plan.user_text) or ""
+                    if issue_ref:
+                        resolved_issue_id = await _resolve_linear_issue_id_from_reference(
+                            user_id=user_id,
+                            plan=plan,
+                            issue_reference=issue_ref,
+                            steps=steps,
+                            step_name="linear_update_retry_issue_resolve",
+                        )
+                        if resolved_issue_id and resolved_issue_id != str(payload.get("issue_id") or ""):
+                            retry_payload = dict(payload)
+                            retry_payload["issue_id"] = resolved_issue_id
+                            validated_payloads.append(
+                                {"task_id": task.id, "tool_name": f"{tool_name}:retry", "payload": retry_payload}
+                            )
+                            tool_result = await execute_tool(user_id=user_id, tool_name=tool_name, payload=retry_payload)
+                            payload = retry_payload
+                            steps.append(
+                                AgentExecutionStep(
+                                    name=f"{task.id}_retry",
+                                    status="success",
+                                    detail=f"tool={tool_name} issue_id_re_resolved",
+                                )
+                            )
+                        else:
+                            raise
+                    else:
+                        raise
+                else:
+                    raise
             _update_slot_context_from_tool_result(slot_context=slot_context, tool_name=tool_name, tool_result=tool_result)
             task_outputs[task.id] = {"kind": "tool", "tool_name": tool_name, "tool_result": tool_result}
             steps.append(AgentExecutionStep(name=task.id, status="success", detail=f"tool={tool_name}"))

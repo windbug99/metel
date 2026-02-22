@@ -166,7 +166,14 @@ def _build_user_facing_message(
         )
 
     if not ok:
-        lead = _first_non_empty_line(execution_message) or "요청 처리 중 문제가 발생했습니다."
+        lines = [line.strip() for line in (execution_message or "").splitlines() if line.strip()]
+        if not lines:
+            return "요청 처리 중 문제가 발생했습니다. 다시 시도해 주세요."
+        lead = lines[0]
+        # Keep one extra line for actionable upstream detail (e.g. GraphQL error message).
+        detail = lines[1] if len(lines) > 1 else ""
+        if detail:
+            return f"{lead}\n{detail}\n다시 시도해 주세요."
         return f"{lead} 다시 시도해 주세요."
 
     lead = _first_non_empty_line(execution_message) or "요청하신 작업을 완료했습니다."
