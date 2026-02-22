@@ -378,6 +378,24 @@ def _normalize_router_arguments(*, decision: RouterDecision, user_text: str) -> 
     )
 
 
+def _is_supported_mode_skill_combo(mode: str, skill_name: str | None) -> bool:
+    skill = str(skill_name or "").strip()
+    if mode == MODE_LLM_ONLY:
+        return not skill
+    if mode == MODE_LLM_THEN_SKILL:
+        return skill in {
+            "notion.page_create",
+            "notion.page_update",
+            "notion.page_delete",
+            "linear.issue_create",
+            "linear.issue_update",
+            "linear.issue_delete",
+        }
+    if mode == MODE_SKILL_THEN_LLM:
+        return skill in {"linear.issue_search", "notion.page_search"}
+    return False
+
+
 def _apply_decision_safety_overrides(
     *,
     decision: RouterDecision,
@@ -387,6 +405,12 @@ def _apply_decision_safety_overrides(
     text = user_text or ""
     connected = {service.strip().lower() for service in connected_services if service and service.strip()}
     skill_name = str(decision.skill_name or "").strip()
+
+    if not _is_supported_mode_skill_combo(decision.mode, skill_name or None):
+        return _normalize_router_arguments(
+            decision=route_request_v2(user_text=text, connected_services=connected_services),
+            user_text=text,
+        ), "force_rule_unsupported_mode_skill_combo"
 
     # Force deterministic routing for recent-list intents.
     if "linear" in connected and _is_linear_recent_list_intent(text):
@@ -444,14 +468,13 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
 
     if has_linear and _is_update_intent(text):
         issue_ref = _extract_linear_issue_reference(text)
-        if issue_ref:
-            return _decision_for_skill(
-                mode=MODE_LLM_THEN_SKILL,
-                reason="llm_result_to_linear_issue_update",
-                skill_name="linear.issue_update",
-                target_services=["linear"],
-                arguments={"linear_issue_ref": issue_ref},
-            )
+        return _decision_for_skill(
+            mode=MODE_LLM_THEN_SKILL,
+            reason="llm_result_to_linear_issue_update",
+            skill_name="linear.issue_update",
+            target_services=["linear"],
+            arguments={"linear_issue_ref": issue_ref},
+        )
 
     if has_linear and _is_create_intent(text) and ("이슈" in text or "issue" in text.lower()):
         return _decision_for_skill(
@@ -467,36 +490,33 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
 
     if has_linear and _is_delete_intent(text) and ("이슈" in text or "issue" in text.lower()):
         issue_ref = _extract_linear_issue_reference(text)
-        if issue_ref:
-            return _decision_for_skill(
-                mode=MODE_LLM_THEN_SKILL,
-                reason="llm_result_to_linear_issue_delete",
-                skill_name="linear.issue_delete",
-                target_services=["linear"],
-                arguments={"linear_issue_ref": issue_ref},
-            )
+        return _decision_for_skill(
+            mode=MODE_LLM_THEN_SKILL,
+            reason="llm_result_to_linear_issue_delete",
+            skill_name="linear.issue_delete",
+            target_services=["linear"],
+            arguments={"linear_issue_ref": issue_ref},
+        )
 
     if has_notion and _is_update_intent(text):
         page_title = _extract_notion_page_title(text)
-        if page_title:
-            return _decision_for_skill(
-                mode=MODE_LLM_THEN_SKILL,
-                reason="llm_result_to_notion_page_update",
-                skill_name="notion.page_update",
-                target_services=["notion"],
-                arguments={"notion_page_title": page_title},
-            )
+        return _decision_for_skill(
+            mode=MODE_LLM_THEN_SKILL,
+            reason="llm_result_to_notion_page_update",
+            skill_name="notion.page_update",
+            target_services=["notion"],
+            arguments={"notion_page_title": page_title},
+        )
 
     if has_notion and _is_delete_intent(text):
         page_title = _extract_notion_page_title(text)
-        if page_title:
-            return _decision_for_skill(
-                mode=MODE_LLM_THEN_SKILL,
-                reason="llm_result_to_notion_page_delete",
-                skill_name="notion.page_delete",
-                target_services=["notion"],
-                arguments={"notion_page_title": page_title},
-            )
+        return _decision_for_skill(
+            mode=MODE_LLM_THEN_SKILL,
+            reason="llm_result_to_notion_page_delete",
+            skill_name="notion.page_delete",
+            target_services=["notion"],
+            arguments={"notion_page_title": page_title},
+        )
 
     if has_notion and _is_write_intent(text):
         return _decision_for_skill(

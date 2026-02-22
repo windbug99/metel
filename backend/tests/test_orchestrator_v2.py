@@ -113,12 +113,24 @@ def test_route_request_v2_llm_then_skill_for_notion_update():
     assert decision.arguments.get("notion_page_title") == "스프린트 회고"
 
 
+def test_route_request_v2_llm_then_skill_for_notion_update_without_title():
+    decision = route_request_v2("notion 페이지 업데이트", ["notion"])
+    assert decision.mode == MODE_LLM_THEN_SKILL
+    assert decision.skill_name == "notion.page_update"
+
+
 def test_route_request_v2_llm_then_skill_for_linear_update():
     decision = route_request_v2("linear의 OPT-35 이슈 업데이트해줘", ["linear"])
     assert decision.mode == MODE_LLM_THEN_SKILL
     assert "linear_update_issue" in decision.selected_tools
     assert "linear_search_issues" in decision.selected_tools
     assert decision.arguments.get("linear_issue_ref") == "OPT-35"
+
+
+def test_route_request_v2_llm_then_skill_for_linear_update_without_ref():
+    decision = route_request_v2("linear 이슈 업데이트", ["linear"])
+    assert decision.mode == MODE_LLM_THEN_SKILL
+    assert decision.skill_name == "linear.issue_update"
 
 
 def test_route_request_v2_llm_then_skill_for_linear_delete():
@@ -265,6 +277,58 @@ def test_try_run_v2_orchestration_overrides_llm_mode_for_linear_recent_list(monk
     assert result.execution is not None
     assert "Linear 최근 이슈" in result.execution.user_message
     assert any(note.startswith("router_decision_override=") for note in result.plan.notes)
+
+
+def test_try_run_v2_orchestration_forces_rule_when_llm_mode_skill_combo_invalid(monkeypatch):
+    class _Settings:
+        skill_router_v2_llm_enabled = True
+
+    async def _fake_router(**kwargs):
+        return (
+            type(
+                "_Decision",
+                (),
+                {
+                    "mode": MODE_SKILL_THEN_LLM,
+                    "reason": "bad_combo",
+                    "skill_name": "linear.issue_create",
+                    "target_services": ["linear"],
+                    "selected_tools": ["linear_create_issue", "linear_list_teams"],
+                    "arguments": {},
+                },
+            )(),
+            "openai",
+            "gpt-4o-mini",
+        )
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        if tool_name == "linear_list_teams":
+            return {"data": {"teams": {"nodes": [{"id": "t1", "key": "OPS", "name": "Operations"}]}}}
+        if tool_name == "linear_create_issue":
+            return {"data": {"issueCreate": {"issue": {"url": "https://linear.app/issue/OPS-1"}}}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        return "이슈 본문", "openai", "gpt-4o-mini"
+
+    monkeypatch.setattr("agent.orchestrator_v2.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.orchestrator_v2._request_router_decision_with_llm", _fake_router)
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear 이슈 생성",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.execution is not None
+    assert result.execution.artifacts.get("error_code") != "unsupported_service"
+    assert result.plan is not None
+    assert any(note == "router_decision_override=force_rule_unsupported_mode_skill_combo" for note in result.plan.notes)
 
 
 def test_try_run_v2_orchestration_blocks_when_contracts_invalid(monkeypatch):
