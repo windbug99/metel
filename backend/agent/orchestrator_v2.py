@@ -1503,7 +1503,11 @@ async def try_run_v2_orchestration(
                     tool_result = await execute_tool(
                         user_id=user_id,
                         tool_name="notion_search",
-                        payload={"query": "", "page_size": first},
+                        payload={
+                            "filter": {"property": "object", "value": "page"},
+                            "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+                            "page_size": first,
+                        },
                     )
                     execution = AgentExecutionResult(
                         success=True,

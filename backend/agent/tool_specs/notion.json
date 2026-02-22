@@ -31,8 +31,7 @@
           "query": { "type": "string" },
           "page_size": { "type": "integer", "minimum": 1, "maximum": 100 },
           "start_cursor": { "type": "string" }
-        },
-        "required": ["query"]
+        }
       },
       "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "429": "RATE_LIMITED" }
     },
