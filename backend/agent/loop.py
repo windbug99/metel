@@ -673,6 +673,8 @@ def _persist_router_v2_pending_action(
     *,
     user_id: str,
     base_user_text: str,
+    missing_fields_json: str = "[]",
+    questions_json: str = "[]",
     plan,
     plan_source: str,
 ) -> None:
@@ -683,9 +685,45 @@ def _persist_router_v2_pending_action(
         task_id="router_v2_needs_input",
         plan=plan,
         plan_source=plan_source,
-        collected_slots={"base_user_text": base_user_text},
+        collected_slots={
+            "base_user_text": base_user_text,
+            "missing_fields_json": missing_fields_json,
+            "questions_json": questions_json,
+        },
         missing_slots=["follow_up"],
     )
+
+
+def _parse_json_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if not isinstance(value, str):
+        return []
+    text = value.strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item).strip() for item in parsed if str(item).strip()]
+
+
+def _normalize_router_v2_followup_text(
+    *,
+    followup_text: str,
+    missing_fields: list[str],
+) -> str:
+    cleaned = (followup_text or "").strip()
+    if not cleaned or _has_keyed_slot_marker(cleaned):
+        return cleaned
+
+    normalized_missing = {field.strip().lower() for field in (missing_fields or []) if field.strip()}
+    if "team_id" in normalized_missing or "linear_team_ref" in normalized_missing:
+        return f"팀: {cleaned}"
+    return cleaned
 
 
 def _apply_slot_loop_from_validation_error(
@@ -800,7 +838,12 @@ async def _try_resume_pending_action(
 
     if pending.plan_source == "router_v2" and pending.action == "router_v2_needs_input":
         base_user_text = str((pending.collected_slots or {}).get("base_user_text") or pending.plan.user_text or "").strip()
-        merged_user_text = (f"{base_user_text}\n{(user_text or '').strip()}").strip() if base_user_text else (user_text or "").strip()
+        missing_fields = _parse_json_list((pending.collected_slots or {}).get("missing_fields_json"))
+        normalized_followup = _normalize_router_v2_followup_text(
+            followup_text=(user_text or "").strip(),
+            missing_fields=missing_fields,
+        )
+        merged_user_text = (f"{base_user_text}\n{normalized_followup}").strip() if base_user_text else normalized_followup
         clear_pending_action(user_id)
         v2_result = await try_run_v2_orchestration(
             user_text=merged_user_text,
@@ -820,6 +863,8 @@ async def _try_resume_pending_action(
                 _persist_router_v2_pending_action(
                     user_id=user_id,
                     base_user_text=merged_user_text,
+                    missing_fields_json=str(v2_result.execution.artifacts.get("missing_fields_json", "[]")),
+                    questions_json=str(v2_result.execution.artifacts.get("questions_json", "[]")),
                     plan=v2_result.plan,
                     plan_source=v2_result.plan_source,
                 )
@@ -1092,6 +1137,8 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
                                 _persist_router_v2_pending_action(
                                     user_id=user_id,
                                     base_user_text=user_text,
+                                    missing_fields_json=str(v2_result.execution.artifacts.get("missing_fields_json", "[]")),
+                                    questions_json=str(v2_result.execution.artifacts.get("questions_json", "[]")),
                                     plan=v2_result.plan,
                                     plan_source=v2_result.plan_source,
                                 )

@@ -969,6 +969,84 @@ def test_run_agent_analysis_resumes_router_v2_needs_input_with_followup(monkeypa
     assert get_pending_action("user-v2-needs-input") is None
 
 
+def test_run_agent_analysis_resumes_router_v2_linear_team_followup_without_key(monkeypatch):
+    clear_pending_action("user-v2-linear-team")
+
+    class _Settings:
+        llm_autonomous_enabled = False
+        skill_router_v2_enabled = True
+        skill_runner_v2_enabled = True
+        skill_v2_shadow_mode = False
+        skill_v2_traffic_percent = 100
+        llm_response_finalizer_enabled = False
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    calls: list[str] = []
+
+    async def _fake_v2(**kwargs):
+        user_text = kwargs["user_text"]
+        calls.append(user_text)
+        plan = AgentPlan(
+            user_text=user_text,
+            requirements=[AgentRequirement(summary="v2")],
+            target_services=["linear"],
+            selected_tools=["linear_create_issue"],
+            workflow_steps=["1"],
+            notes=[],
+        )
+        if len(calls) == 1:
+            execution = AgentExecutionResult(
+                success=False,
+                user_message="입력값이 더 필요합니다.",
+                summary="추가 입력 필요",
+                artifacts={
+                    "needs_input": "true",
+                    "error_code": "validation_error",
+                    "missing_fields_json": '["team_id"]',
+                    "questions_json": '["이슈를 생성할 Linear 팀을 선택해 주세요."]',
+                },
+            )
+            return AgentRunResult(
+                ok=False,
+                stage="execution",
+                plan=plan,
+                result_summary=execution.summary,
+                execution=execution,
+                plan_source="router_v2",
+            )
+        execution = AgentExecutionResult(
+            success=True,
+            user_message="이슈 생성 완료",
+            summary="완료",
+            artifacts={},
+        )
+        return AgentRunResult(
+            ok=True,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_run_v2_orchestration", _fake_v2)
+
+    first = asyncio.run(run_agent_analysis("linear 이슈 생성", ["linear"], "user-v2-linear-team"))
+    assert first.ok is False
+    assert get_pending_action("user-v2-linear-team") is not None
+
+    second = asyncio.run(run_agent_analysis("operate", ["linear"], "user-v2-linear-team"))
+    assert second.ok is True
+    assert len(calls) == 2
+    assert "linear 이슈 생성" in calls[1]
+    assert "팀: operate" in calls[1]
+    assert get_pending_action("user-v2-linear-team") is None
+
+
 def test_run_agent_analysis_falls_back_to_rule(monkeypatch):
     rule_plan = _sample_plan()
     class _Settings:
