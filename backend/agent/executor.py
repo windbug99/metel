@@ -856,6 +856,7 @@ async def _autofill_task_payload(
             issue_ref = _extract_linear_issue_reference_for_update(user_text) or _extract_linear_issue_reference(user_text) or ""
         if issue_ref:
             issue_id = issue_ref
+            unresolved_from_reference = False
             if not _looks_like_linear_internal_issue_id(issue_ref):
                 issue_id = await _resolve_linear_issue_id_from_reference(
                     user_id=user_id,
@@ -864,8 +865,12 @@ async def _autofill_task_payload(
                     steps=steps,
                     step_name="slot_fill_linear_search_issue_for_update",
                 )
+                unresolved_from_reference = not bool(issue_id)
             if issue_id:
                 filled["issue_id"] = issue_id
+            elif unresolved_from_reference:
+                # Prevent sending identifier-like value as internal issue id to update API.
+                filled.pop("issue_id", None)
 
     if "linear_create_comment" in tool_name:
         issue_ref = str(filled.get("issue_id") or "").strip()
@@ -1497,7 +1502,7 @@ async def _resolve_linear_issue_id_from_reference(
         search_failed = True
         steps.append(AgentExecutionStep(name=step_name, status="error", detail=str(exc.detail)))
 
-    if (search_failed or not nodes) and _looks_like_linear_identifier(ref):
+    if _looks_like_linear_identifier(ref):
         # Fallback for environments where search filter may not match identifier directly.
         listed = await execute_tool(
             user_id=user_id,
