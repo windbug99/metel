@@ -254,8 +254,11 @@ def test_try_run_v2_orchestration_skill_then_llm(monkeypatch):
 
 def test_try_run_v2_orchestration_skill_then_llm_linear_returns_needs_input_when_not_found(monkeypatch):
     async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
-        assert tool_name == "linear_search_issues"
-        return {"data": {"issues": {"nodes": []}}}
+        if tool_name == "linear_search_issues":
+            return {"data": {"issues": {"nodes": []}}}
+        if tool_name == "linear_list_issues":
+            return {"data": {"issues": {"nodes": []}}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
 
     async def _fake_llm(*, prompt: str):
         raise AssertionError("llm should not be called when linear issue search is empty")
@@ -276,6 +279,69 @@ def test_try_run_v2_orchestration_skill_then_llm_linear_returns_needs_input_when
     assert result.execution is not None
     assert result.execution.artifacts.get("needs_input") == "true"
     assert result.execution.artifacts.get("error_code") == "validation_error"
+
+
+def test_try_run_v2_orchestration_skill_then_llm_linear_falls_back_to_list_issues(monkeypatch):
+    calls = {"search": 0, "list": 0}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        assert user_id == "user-1"
+        if tool_name == "linear_search_issues":
+            calls["search"] += 1
+            if payload.get("query") == "OPT-43":
+                return {"data": {"issues": {"nodes": []}}}
+            return {
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "issue-43",
+                                "identifier": "OPT-43",
+                                "title": "로그인 버튼 클릭 오류",
+                                "description": "구글 로그인 클릭 시 404 오류",
+                            }
+                        ]
+                    }
+                }
+            }
+        if tool_name == "linear_list_issues":
+            calls["list"] += 1
+            return {
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "issue-43",
+                                "identifier": "OPT-43",
+                                "title": "로그인 버튼 클릭 오류",
+                            }
+                        ]
+                    }
+                }
+            }
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        assert "OPT-43" in prompt
+        return "해결 가이드", "openai", "gpt-4o-mini"
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear의 OPT-43 이슈 설명을 해결하는 방법을 정리해줘",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert calls["search"] >= 1
+    assert calls["list"] == 1
+    assert "해결 가이드" in result.execution.user_message
 
 
 def test_try_run_v2_orchestration_llm_then_notion_update(monkeypatch):
@@ -332,6 +398,30 @@ def test_try_run_v2_orchestration_llm_then_notion_update(monkeypatch):
     assert result.execution.artifacts.get("updated_page_id") == "page-1"
 
 
+def test_try_run_v2_orchestration_llm_then_notion_create_skips_on_realtime_unavailable(monkeypatch):
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        raise AssertionError("skill should not run when realtime data is unavailable")
+
+    async def _fake_llm(*, prompt: str):
+        return "실시간 조회 불가.", "openai", "gpt-4o-mini"
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="오늘 서울 날씨를 notion에 페이지로 생성해줘",
+            connected_services=["notion"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("error_code") == "realtime_data_unavailable"
+
+
 def test_try_run_v2_orchestration_llm_then_linear_update(monkeypatch):
     calls = {"search": 0, "update": 0}
 
@@ -377,6 +467,47 @@ def test_try_run_v2_orchestration_llm_then_linear_update(monkeypatch):
     assert calls["update"] == 1
     assert result.execution.artifacts.get("router_mode") == MODE_LLM_THEN_SKILL
     assert result.execution.artifacts.get("updated_issue_id") == "issue-internal-35"
+
+
+def test_try_run_v2_orchestration_llm_then_linear_update_falls_back_to_list_issues(monkeypatch):
+    calls = {"search": 0, "list": 0, "update": 0}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        assert user_id == "user-1"
+        if tool_name == "linear_search_issues":
+            calls["search"] += 1
+            if payload.get("query") == "OPT-35":
+                return {"data": {"issues": {"nodes": []}}}
+            return {"data": {"issues": {"nodes": [{"id": "issue-internal-35", "identifier": "OPT-35", "title": "로그인 오류"}]}}}
+        if tool_name == "linear_list_issues":
+            calls["list"] += 1
+            return {"data": {"issues": {"nodes": [{"id": "issue-internal-35", "identifier": "OPT-35", "title": "로그인 오류"}]}}}
+        if tool_name == "linear_update_issue":
+            calls["update"] += 1
+            assert payload.get("issue_id") == "issue-internal-35"
+            return {"data": {"issueUpdate": {"success": True}}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        return "수정 설명 요약", "openai", "gpt-4o-mini"
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear의 OPT-35 이슈 업데이트해줘",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert calls["search"] >= 1
+    assert calls["list"] == 1
+    assert calls["update"] == 1
 
 
 def test_try_run_v2_orchestration_llm_then_linear_create(monkeypatch):

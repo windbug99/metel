@@ -489,9 +489,20 @@ def _build_grounded_llm_prompt(*, user_text: str, mode: str) -> str:
     return f"{guard}\n[사용자 요청]\n{user_text}"
 
 
+def _looks_realtime_request(text: str) -> bool:
+    lower = (text or "").lower()
+    tokens = ("실시간", "현재", "오늘", "날씨", "시간", "환율", "주가", "경기", "schedule", "weather")
+    return any(token in lower for token in tokens)
+
+
+def _looks_unavailable_answer(text: str) -> bool:
+    lower = (text or "").lower()
+    tokens = ("실시간 조회 불가", "실시간 정보를 제공할 수 없", "확인할 수 없", "조회할 수 없", "cannot provide")
+    return any(token in lower for token in tokens)
+
+
 def _linear_issues_to_context(tool_result: dict) -> str:
-    data = tool_result.get("data") or {}
-    nodes = (((data.get("issues") or {}).get("nodes")) or [])
+    nodes = _linear_issue_nodes(tool_result)
     if not nodes:
         return "조회된 이슈가 없습니다."
     lines: list[str] = []
@@ -506,11 +517,50 @@ def _linear_issues_to_context(tool_result: dict) -> str:
 
 
 def _linear_issue_count(tool_result: dict) -> int:
+    return len(_linear_issue_nodes(tool_result))
+
+
+def _linear_issue_nodes(tool_result: dict) -> list[dict]:
     data = tool_result.get("data") or {}
     nodes = (((data.get("issues") or {}).get("nodes")) or [])
     if not isinstance(nodes, list):
-        return 0
-    return len(nodes)
+        return []
+    return [node for node in nodes if isinstance(node, dict)]
+
+
+async def _linear_search_with_issue_ref_fallback(*, user_id: str, issue_ref: str) -> dict:
+    query = (issue_ref or "").strip()
+    searched = await execute_tool(
+        user_id=user_id,
+        tool_name="linear_search_issues",
+        payload={"query": query, "first": 10},
+    )
+    if _linear_issue_count(searched) > 0:
+        return searched
+
+    listed = await execute_tool(
+        user_id=user_id,
+        tool_name="linear_list_issues",
+        payload={"first": 100},
+    )
+    ref_norm = query.lower()
+    listed_nodes = _linear_issue_nodes(listed)
+    exact = [node for node in listed_nodes if str(node.get("identifier") or "").strip().lower() == ref_norm]
+    if not exact:
+        return searched
+
+    # Title 기반 재검색으로 설명/본문 필드를 최대한 확보한다.
+    issue_title = str(exact[0].get("title") or "").strip()
+    if issue_title:
+        retry = await execute_tool(
+            user_id=user_id,
+            tool_name="linear_search_issues",
+            payload={"query": issue_title, "first": 10},
+        )
+        if _linear_issue_count(retry) > 0:
+            return retry
+
+    return {"data": {"issues": {"nodes": exact}}}
 
 
 def _notion_blocks_to_context(tool_result: dict) -> str:
@@ -615,12 +665,8 @@ async def _resolve_notion_page_for_update(*, user_id: str, title: str) -> tuple[
 
 
 async def _resolve_linear_issue_id_for_update(*, user_id: str, issue_ref: str) -> str:
-    result = await execute_tool(
-        user_id=user_id,
-        tool_name="linear_search_issues",
-        payload={"query": issue_ref, "first": 10},
-    )
-    nodes = (((result.get("data") or {}).get("issues") or {}).get("nodes") or [])
+    result = await _linear_search_with_issue_ref_fallback(user_id=user_id, issue_ref=issue_ref)
+    nodes = _linear_issue_nodes(result)
     if not nodes:
         raise NeedsInputSignal(
             missing_fields=["target.issue_ref"],
@@ -825,6 +871,30 @@ async def try_run_v2_orchestration(
             )
             plan.notes.append(f"llm_provider={provider}")
             plan.notes.append(f"llm_model={model}")
+            if _looks_realtime_request(user_text) and _looks_unavailable_answer(llm_text):
+                execution = AgentExecutionResult(
+                    success=False,
+                    user_message=llm_text,
+                    summary="실시간 조회 불가로 외부 서비스 반영 생략",
+                    artifacts={
+                        "router_mode": decision.mode,
+                        "error_code": "realtime_data_unavailable",
+                        "llm_provider": provider,
+                        "llm_model": model,
+                    },
+                    steps=[
+                        AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
+                        AgentExecutionStep(name="skip_skill_apply", status="error", detail="realtime_data_unavailable"),
+                    ],
+                )
+                return AgentRunResult(
+                    ok=False,
+                    stage="execution",
+                    plan=plan,
+                    result_summary=execution.summary,
+                    execution=execution,
+                    plan_source="router_v2",
+                )
             skill_name = str(decision.skill_name or "").strip() or infer_skill_name_from_runtime_tools(
                 decision.selected_tools
             )
@@ -1098,11 +1168,15 @@ async def try_run_v2_orchestration(
             )
             if skill_name == "linear.issue_search" or ("linear" in decision.target_services and not skill_name):
                 query = str(decision.arguments.get("linear_query") or "").strip() or user_text
-                tool_result = await execute_tool(
-                    user_id=user_id,
-                    tool_name="linear_search_issues",
-                    payload={"query": query, "first": 5},
-                )
+                issue_ref = _extract_linear_issue_reference(query)
+                if issue_ref:
+                    tool_result = await _linear_search_with_issue_ref_fallback(user_id=user_id, issue_ref=issue_ref)
+                else:
+                    tool_result = await execute_tool(
+                        user_id=user_id,
+                        tool_name="linear_search_issues",
+                        payload={"query": query, "first": 5},
+                    )
                 if _linear_issue_count(tool_result) <= 0:
                     raise NeedsInputSignal(
                         missing_fields=["target.issue_ref"],
