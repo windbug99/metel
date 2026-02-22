@@ -692,7 +692,7 @@ def test_try_run_v2_orchestration_llm_then_notion_update(monkeypatch):
 
     result = asyncio.run(
         try_run_v2_orchestration(
-            user_text='노션에서 "스프린트 회고" 페이지 업데이트해줘',
+            user_text='노션에서 "스프린트 회고" 페이지 본문 업데이트: 배포 회고 요약 추가',
             connected_services=["notion"],
             user_id="user-1",
         )
@@ -705,6 +705,90 @@ def test_try_run_v2_orchestration_llm_then_notion_update(monkeypatch):
     assert calls["append"] == 1
     assert result.execution.artifacts.get("router_mode") == MODE_LLM_THEN_SKILL
     assert result.execution.artifacts.get("updated_page_id") == "page-1"
+
+
+def test_try_run_v2_orchestration_llm_then_notion_update_requires_patch_detail(monkeypatch):
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        raise AssertionError("skill should not run without update patch detail")
+
+    async def _fake_llm(*, prompt: str):
+        return "업데이트 안내", "openai", "gpt-4o-mini"
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text='노션에서 "스프린트 회고" 페이지 업데이트해줘',
+            connected_services=["notion"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("needs_input") == "true"
+    assert "무엇을 업데이트할지" in result.execution.user_message
+
+
+def test_try_run_v2_orchestration_llm_then_notion_update_title_change(monkeypatch):
+    calls = {"search": 0, "update": 0, "append": 0}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        assert user_id == "user-1"
+        if tool_name == "notion_search":
+            calls["search"] += 1
+            return {
+                "data": {
+                    "results": [
+                        {
+                            "id": "page-1",
+                            "url": "https://notion.so/page-1",
+                            "properties": {
+                                "제목": {
+                                    "type": "title",
+                                    "title": [{"plain_text": "스프린트 회고"}],
+                                }
+                            },
+                        }
+                    ]
+                }
+            }
+        if tool_name == "notion_update_page":
+            calls["update"] += 1
+            assert payload.get("page_id") == "page-1"
+            props = payload.get("properties") or {}
+            assert "제목" in props
+            title_nodes = ((props.get("제목") or {}).get("title") or [])
+            assert (((title_nodes[0] or {}).get("text") or {}).get("content") or "") == "스프린트 보고서"
+            return {"data": {"id": "page-1", "url": "https://notion.so/page-1"}}
+        if tool_name == "notion_append_block_children":
+            calls["append"] += 1
+            return {"data": {"ok": True}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        raise AssertionError("llm should not run for pure title update")
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text='노션에서 "스프린트 회고" 페이지 제목을 "스프린트 보고서"로 업데이트해줘',
+            connected_services=["notion"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert calls["search"] == 1
+    assert calls["update"] == 1
+    assert calls["append"] == 0
+    assert "스프린트 보고서" in result.execution.user_message
 
 
 def test_try_run_v2_orchestration_llm_then_notion_create_skips_on_realtime_unavailable(monkeypatch):
@@ -1107,7 +1191,7 @@ def test_try_run_v2_orchestration_returns_needs_input_for_ambiguous_notion_updat
 
     result = asyncio.run(
         try_run_v2_orchestration(
-            user_text='노션에서 "로그인 버그" 페이지 업데이트해줘',
+            user_text='노션에서 "로그인 버그" 페이지 본문 업데이트: 재현 경로를 추가해줘',
             connected_services=["notion"],
             user_id="user-1",
         )

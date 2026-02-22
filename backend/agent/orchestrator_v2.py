@@ -335,6 +335,48 @@ def _extract_notion_page_title_for_create(text: str) -> str | None:
     return _sanitize(candidate)
 
 
+def _extract_notion_update_new_title(text: str) -> str | None:
+    normalized = " ".join((text or "").strip().split())
+    patterns = [
+        r'(?i)(?:페이지\s*)?(?:제목|title)(?:을|를)?\s*["“]?([^"”]+?)["”]?\s*(?:로|으로)?\s*(?:업데이트|수정|변경|바꿔|rename)',
+        r'(?i)(?:새\s*제목|new\s*title)\s*[:：]?\s*["“]?([^"”]+?)["”]?(?:\s|$)',
+        r'(?i)(?:제목|title)\s*[:：]\s*["“]?([^"”]+?)["”]?(?:\s|$)',
+    ]
+    for pattern in patterns:
+        matched = re.search(pattern, normalized)
+        if not matched:
+            continue
+        candidate = str(matched.group(1) or "").strip(" \"'`.,")
+        if candidate:
+            return candidate[:100]
+    return None
+
+
+def _needs_notion_update_clarification(text: str) -> bool:
+    lower = (text or "").lower()
+    if not _is_update_intent(text):
+        return False
+    if _extract_notion_update_new_title(text):
+        return False
+    detail_tokens = (
+        "본문",
+        "내용",
+        "추가",
+        "append",
+        "요약",
+        "문단",
+        "블록",
+        "설명",
+        "description",
+        "property",
+        "속성",
+        "status",
+        "태그",
+        "priority",
+    )
+    return not any(token in lower or token in text for token in detail_tokens)
+
+
 def _extract_linear_team_reference(text: str) -> str | None:
     keyed = re.search(r"(?i)(?:팀|team)\s*[:：]?\s*([^\s,]+)", text.strip())
     if keyed:
@@ -979,7 +1021,17 @@ def _extract_notion_page_title_from_search_result(page: dict) -> str:
     return ""
 
 
-async def _resolve_notion_page_for_update(*, user_id: str, title: str) -> tuple[str, str]:
+def _extract_notion_title_property_key(page: dict) -> str | None:
+    props = page.get("properties") or {}
+    if not isinstance(props, dict):
+        return None
+    for key, value in props.items():
+        if isinstance(value, dict) and value.get("type") == "title":
+            return str(key).strip() or None
+    return None
+
+
+async def _resolve_notion_page_for_update(*, user_id: str, title: str) -> tuple[str, str, str | None]:
     result = await execute_tool(
         user_id=user_id,
         tool_name="notion_search",
@@ -1003,7 +1055,12 @@ async def _resolve_notion_page_for_update(*, user_id: str, title: str) -> tuple[
         page_url = str(page.get("url") or "").strip()
         if not page_id:
             continue
-        candidate = {"label": page_title or "(제목 없음)", "page_id": page_id, "url": page_url}
+        candidate = {
+            "label": page_title or "(제목 없음)",
+            "page_id": page_id,
+            "url": page_url,
+            "title_property_key": _extract_notion_title_property_key(page),
+        }
         candidates.append(candidate)
         if target_norm and _normalize_title(page_title) == target_norm:
             exact_matches.append(candidate)
@@ -1038,7 +1095,8 @@ async def _resolve_notion_page_for_update(*, user_id: str, title: str) -> tuple[
             missing_fields=["target.page_id"],
             questions=["업데이트할 Notion 페이지 ID를 확인해 주세요."],
         )
-    return page_id, page_url
+    title_property_key = str(selected.get("title_property_key") or "").strip() or None
+    return page_id, page_url, title_property_key
 
 
 async def _resolve_linear_issue_id_for_update(*, user_id: str, issue_ref: str) -> str:
@@ -1262,6 +1320,16 @@ async def try_run_v2_orchestration(
             provider = ""
             model = ""
             source_url = ""
+            notion_update_new_title = ""
+            if skill_name == "notion.page_update":
+                notion_update_new_title = _extract_notion_update_new_title(user_text) or ""
+                if not notion_update_new_title and _needs_notion_update_clarification(user_text):
+                    raise NeedsInputSignal(
+                        missing_fields=["patch"],
+                        questions=[
+                            "무엇을 업데이트할지 알려주세요. 예: 제목을 \"스프린트 보고서\"로 변경 / 본문에 배포 회고 추가"
+                        ],
+                    )
             if skill_name == "notion.page_create" and _is_translation_intent(user_text):
                 maybe_url = _extract_first_url(user_text)
                 if maybe_url:
@@ -1285,12 +1353,13 @@ async def try_run_v2_orchestration(
                         )
                     )
 
-            if not llm_text:
+            if not llm_text and not (skill_name == "notion.page_update" and notion_update_new_title):
                 llm_text, provider, model = await _request_llm_text(
                     prompt=_build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_THEN_SKILL)
                 )
-            plan.notes.append(f"llm_provider={provider}")
-            plan.notes.append(f"llm_model={model}")
+            if provider and model:
+                plan.notes.append(f"llm_provider={provider}")
+                plan.notes.append(f"llm_model={model}")
 
             if _looks_realtime_request(user_text) and _looks_unavailable_answer(llm_text):
                 execution = AgentExecutionResult(
@@ -1386,7 +1455,53 @@ async def try_run_v2_orchestration(
                         missing_fields=["target.page_title"],
                         questions=["업데이트할 Notion 페이지 제목을 알려주세요. 예: 제목: 스프린트 회고"],
                     )
-                page_id, page_url = await _resolve_notion_page_for_update(user_id=user_id, title=page_title)
+                page_id, page_url, title_property_key = await _resolve_notion_page_for_update(
+                    user_id=user_id, title=page_title
+                )
+                if notion_update_new_title:
+                    prop_key = title_property_key or "title"
+                    await execute_tool(
+                        user_id=user_id,
+                        tool_name="notion_update_page",
+                        payload={
+                            "page_id": page_id,
+                            "properties": {
+                                prop_key: {
+                                    "title": [
+                                        {"type": "text", "text": {"content": notion_update_new_title[:100]}}
+                                    ]
+                                }
+                            },
+                        },
+                    )
+                    msg = f"\"{page_title}\" 페이지 제목이 \"{notion_update_new_title[:100]}\"로 업데이트되었습니다."
+                    if page_url:
+                        msg += f"\n\n업데이트 대상 페이지: {page_title}\n링크: {page_url}"
+                    execution = AgentExecutionResult(
+                        success=True,
+                        user_message=msg,
+                        summary="Notion 페이지 제목 업데이트 완료",
+                        artifacts={
+                            "router_mode": decision.mode,
+                            "updated_page_id": page_id,
+                            "updated_page_url": page_url,
+                        },
+                        steps=[
+                            AgentExecutionStep(
+                                name="skill_notion_update_page_title",
+                                status="success",
+                                detail=f"page_title={page_title};new_title={notion_update_new_title[:60]}",
+                            ),
+                        ],
+                    )
+                    return AgentRunResult(
+                        ok=True,
+                        stage="execution",
+                        plan=plan,
+                        result_summary=execution.summary,
+                        execution=execution,
+                        plan_source="router_v2",
+                    )
                 children = [
                     {
                         "object": "block",
@@ -1560,7 +1675,7 @@ async def try_run_v2_orchestration(
                         missing_fields=["target.page_title"],
                         questions=["삭제할 Notion 페이지 제목을 알려주세요. 예: 제목: 스프린트 회고"],
                     )
-                page_id, page_url = await _resolve_notion_page_for_update(user_id=user_id, title=page_title)
+                page_id, page_url, _ = await _resolve_notion_page_for_update(user_id=user_id, title=page_title)
                 await execute_tool(
                     user_id=user_id,
                     tool_name="notion_update_page",
@@ -1728,7 +1843,7 @@ async def try_run_v2_orchestration(
                         missing_fields=["target.page_title"],
                         questions=["조회할 Notion 페이지 제목을 알려주세요. 예: 제목: 스프린트 회고"],
                     )
-                page_id, page_url = await _resolve_notion_page_for_update(user_id=user_id, title=page_title)
+                page_id, page_url, _ = await _resolve_notion_page_for_update(user_id=user_id, title=page_title)
                 block_result = await execute_tool(
                     user_id=user_id,
                     tool_name="notion_retrieve_block_children",
