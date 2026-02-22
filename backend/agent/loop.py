@@ -914,7 +914,7 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
         if _ is not None:
             clear_pending_action(user_id)
 
-    if slot_loop_enabled and _looks_like_slot_only_input(user_text):
+    if _looks_like_slot_only_input(user_text):
         plan = build_agent_plan(user_text=user_text, connected_services=connected_services)
         plan.notes.append("slot_loop_orphan_slot_input")
         plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
