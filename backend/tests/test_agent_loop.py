@@ -3,7 +3,7 @@ import httpx
 
 from agent.loop import _plan_consistency_reason, run_agent_analysis
 from agent.pending_action import PendingActionStorageError, clear_pending_action, get_pending_action
-from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRequirement, AgentTask
+from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRequirement, AgentRunResult, AgentTask
 
 
 def _sample_plan() -> AgentPlan:
@@ -751,6 +751,133 @@ def test_run_agent_analysis_uses_llm_plan(monkeypatch):
     result = asyncio.run(run_agent_analysis("text", ["notion"], "user-1"))
     assert result.ok is True
     assert result.plan_source == "llm"
+
+
+def test_run_agent_analysis_prefers_v2_router_when_enabled(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        skill_router_v2_enabled = True
+        skill_runner_v2_enabled = True
+        llm_response_finalizer_enabled = False
+
+    async def _fake_v2(**kwargs):
+        plan = AgentPlan(
+            user_text=kwargs["user_text"],
+            requirements=[AgentRequirement(summary="v2")],
+            target_services=[],
+            selected_tools=[],
+            workflow_steps=["1"],
+            notes=[],
+        )
+        execution = AgentExecutionResult(success=True, user_message="v2-ok", summary="v2-done")
+        return AgentRunResult(
+            ok=True,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    async def _fake_try_build(**kwargs):
+        raise AssertionError("legacy planner should not run when v2 router is enabled")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_run_v2_orchestration", _fake_v2)
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+
+    result = asyncio.run(run_agent_analysis("오늘 서울 날씨 알려줘", ["notion"], "user-v2"))
+    assert result.ok is True
+    assert result.plan_source == "router_v2"
+    assert result.execution is not None
+    assert result.execution.user_message == "v2-ok"
+
+
+def test_run_agent_analysis_runs_v2_in_shadow_mode_but_returns_legacy(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        skill_router_v2_enabled = True
+        skill_runner_v2_enabled = True
+        skill_v2_shadow_mode = True
+        skill_v2_traffic_percent = 100
+        llm_response_finalizer_enabled = False
+
+    v2_calls = {"count": 0}
+
+    async def _fake_v2(**kwargs):
+        v2_calls["count"] += 1
+        plan = AgentPlan(
+            user_text=kwargs["user_text"],
+            requirements=[AgentRequirement(summary="v2")],
+            target_services=[],
+            selected_tools=[],
+            workflow_steps=["1"],
+            notes=[],
+        )
+        execution = AgentExecutionResult(success=True, user_message="v2-ok", summary="v2-done")
+        return AgentRunResult(
+            ok=True,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    llm_plan = _sample_plan()
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        return AgentExecutionResult(success=True, user_message="legacy-ok", summary="legacy-done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_run_v2_orchestration", _fake_v2)
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("오늘 서울 날씨 알려줘", ["notion"], "user-shadow"))
+    assert result.ok is True
+    assert result.plan_source == "llm"
+    assert result.execution is not None
+    assert result.execution.user_message == "legacy-ok"
+    assert v2_calls["count"] == 1
+    assert any(note == "skill_v2_shadow_mode=1" for note in result.plan.notes)
+    assert any(note == "skill_v2_shadow_executed=1" for note in result.plan.notes)
+
+
+def test_run_agent_analysis_skips_v2_when_rollout_miss(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        skill_router_v2_enabled = True
+        skill_runner_v2_enabled = True
+        skill_v2_shadow_mode = False
+        skill_v2_traffic_percent = 0
+        llm_response_finalizer_enabled = False
+
+    async def _fake_v2(**kwargs):
+        raise AssertionError("v2 should not run when rollout misses")
+
+    llm_plan = _sample_plan()
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        return AgentExecutionResult(success=True, user_message="legacy-ok", summary="legacy-done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_run_v2_orchestration", _fake_v2)
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("오늘 서울 날씨 알려줘", ["notion"], "user-rollout-miss"))
+    assert result.ok is True
+    assert result.plan_source == "llm"
+    assert result.execution is not None
+    assert result.execution.user_message == "legacy-ok"
+    assert any(note == "skill_v2_rollout=rollout_0_miss" for note in result.plan.notes)
 
 
 def test_run_agent_analysis_falls_back_to_rule(monkeypatch):

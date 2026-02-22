@@ -1,0 +1,40 @@
+{
+  "name": "notion.page_delete",
+  "version": "1.0.0",
+  "summary": "Archive(trash) a Notion page",
+  "provider": { "service": "notion", "auth": "oauth", "scopes": ["update_content"] },
+  "runtime_tools": ["notion_update_page"],
+  "autofill": {
+    "sources": ["chat_context.last_active_page_id"],
+    "rules": ["if page_id is null, resolve by title search"]
+  },
+  "input_schema": {
+    "type": "object",
+    "required": ["target"],
+    "properties": {
+      "target": {
+        "type": "object",
+        "properties": {
+          "page_id": { "type": ["string", "null"] },
+          "title": { "type": ["string", "null"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["status"],
+    "properties": {
+      "status": { "type": "string", "enum": ["success", "needs_input", "error"] },
+      "result": { "type": ["object", "null"] },
+      "needs_input": { "type": ["object", "null"] },
+      "error": { "type": ["object", "null"] }
+    },
+    "additionalProperties": false
+  },
+  "examples": [
+    { "name": "delete_by_title", "input": { "target": { "title": "임시 문서" } } }
+  ]
+}

@@ -75,9 +75,16 @@ def _map_execution_error(detail: str) -> tuple[str, str, str]:
             "not_found",
         )
     if "validation_" in lower or "missing_path_param" in lower:
+        field_hint = ""
+        field_match = re.search(r"validation_[a-z]+:([a-zA-Z0-9_]+)", lower)
+        if field_match:
+            field_hint = f"\n세부: `{field_match.group(1)}` 값 형식을 확인해주세요."
+        path_match = re.search(r"missing_path_param:([a-zA-Z0-9_]+)", lower)
+        if path_match:
+            field_hint = f"\n세부: `{path_match.group(1)}` 값이 필요합니다."
         return (
             "요청 형식이 올바르지 않습니다.",
-            "요청 파라미터가 올바르지 않습니다. 제목/개수/ID 형식을 확인해주세요.",
+            f"요청 파라미터가 올바르지 않습니다. 제목/개수/ID 형식을 확인해주세요.{field_hint}",
             "validation_error",
         )
     if "tool_failed" in lower or "notion_api_failed" in lower or "notion_parse_failed" in lower:

@@ -179,10 +179,11 @@ def test_linear_query_and_variables_update_issue():
         {"issue_id": "issue-1", "title": "Updated", "state_id": "state-1", "priority": 2},
     )
     assert "mutation UpdateIssue" in query
-    assert variables["input"]["id"] == "issue-1"
+    assert variables["id"] == "issue-1"
     assert variables["input"]["title"] == "Updated"
     assert variables["input"]["stateId"] == "state-1"
     assert variables["input"]["priority"] == 2
+    assert "id" not in variables["input"]
 
 
 def test_linear_query_and_variables_create_issue_with_priority():

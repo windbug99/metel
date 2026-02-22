@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import re
 from json import JSONDecodeError
 from typing import Any, Awaitable, Callable
@@ -12,6 +13,8 @@ from supabase import create_client
 from agent.registry import ToolDefinition, load_registry
 from app.core.config import get_settings
 from app.security.token_vault import TokenVault
+
+logger = logging.getLogger("metel-backend.tool_runner")
 
 
 def _load_oauth_access_token(user_id: str, provider: str) -> str:
@@ -378,7 +381,7 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
         )
     if tool_name == "linear_update_issue":
         issue_id = str(payload.get("issue_id", "")).strip()
-        input_data: dict[str, Any] = {"id": issue_id}
+        input_data: dict[str, Any] = {}
         if payload.get("title") is not None:
             input_data["title"] = str(payload.get("title", ""))
         if payload.get("description") is not None:
@@ -389,8 +392,8 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
             input_data["stateId"] = str(payload.get("state_id", ""))
         return (
             """
-            mutation UpdateIssue($input: IssueUpdateInput!) {
-              issueUpdate(input: $input) {
+            mutation UpdateIssue($id: String!, $input: IssueUpdateInput!) {
+              issueUpdate(id: $id, input: $input) {
                 success
                 issue {
                   id
@@ -404,7 +407,7 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
               }
             }
             """,
-            {"input": input_data},
+            {"id": issue_id, "input": input_data},
         )
     if tool_name == "linear_create_comment":
         return (
@@ -444,6 +447,14 @@ async def _execute_linear_http(user_id: str, tool: ToolDefinition, payload: dict
 
     if response.status_code >= 400:
         mapped = tool.error_map.get(str(response.status_code), "TOOL_FAILED")
+        logger.warning(
+            "linear_http_failed tool=%s status=%s mapped=%s payload_keys=%s body=%s",
+            tool.tool_name,
+            response.status_code,
+            mapped,
+            sorted(payload.keys()),
+            response.text[:500],
+        )
         raise HTTPException(
             status_code=400,
             detail=f"{tool.tool_name}:{mapped}|status={response.status_code}|message={response.text[:300]}",
@@ -461,6 +472,13 @@ async def _execute_linear_http(user_id: str, tool: ToolDefinition, payload: dict
         code = ""
         if isinstance(first, dict):
             code = str((first.get("extensions") or {}).get("code") or "")
+        logger.warning(
+            "linear_graphql_errors tool=%s payload_keys=%s code=%s message=%s",
+            tool.tool_name,
+            sorted(payload.keys()),
+            code or "-",
+            message,
+        )
         detail = f"{tool.tool_name}:TOOL_FAILED|message={message}"
         if code:
             detail = f"{detail}|code={code}"

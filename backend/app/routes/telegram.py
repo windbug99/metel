@@ -717,7 +717,9 @@ async def telegram_webhook(
                     {"chat_id": chat_id, "text": capabilities_message, "disable_web_page_preview": True},
                 )
                 return {"ok": True}
+            analysis_started_at = time.perf_counter()
             analysis = await run_agent_analysis(text, connected_services, user_id)
+            analysis_latency_ms = int((time.perf_counter() - analysis_started_at) * 1000)
 
             requirements_text = "\n".join(f"- {item.summary}" for item in analysis.plan.requirements) or "- (없음)"
             services_text = ", ".join(analysis.plan.target_services) if analysis.plan.target_services else "(추론 실패)"
@@ -747,6 +749,11 @@ async def telegram_webhook(
             llm_provider = None
             llm_model = None
             guardrail_degrade_reason = None
+            v2_rollout_reason = None
+            v2_shadow_mode = None
+            v2_shadow_executed = None
+            v2_shadow_ok = None
+            router_source = None
             missing_slot = None
             slot_action = None
             for note in analysis.plan.notes:
@@ -758,6 +765,16 @@ async def telegram_webhook(
                     llm_provider = note.split("=", 1)[1]
                 if note.startswith("llm_model="):
                     llm_model = note.split("=", 1)[1]
+                if note.startswith("skill_v2_rollout="):
+                    v2_rollout_reason = note.split("=", 1)[1]
+                if note.startswith("skill_v2_shadow_mode="):
+                    v2_shadow_mode = note.split("=", 1)[1]
+                if note.startswith("skill_v2_shadow_executed="):
+                    v2_shadow_executed = note.split("=", 1)[1]
+                if note.startswith("skill_v2_shadow_ok="):
+                    v2_shadow_ok = note.split("=", 1)[1]
+                if note.startswith("router_source="):
+                    router_source = note.split("=", 1)[1]
             if analysis.execution:
                 execution_steps_text = (
                     "\n".join(f"- {step.name}: {step.status} ({step.detail})" for step in analysis.execution.steps)
@@ -779,6 +796,8 @@ async def telegram_webhook(
                             break
                 if analysis.execution.artifacts.get("autonomous") == "true":
                     execution_mode = "autonomous"
+                elif analysis.plan_source == "router_v2":
+                    execution_mode = "router_v2"
                 if execution_error_code == "verification_failed" and verification_reason:
                     autonomous_fallback_reason = verification_reason
                 if not autonomous_fallback_reason and execution_error_code:
@@ -800,6 +819,17 @@ async def telegram_webhook(
                 mode_extra = f"\n- autonomous_fallback_reason: {autonomous_fallback_reason}"
                 if hint:
                     mode_extra += f"\n- fallback_hint: {hint}"
+            if v2_rollout_reason:
+                mode_extra += f"\n- skill_v2_rollout: {v2_rollout_reason}"
+            if v2_shadow_mode is not None:
+                mode_extra += f"\n- skill_v2_shadow_mode: {v2_shadow_mode}"
+            if v2_shadow_executed is not None:
+                mode_extra += f"\n- skill_v2_shadow_executed: {v2_shadow_executed}"
+            if v2_shadow_ok is not None:
+                mode_extra += f"\n- skill_v2_shadow_ok: {v2_shadow_ok}"
+            if router_source:
+                mode_extra += f"\n- router_source: {router_source}"
+            mode_extra += f"\n- analysis_latency_ms: {analysis_latency_ms}"
             notes = analysis.plan.notes or []
             slot_loop_started, slot_loop_completed, slot_loop_turns = _slot_loop_metrics_from_notes(notes)
             slot_loop_enabled = 1 if any(note == "slot_loop_enabled=1" for note in notes) else 0
@@ -845,6 +875,12 @@ async def telegram_webhook(
                         if analysis.execution and analysis.execution.artifacts.get("validated_payloads_json")
                         else ""
                     )
+                    + (f";skill_v2_rollout={v2_rollout_reason}" if v2_rollout_reason else "")
+                    + (f";skill_v2_shadow_mode={v2_shadow_mode}" if v2_shadow_mode is not None else "")
+                    + (f";skill_v2_shadow_executed={v2_shadow_executed}" if v2_shadow_executed is not None else "")
+                    + (f";skill_v2_shadow_ok={v2_shadow_ok}" if v2_shadow_ok is not None else "")
+                    + (f";router_source={router_source}" if router_source else "")
+                    + f";analysis_latency_ms={analysis_latency_ms}"
                 ),
                 plan_source=analysis.plan_source,
                 execution_mode=execution_mode,

@@ -1,0 +1,49 @@
+{
+  "name": "linear.issue_update",
+  "version": "1.0.0",
+  "summary": "Update Linear issue fields",
+  "provider": { "service": "linear", "auth": "oauth", "scopes": ["write"] },
+  "runtime_tools": ["linear_update_issue", "linear_search_issues"],
+  "autofill": {
+    "sources": ["chat_context.last_issue_id"],
+    "rules": ["if issue_id is null, resolve by issue_ref"]
+  },
+  "input_schema": {
+    "type": "object",
+    "required": ["target", "patch"],
+    "properties": {
+      "target": {
+        "type": "object",
+        "properties": {
+          "issue_id": { "type": ["string", "null"] },
+          "issue_ref": { "type": ["string", "null"] }
+        },
+        "additionalProperties": false
+      },
+      "patch": {
+        "type": "object",
+        "properties": {
+          "title": { "type": ["string", "null"] },
+          "description": { "type": ["string", "null"] },
+          "state_id": { "type": ["string", "null"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["status"],
+    "properties": {
+      "status": { "type": "string", "enum": ["success", "needs_input", "error"] },
+      "result": { "type": ["object", "null"] },
+      "needs_input": { "type": ["object", "null"] },
+      "error": { "type": ["object", "null"] }
+    },
+    "additionalProperties": false
+  },
+  "examples": [
+    { "name": "update_description", "input": { "target": { "issue_ref": "OPT-35" }, "patch": { "description": "수정 계획" } } }
+  ]
+}

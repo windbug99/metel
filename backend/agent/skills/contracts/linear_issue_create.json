@@ -1,0 +1,36 @@
+{
+  "name": "linear.issue_create",
+  "version": "1.0.0",
+  "summary": "Create Linear issue",
+  "provider": { "service": "linear", "auth": "oauth", "scopes": ["write"] },
+  "runtime_tools": ["linear_create_issue", "linear_list_teams"],
+  "autofill": {
+    "sources": ["chat_context.default_linear_team_id"],
+    "rules": ["if team_id is null, resolve from team key/name"]
+  },
+  "input_schema": {
+    "type": "object",
+    "required": ["title"],
+    "properties": {
+      "team_id": { "type": ["string", "null"] },
+      "team_ref": { "type": ["string", "null"] },
+      "title": { "type": "string" },
+      "description": { "type": ["string", "null"] }
+    },
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["status"],
+    "properties": {
+      "status": { "type": "string", "enum": ["success", "needs_input", "error"] },
+      "result": { "type": ["object", "null"] },
+      "needs_input": { "type": ["object", "null"] },
+      "error": { "type": ["object", "null"] }
+    },
+    "additionalProperties": false
+  },
+  "examples": [
+    { "name": "basic", "input": { "team_ref": "OPS", "title": "로그인 오류", "description": "원인 분석 필요" } }
+  ]
+}

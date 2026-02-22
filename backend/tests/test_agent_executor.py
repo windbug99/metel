@@ -3,6 +3,7 @@ import asyncio
 from fastapi import HTTPException
 
 from agent.executor import (
+    _map_execution_error,
     execute_agent_plan,
     _format_summary_output,
     _extract_data_source_query_request,
@@ -39,6 +40,13 @@ def _build_plan(user_text: str, quantity: int | None = None) -> AgentPlan:
 def test_extract_requested_count():
     plan = _build_plan("최근 5개 요약", quantity=5)
     assert _extract_requested_count(plan) == 5
+
+
+def test_map_execution_error_validation_includes_field_hint():
+    summary, user_message, code = _map_execution_error("linear_update_issue:VALIDATION_TYPE:description")
+    assert summary == "요청 형식이 올바르지 않습니다."
+    assert code == "validation_error"
+    assert "`description`" in user_message
 
 
 def test_extract_output_title():

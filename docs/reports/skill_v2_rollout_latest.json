@@ -1,0 +1,23 @@
+{
+  "window_days": 3,
+  "window_start_utc": "2026-02-19T06:46:00Z",
+  "sample_size": 0,
+  "min_sample": 30,
+  "v2_selected_count": 0,
+  "v2_success_count": 0,
+  "v2_success_rate": 0.0,
+  "v2_error_rate": 0.0,
+  "v2_latency_p50_ms": 0,
+  "v2_latency_p95_ms": 0,
+  "shadow_count": 0,
+  "shadow_ok_count": 0,
+  "shadow_ok_rate": 0.0,
+  "shadow_latency_p50_ms": 0,
+  "shadow_latency_p95_ms": 0,
+  "rollout_reasons": {},
+  "router_sources": {},
+  "verdict": "FAIL",
+  "reasons": [
+    "data_source_error:ConnectError"
+  ]
+}

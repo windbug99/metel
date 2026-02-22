@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     telegram_user_preface_llm_enabled: bool = True
     telegram_user_preface_max_chars: int = 240
     conversation_mode_enabled: bool = True
+    skill_router_v2_enabled: bool = False
+    skill_runner_v2_enabled: bool = False
+    skill_router_v2_llm_enabled: bool = False
+    skill_v2_shadow_mode: bool = False
+    skill_v2_traffic_percent: int = 100
+    skill_v2_allowlist: str | None = None
     telegram_debug_report_enabled: bool = False
     telegram_message_max_chars: int = 3500
     rule_reparse_for_llm_plan_enabled: bool = False

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 
 from agent.autonomous import run_autonomous_loop
@@ -15,6 +16,7 @@ from agent.intent_keywords import (
     is_update_intent,
 )
 from agent.pending_action import PendingActionStorageError, clear_pending_action, get_pending_action, set_pending_action
+from agent.orchestrator_v2 import try_run_v2_orchestration
 from agent.plan_contract import validate_plan_contract
 from agent.planner import build_agent_plan
 from agent.planner_llm import try_build_agent_plan_with_llm
@@ -23,6 +25,36 @@ from agent.slot_collector import collect_slots_from_user_reply, slot_prompt_exam
 from agent.slot_schema import get_action_slot_schema
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRunResult, AgentTask
 from app.core.config import get_settings
+
+
+def _parse_v2_allowlist(raw: str | None) -> set[str]:
+    text = str(raw or "").strip()
+    if not text:
+        return set()
+    return {item.strip() for item in text.split(",") if item.strip()}
+
+
+def _v2_rollout_hit(*, user_id: str, percent: int) -> bool:
+    bounded = max(0, min(100, int(percent)))
+    if bounded >= 100:
+        return True
+    if bounded <= 0:
+        return False
+    digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
+    bucket = int(digest[:8], 16) % 100
+    return bucket < bounded
+
+
+def _should_run_v2(*, settings, user_id: str) -> tuple[bool, str]:
+    allowlist = _parse_v2_allowlist(getattr(settings, "skill_v2_allowlist", None))
+    if allowlist and user_id in allowlist:
+        return True, "allowlist"
+    if allowlist and user_id not in allowlist:
+        return False, "allowlist_excluded"
+    percent = int(getattr(settings, "skill_v2_traffic_percent", 100))
+    if _v2_rollout_hit(user_id=user_id, percent=percent):
+        return True, f"rollout_{max(0, min(100, percent))}"
+    return False, f"rollout_{max(0, min(100, percent))}_miss"
 
 
 def _has_any_tool(selected_tools: list[str], *tokens: str) -> bool:
@@ -968,6 +1000,42 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             plan_source="rule",
         )
 
+    pre_notes: list[str] = []
+    v2_enabled = bool(getattr(settings, "skill_router_v2_enabled", False)) and bool(
+        getattr(settings, "skill_runner_v2_enabled", False)
+    )
+    if v2_enabled:
+        use_v2, rollout_reason = _should_run_v2(settings=settings, user_id=user_id)
+        shadow_mode = bool(getattr(settings, "skill_v2_shadow_mode", False))
+        pre_notes.append(f"skill_v2_enabled=1")
+        pre_notes.append(f"skill_v2_rollout={rollout_reason}")
+        pre_notes.append(f"skill_v2_shadow_mode={1 if shadow_mode else 0}")
+        if use_v2:
+            v2_result = await try_run_v2_orchestration(
+                user_text=user_text,
+                connected_services=connected_services,
+                user_id=user_id,
+            )
+            if v2_result is not None:
+                pre_notes.append(f"skill_v2_shadow_ok={1 if v2_result.ok else 0}")
+                if shadow_mode:
+                    pre_notes.append("skill_v2_shadow_executed=1")
+                else:
+                    if v2_result.execution is not None:
+                        finalized_message, finalizer_mode = _apply_response_finalizer_template(
+                            execution=v2_result.execution,
+                            settings=settings,
+                        )
+                        v2_result.execution.user_message = finalized_message
+                        if finalizer_mode != "disabled":
+                            v2_result.plan.notes.append(f"response_finalizer={finalizer_mode}")
+                    v2_result.plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+                    v2_result.plan.notes.extend(pre_notes)
+                    return v2_result
+        else:
+            pre_notes.append("skill_v2_shadow_executed=0")
+            pre_notes.append("skill_v2_shadow_ok=0")
+
     llm_planner_enabled = bool(getattr(settings, "llm_planner_enabled", False))
 
     is_data_source_query, data_source_state = _parse_data_source_query_state(user_text)
@@ -1242,6 +1310,8 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     if finalizer_mode != "disabled":
         plan.notes.append(f"response_finalizer={finalizer_mode}")
     plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+    if pre_notes:
+        plan.notes.extend(pre_notes)
     _apply_slot_loop_from_validation_error(
         execution=execution,
         plan=plan,
