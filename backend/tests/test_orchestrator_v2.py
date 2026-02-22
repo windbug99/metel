@@ -655,6 +655,7 @@ def test_try_run_v2_orchestration_skill_then_llm_linear_falls_back_to_list_issue
 
 def test_try_run_v2_orchestration_llm_then_notion_update(monkeypatch):
     calls = {"search": 0, "append": 0}
+    captured: dict = {}
 
     async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
         assert user_id == "user-1"
@@ -681,11 +682,17 @@ def test_try_run_v2_orchestration_llm_then_notion_update(monkeypatch):
             calls["append"] += 1
             assert payload.get("block_id") == "page-1"
             assert payload.get("children")
+            children = payload.get("children") or []
+            captured["content"] = (
+                ((((children[0] or {}).get("paragraph") or {}).get("rich_text") or [{}])[0]
+                .get("text", {})
+                .get("content", ""))
+            )
             return {"data": {"ok": True}}
         raise AssertionError(f"unexpected tool call: {tool_name}")
 
     async def _fake_llm(*, prompt: str):
-        return "업데이트할 요약 내용", "openai", "gpt-4o-mini"
+        raise AssertionError("llm should not run for explicit body update text")
 
     monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
     monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
@@ -703,6 +710,7 @@ def test_try_run_v2_orchestration_llm_then_notion_update(monkeypatch):
     assert result.execution is not None
     assert calls["search"] == 1
     assert calls["append"] == 1
+    assert captured.get("content") == "배포 회고 요약 추가"
     assert result.execution.artifacts.get("router_mode") == MODE_LLM_THEN_SKILL
     assert result.execution.artifacts.get("updated_page_id") == "page-1"
 
@@ -789,6 +797,59 @@ def test_try_run_v2_orchestration_llm_then_notion_update_title_change(monkeypatc
     assert calls["update"] == 1
     assert calls["append"] == 0
     assert "스프린트 보고서" in result.execution.user_message
+
+
+def test_try_run_v2_orchestration_llm_then_notion_update_body_does_not_append_confirmation(monkeypatch):
+    captured: dict = {}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        assert user_id == "user-1"
+        if tool_name == "notion_search":
+            return {
+                "data": {
+                    "results": [
+                        {
+                            "id": "page-1",
+                            "url": "https://notion.so/page-1",
+                            "properties": {
+                                "제목": {
+                                    "type": "title",
+                                    "title": [{"plain_text": "스프린트 보고서"}],
+                                }
+                            },
+                        }
+                    ]
+                }
+            }
+        if tool_name == "notion_append_block_children":
+            children = payload.get("children") or []
+            captured["content"] = (
+                ((((children[0] or {}).get("paragraph") or {}).get("rich_text") or [{}])[0]
+                .get("text", {})
+                .get("content", ""))
+            )
+            return {"data": {"ok": True}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        raise AssertionError("llm should not run for explicit body update text")
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text='노션에서 "스프린트 보고서" 페이지 본문 업데이트: 내가 돌아왔다',
+            connected_services=["notion"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert captured.get("content") == "내가 돌아왔다"
+    assert "본문이" not in captured.get("content", "")
 
 
 def test_try_run_v2_orchestration_llm_then_notion_create_skips_on_realtime_unavailable(monkeypatch):

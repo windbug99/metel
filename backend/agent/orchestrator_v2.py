@@ -377,6 +377,23 @@ def _needs_notion_update_clarification(text: str) -> bool:
     return not any(token in lower or token in text for token in detail_tokens)
 
 
+def _extract_notion_update_body_text(text: str) -> str | None:
+    raw = " ".join((text or "").strip().split())
+    patterns = [
+        r"(?i)(?:본문\s*업데이트|본문\s*수정|content\s*update|내용\s*업데이트)\s*[:：]\s*(.+)$",
+        r"(?i)(?:본문|내용)\s*[:：]\s*(.+)$",
+        r'(?i)(?:본문|내용)에\s*["“]?(.+?)["”]?\s*(?:추가|append|넣어|작성)',
+    ]
+    for pattern in patterns:
+        matched = re.search(pattern, raw)
+        if not matched:
+            continue
+        candidate = str(matched.group(1) or "").strip(" \"'`")
+        if candidate:
+            return candidate[:1800]
+    return None
+
+
 def _extract_linear_team_reference(text: str) -> str | None:
     keyed = re.search(r"(?i)(?:팀|team)\s*[:：]?\s*([^\s,]+)", text.strip())
     if keyed:
@@ -1321,9 +1338,11 @@ async def try_run_v2_orchestration(
             model = ""
             source_url = ""
             notion_update_new_title = ""
+            notion_update_body_text = ""
             if skill_name == "notion.page_update":
                 notion_update_new_title = _extract_notion_update_new_title(user_text) or ""
-                if not notion_update_new_title and _needs_notion_update_clarification(user_text):
+                notion_update_body_text = _extract_notion_update_body_text(user_text) or ""
+                if not notion_update_new_title and not notion_update_body_text and _needs_notion_update_clarification(user_text):
                     raise NeedsInputSignal(
                         missing_fields=["patch"],
                         questions=[
@@ -1353,7 +1372,9 @@ async def try_run_v2_orchestration(
                         )
                     )
 
-            if not llm_text and not (skill_name == "notion.page_update" and notion_update_new_title):
+            if not llm_text and not (
+                skill_name == "notion.page_update" and (notion_update_new_title or notion_update_body_text)
+            ):
                 llm_text, provider, model = await _request_llm_text(
                     prompt=_build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_THEN_SKILL)
                 )
@@ -1511,7 +1532,7 @@ async def try_run_v2_orchestration(
                                 {
                                     "type": "text",
                                     "text": {
-                                        "content": llm_text[:1800],
+                                        "content": (notion_update_body_text or llm_text)[:1800],
                                     },
                                 }
                             ]
@@ -1523,7 +1544,11 @@ async def try_run_v2_orchestration(
                     tool_name="notion_append_block_children",
                     payload={"block_id": page_id, "children": children},
                 )
-                msg = f"{llm_text}\n\n업데이트 대상 페이지: {page_title}"
+                if notion_update_body_text:
+                    msg = f"\"{page_title}\" 페이지 본문에 \"{notion_update_body_text}\"를 추가했습니다."
+                else:
+                    msg = f"{llm_text}"
+                msg += f"\n\n업데이트 대상 페이지: {page_title}"
                 if page_url:
                     msg += f"\n링크: {page_url}"
                 execution = AgentExecutionResult(
