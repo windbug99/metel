@@ -477,13 +477,17 @@ def _notion_parent_payload() -> dict:
 
 def _build_grounded_llm_prompt(*, user_text: str, mode: str) -> str:
     today_utc = datetime.now(timezone.utc).date().isoformat()
+    realtime = _looks_realtime_request(user_text)
     guard = (
         "다음 규칙을 반드시 지켜 답변해줘.\n"
         "1) 확인되지 않은 사실/수치/날짜/고유명사를 임의로 만들지 마.\n"
-        "2) 실시간 데이터가 필요한 요청인데 근거가 없으면 '실시간 조회 불가'라고 명시해.\n"
-        "3) 답변은 한국어로 간결하게 작성해.\n"
-        f"4) 오늘 날짜 기준(UTC)은 {today_utc}.\n"
+        "2) 답변은 한국어로 간결하게 작성해.\n"
+        f"3) 오늘 날짜 기준(UTC)은 {today_utc}.\n"
     )
+    if realtime:
+        guard += "4) 실시간 데이터가 필요한 요청인데 근거가 없으면 '실시간 조회 불가'라고 명시해.\n"
+    else:
+        guard += "4) 실시간 조회 관련 문구는 요청이 실시간 데이터일 때만 사용해.\n"
     if mode == MODE_LLM_THEN_SKILL:
         extra = (
             "5) 외부 서비스 조작 방법(클릭/메뉴얼) 설명을 쓰지 말고, "
