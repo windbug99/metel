@@ -132,7 +132,8 @@
           "title": { "type": "string" },
           "description": { "type": "string" },
           "priority": { "type": "integer", "minimum": 0, "maximum": 4 },
-          "state_id": { "type": "string" }
+          "state_id": { "type": "string" },
+          "archived": { "type": "boolean" }
         },
         "required": ["issue_id"]
       },

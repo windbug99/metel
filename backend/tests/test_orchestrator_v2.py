@@ -4,6 +4,7 @@ from agent.orchestrator_v2 import (
     MODE_LLM_ONLY,
     MODE_LLM_THEN_SKILL,
     MODE_SKILL_THEN_LLM,
+    _extract_linear_update_description_text,
     _parse_router_payload,
     route_request_v2,
     try_run_v2_orchestration,
@@ -1073,6 +1074,63 @@ def test_try_run_v2_orchestration_llm_then_linear_update_description_without_llm
     assert result.execution.artifacts.get("updated_issue_url") == "https://linear.app/pouder/issue/OPT-35"
 
 
+def test_extract_linear_update_description_text_from_object_to_modify_phrase():
+    text = "linear opt-46 이슈의 본문을 패시브 서비스 추가, https://openweathermap.org/api#one_call_3 문서 참조 로 수정하세요"
+    extracted = _extract_linear_update_description_text(text)
+    assert extracted is not None
+    assert "패시브 서비스 추가" in extracted
+    assert "https://openweathermap.org/api#one_call_3" in extracted
+
+
+def test_try_run_v2_orchestration_llm_then_linear_update_description_modify_phrase_without_llm(monkeypatch):
+    calls = {"search": 0, "update": 0}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        if tool_name == "linear_search_issues":
+            calls["search"] += 1
+            return {
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "issue-internal-46",
+                                "identifier": "OPT-46",
+                                "title": "기존 설명",
+                                "url": "https://linear.app/pouder/issue/OPT-46",
+                            }
+                        ]
+                    }
+                }
+            }
+        if tool_name == "linear_update_issue":
+            calls["update"] += 1
+            assert payload.get("issue_id") == "issue-internal-46"
+            assert payload.get("description") == "패시브 서비스 추가, https://openweathermap.org/api#one_call_3 문서 참조"
+            return {"data": {"issueUpdate": {"success": True, "issue": {"url": "https://linear.app/pouder/issue/OPT-46"}}}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        raise AssertionError("llm should not run for explicit linear description modify phrase")
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear opt-46 이슈의 본문을 패시브 서비스 추가, https://openweathermap.org/api#one_call_3 문서 참조 로 수정하세요",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert calls["search"] == 1
+    assert calls["update"] == 1
+    assert "https://linear.app/pouder/issue/OPT-46" in result.execution.user_message
+
+
 def test_try_run_v2_orchestration_llm_then_linear_update_state_priority_without_llm(monkeypatch):
     calls = {"search": 0, "update": 0}
 
@@ -1207,7 +1265,7 @@ def test_try_run_v2_orchestration_llm_then_linear_delete(monkeypatch):
             calls["delete"] += 1
             assert payload.get("issue_id") == "issue-delete-35"
             assert payload.get("archived") is True
-            return {"data": {"issueUpdate": {"success": True}}}
+            return {"data": {"issueArchive": {"success": True}}}
         raise AssertionError(f"unexpected tool call: {tool_name}")
 
     async def _fake_llm(*, prompt: str):
@@ -1230,6 +1288,41 @@ def test_try_run_v2_orchestration_llm_then_linear_delete(monkeypatch):
     assert calls["search"] == 1
     assert calls["delete"] == 1
     assert result.execution.artifacts.get("deleted_issue_id") == "issue-delete-35"
+
+
+def test_try_run_v2_orchestration_llm_then_linear_delete_fails_when_archive_unsuccessful(monkeypatch):
+    calls = {"search": 0, "delete": 0}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        assert user_id == "user-1"
+        if tool_name == "linear_search_issues":
+            calls["search"] += 1
+            return {"data": {"issues": {"nodes": [{"id": "issue-delete-45", "identifier": "OPT-45"}]}}}
+        if tool_name == "linear_update_issue":
+            calls["delete"] += 1
+            return {"data": {"issueArchive": {"success": False}}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        return "삭제 처리", "openai", "gpt-4o-mini"
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear의 OPT-45 이슈 삭제해줘",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("error_code") == "linear_issue_delete_failed"
+    assert calls["search"] == 1
+    assert calls["delete"] == 1
 
 
 def test_try_run_v2_orchestration_llm_then_notion_delete(monkeypatch):

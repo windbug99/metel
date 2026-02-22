@@ -383,6 +383,23 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
         )
     if tool_name == "linear_update_issue":
         issue_id = str(payload.get("issue_id", "")).strip()
+        if payload.get("archived") is True:
+            return (
+                """
+                mutation ArchiveIssue($id: String!) {
+                  issueArchive(id: $id) {
+                    success
+                    issue {
+                      id
+                      identifier
+                      title
+                      url
+                    }
+                  }
+                }
+                """,
+                {"id": issue_id},
+            )
         input_data: dict[str, Any] = {}
         if payload.get("title") is not None:
             input_data["title"] = str(payload.get("title", ""))

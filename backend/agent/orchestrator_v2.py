@@ -461,6 +461,7 @@ def _extract_linear_update_description_text(text: str) -> str | None:
     patterns = [
         r"(?i)(?:설명|description|내용|본문)\s*(?:업데이트|수정|변경)?\s*[:：]\s*(.+)$",
         r'(?i)(?:설명|description|내용|본문)에\s*["“]?(.+?)["”]?\s*(?:추가|append|넣어|작성|반영)',
+        r"(?i)(?:설명|description|내용|본문)(?:을|를)?\s*(.+?)\s*(?:으로|로)\s*(?:업데이트|수정|변경|바꿔|바꿔줘|수정해줘|업데이트해줘|수정하세요|변경해줘)",
     ]
     for pattern in patterns:
         matched = re.search(pattern, raw)
@@ -1714,6 +1715,14 @@ async def try_run_v2_orchestration(
                     tool_name="linear_update_issue",
                     payload=patch_payload,
                 )
+                update_success = bool((((update_result.get("data") or {}).get("issueUpdate") or {}).get("success")))
+                if not update_success and (
+                    "title" in patch_payload
+                    or "description" in patch_payload
+                    or "state_id" in patch_payload
+                    or "priority" in patch_payload
+                ):
+                    raise HTTPException(status_code=400, detail="linear_issue_update_failed")
                 issue_url = str(
                     (((update_result.get("data") or {}).get("issueUpdate") or {}).get("issue") or {}).get("url") or ""
                 ).strip()
@@ -1809,11 +1818,15 @@ async def try_run_v2_orchestration(
                 if not issue_ref:
                     raise HTTPException(status_code=400, detail="validation_error")
                 issue_id, _ = await _resolve_linear_issue_id_for_update(user_id=user_id, issue_ref=issue_ref)
-                await execute_tool(
+                delete_result = await execute_tool(
                     user_id=user_id,
                     tool_name="linear_update_issue",
                     payload={"issue_id": issue_id, "archived": True},
                 )
+                archive_success = bool((((delete_result.get("data") or {}).get("issueArchive") or {}).get("success")))
+                update_success = bool((((delete_result.get("data") or {}).get("issueUpdate") or {}).get("success")))
+                if not archive_success and not update_success:
+                    raise HTTPException(status_code=400, detail="linear_issue_delete_failed")
                 execution = AgentExecutionResult(
                     success=True,
                     user_message=f"요청한 Linear 이슈를 삭제(archive) 처리했습니다.\n- 이슈: {issue_ref}",

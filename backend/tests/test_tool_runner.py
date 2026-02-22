@@ -186,6 +186,16 @@ def test_linear_query_and_variables_update_issue():
     assert "id" not in variables["input"]
 
 
+def test_linear_query_and_variables_archive_issue():
+    query, variables = _linear_query_and_variables(
+        "linear_update_issue",
+        {"issue_id": "issue-1", "archived": True},
+    )
+    assert "mutation ArchiveIssue" in query
+    assert "issueArchive" in query
+    assert variables == {"id": "issue-1"}
+
+
 def test_linear_query_and_variables_create_issue_with_priority():
     query, variables = _linear_query_and_variables(
         "linear_create_issue",
