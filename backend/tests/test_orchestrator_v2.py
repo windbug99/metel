@@ -127,6 +127,16 @@ def test_route_request_v2_llm_then_skill_for_notion_delete():
     assert decision.arguments.get("notion_page_title") == "스프린트 회고"
 
 
+def test_route_request_v2_prefers_notion_create_over_analysis_keywords():
+    decision = route_request_v2(
+        'Notion에 새 페이지를 생성해줘. 제목은 "구글로그인 구현방법"이고, 내용은 구글 로그인 구현 방법을 자세히 작성해줘.',
+        ["notion"],
+    )
+    assert decision.mode == MODE_LLM_THEN_SKILL
+    assert decision.skill_name == "notion.page_create"
+    assert "notion_create_page" in decision.selected_tools
+
+
 def test_try_run_v2_orchestration_llm_only(monkeypatch):
     async def _fake_llm(*, prompt: str):
         assert "날씨" in prompt

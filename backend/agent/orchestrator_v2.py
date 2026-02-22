@@ -289,27 +289,8 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
     has_notion = "notion" in connected and _mentions_service(text, "notion")
     has_linear = "linear" in connected and _mentions_service(text, "linear")
 
-    if has_linear and _is_analysis_intent(text):
-        issue_ref = _extract_linear_issue_reference(text)
-        if issue_ref:
-            return _decision_for_skill(
-                mode=MODE_SKILL_THEN_LLM,
-                reason="service_read_then_llm",
-                skill_name="linear.issue_search",
-                target_services=["linear"],
-                arguments={"linear_query": issue_ref},
-            )
-
-    if has_notion and _is_analysis_intent(text):
-        page_title = _extract_notion_page_title(text)
-        if page_title:
-            return _decision_for_skill(
-                mode=MODE_SKILL_THEN_LLM,
-                reason="notion_read_then_llm",
-                skill_name="notion.page_search",
-                target_services=["notion"],
-                arguments={"notion_page_title": page_title},
-            )
+    # Mutation intents must win over analysis keywords ("방법", "정리", ...).
+    # Otherwise create/update/delete requests are misrouted into search flows.
 
     if has_linear and _is_update_intent(text):
         issue_ref = _extract_linear_issue_reference(text)
@@ -318,17 +299,6 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
                 mode=MODE_LLM_THEN_SKILL,
                 reason="llm_result_to_linear_issue_update",
                 skill_name="linear.issue_update",
-                target_services=["linear"],
-                arguments={"linear_issue_ref": issue_ref},
-            )
-
-    if has_linear and _is_delete_intent(text) and ("이슈" in text or "issue" in text.lower()):
-        issue_ref = _extract_linear_issue_reference(text)
-        if issue_ref:
-            return _decision_for_skill(
-                mode=MODE_LLM_THEN_SKILL,
-                reason="llm_result_to_linear_issue_delete",
-                skill_name="linear.issue_delete",
                 target_services=["linear"],
                 arguments={"linear_issue_ref": issue_ref},
             )
@@ -344,6 +314,17 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
                 "linear_issue_title": _extract_linear_issue_title_for_create(text),
             },
         )
+
+    if has_linear and _is_delete_intent(text) and ("이슈" in text or "issue" in text.lower()):
+        issue_ref = _extract_linear_issue_reference(text)
+        if issue_ref:
+            return _decision_for_skill(
+                mode=MODE_LLM_THEN_SKILL,
+                reason="llm_result_to_linear_issue_delete",
+                skill_name="linear.issue_delete",
+                target_services=["linear"],
+                arguments={"linear_issue_ref": issue_ref},
+            )
 
     if has_notion and _is_update_intent(text):
         page_title = _extract_notion_page_title(text)
@@ -374,6 +355,29 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
             skill_name="notion.page_create",
             target_services=["notion"],
         )
+
+    # Read/search/analysis intents
+    if has_linear and _is_analysis_intent(text):
+        issue_ref = _extract_linear_issue_reference(text)
+        if issue_ref:
+            return _decision_for_skill(
+                mode=MODE_SKILL_THEN_LLM,
+                reason="service_read_then_llm",
+                skill_name="linear.issue_search",
+                target_services=["linear"],
+                arguments={"linear_query": issue_ref},
+            )
+
+    if has_notion and _is_analysis_intent(text):
+        page_title = _extract_notion_page_title(text)
+        if page_title:
+            return _decision_for_skill(
+                mode=MODE_SKILL_THEN_LLM,
+                reason="notion_read_then_llm",
+                skill_name="notion.page_search",
+                target_services=["notion"],
+                arguments={"notion_page_title": page_title},
+            )
 
     return RouterDecision(mode=MODE_LLM_ONLY, reason="default_llm_only", target_services=[], selected_tools=[])
 
