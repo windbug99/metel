@@ -1,0 +1,37 @@
+{
+  "service": "web",
+  "version": "v1",
+  "base_url": "https://example.com",
+  "auth": {
+    "type": "none",
+    "required_scopes": []
+  },
+  "limits": {
+    "timeout_ms": 15000,
+    "max_calls_per_run": 4
+  },
+  "tools": [
+    {
+      "tool_name": "http_fetch_url_text",
+      "description": "Fetch public URL content and extract readable plain text",
+      "method": "GET",
+      "path": "/",
+      "adapter_function": "http_fetch_url_text",
+      "required_scopes": [],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string" },
+          "max_chars": { "type": "integer", "minimum": 500, "maximum": 20000 }
+        },
+        "required": ["url"]
+      },
+      "error_map": {
+        "400": "BAD_REQUEST",
+        "404": "NOT_FOUND",
+        "429": "RATE_LIMITED"
+      }
+    }
+  ]
+}

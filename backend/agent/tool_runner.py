@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import logging
 import re
+from html import unescape
 from json import JSONDecodeError
 from typing import Any, Awaitable, Callable
 
@@ -487,6 +488,67 @@ async def _execute_linear_http(user_id: str, tool: ToolDefinition, payload: dict
     return {"ok": True, "data": data.get("data", {})}
 
 
+def _extract_html_title(html: str) -> str:
+    match = re.search(r"(?is)<title[^>]*>(.*?)</title>", html or "")
+    if not match:
+        return ""
+    return re.sub(r"\s+", " ", unescape(match.group(1))).strip()
+
+
+def _extract_readable_text(html: str) -> str:
+    raw = html or ""
+    # Remove script/style/noscript blocks first.
+    raw = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", raw)
+    raw = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", raw)
+    raw = re.sub(r"(?is)<noscript[^>]*>.*?</noscript>", " ", raw)
+    # Remove all tags.
+    raw = re.sub(r"(?is)<[^>]+>", " ", raw)
+    raw = unescape(raw)
+    return re.sub(r"\s+", " ", raw).strip()
+
+
+async def _execute_web_http(_user_id: str, _tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
+    url = str(payload.get("url") or "").strip()
+    if not re.match(r"^https?://", url, flags=re.IGNORECASE):
+        raise HTTPException(status_code=400, detail="http_fetch_url_text:BAD_REQUEST|message=invalid_url")
+
+    max_chars = int(payload.get("max_chars", 8000))
+    max_chars = max(500, min(20000, max_chars))
+
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        response = await client.get(url, headers={"User-Agent": "metel/1.0 (+https://metel.app)"})
+
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=400,
+            detail=f"http_fetch_url_text:TOOL_FAILED|status={response.status_code}|message={response.text[:200]}",
+        )
+
+    content_type = str(response.headers.get("content-type", "")).lower()
+    body = response.text or ""
+    if "html" in content_type:
+        title = _extract_html_title(body)
+        text = _extract_readable_text(body)
+    else:
+        title = ""
+        text = re.sub(r"\s+", " ", body).strip()
+
+    if not text:
+        raise HTTPException(status_code=400, detail="http_fetch_url_text:NOT_FOUND|message=empty_text")
+
+    text = text[:max_chars]
+    return {
+        "ok": True,
+        "data": {
+            "url": url,
+            "final_url": str(response.url),
+            "title": title,
+            "text": text,
+            "content_type": content_type,
+        },
+    }
+
+
 def _build_default_headers_for_service(user_id: str, tool: ToolDefinition) -> dict[str, str]:
     headers: dict[str, str] = {}
     if tool.service == "notion":
@@ -537,6 +599,7 @@ _SERVICE_EXECUTORS: dict[str, ServiceExecutor] = {
     "notion": _execute_notion_service,
     "spotify": _execute_spotify_http,
     "linear": _execute_linear_http,
+    "web": _execute_web_http,
 }
 
 

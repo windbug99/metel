@@ -216,6 +216,59 @@ def test_linear_query_and_variables_search_issues_uses_title_filter():
     assert variables["first"] == 7
 
 
+def test_execute_tool_web_fetch_url_text_extracts_plain_text(monkeypatch):
+    tool = ToolDefinition(
+        service="web",
+        base_url="",
+        tool_name="http_fetch_url_text",
+        description="fetch url text",
+        method="GET",
+        path="",
+        adapter_function="http_fetch_url_text",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "max_chars": {"type": "integer", "minimum": 500, "maximum": 20000},
+            },
+            "required": ["url"],
+        },
+        required_scopes=(),
+        idempotency_key_policy="none",
+        error_map={},
+    )
+
+    class _Registry:
+        def get_tool(self, tool_name: str):
+            assert tool_name == "http_fetch_url_text"
+            return tool
+
+    class _FakeResponse:
+        status_code = 200
+        text = "<html><head><title>Hello</title></head><body><h1>Hi</h1><p>World</p></body></html>"
+        headers = {"content-type": "text/html; charset=utf-8"}
+        url = "https://example.com/article"
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, headers=None):
+            assert url == "https://example.com/article"
+            return _FakeResponse()
+
+    monkeypatch.setattr("agent.tool_runner.load_registry", lambda: _Registry())
+    monkeypatch.setattr("agent.tool_runner.httpx.AsyncClient", lambda *args, **kwargs: _FakeClient())
+
+    result = asyncio.run(execute_tool("user-1", "http_fetch_url_text", {"url": "https://example.com/article"}))
+    assert result["ok"] is True
+    assert result["data"]["title"] == "Hello"
+    assert "Hi World" in result["data"]["text"]
+
+
 def test_execute_tool_linear_graphql_error_contains_message_and_code(monkeypatch):
     tool = ToolDefinition(
         service="linear",

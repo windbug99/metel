@@ -101,6 +101,10 @@ def _extract_json_object(text: str) -> dict | None:
 
 
 def _parse_router_payload(payload: dict, connected_services: list[str]) -> RouterDecision | None:
+    allowed_keys = {"mode", "reason", "skill_name", "selected_tools", "arguments"}
+    if any(key not in allowed_keys for key in payload.keys()):
+        return None
+
     mode = str(payload.get("mode") or "").strip()
     reason = str(payload.get("reason") or "").strip()
     if mode not in {MODE_LLM_ONLY, MODE_LLM_THEN_SKILL, MODE_SKILL_THEN_LLM}:
@@ -109,6 +113,8 @@ def _parse_router_payload(payload: dict, connected_services: list[str]) -> Route
         return None
 
     skill_name = str(payload.get("skill_name") or "").strip() or None
+    if "selected_tools" not in payload or "arguments" not in payload:
+        return None
     selected_tools_raw = payload.get("selected_tools") or []
     if not isinstance(selected_tools_raw, list):
         return None
@@ -119,14 +125,19 @@ def _parse_router_payload(payload: dict, connected_services: list[str]) -> Route
         skill_name = infer_skill_name_from_runtime_tools(selected_tools)
     arguments_raw = payload.get("arguments") or {}
     arguments = arguments_raw if isinstance(arguments_raw, dict) else {}
+    if not isinstance(arguments_raw, dict):
+        return None
 
     allowed_tools = set(_allowed_v2_tools_for_services(connected_services))
     if mode == MODE_LLM_ONLY:
-        selected_tools = []
+        if selected_tools or skill_name:
+            return None
     else:
         if not selected_tools:
             return None
         if any(tool not in allowed_tools for tool in selected_tools):
+            return None
+        if not skill_name:
             return None
 
     target_services: list[str] = []
@@ -134,6 +145,11 @@ def _parse_router_payload(payload: dict, connected_services: list[str]) -> Route
         service = service_for_skill(skill_name)
         if service:
             target_services = [service]
+            if service not in {item.strip().lower() for item in connected_services if item.strip()}:
+                return None
+            expected_tools = set(runtime_tools_for_skill(skill_name))
+            if expected_tools and any(tool not in expected_tools for tool in selected_tools):
+                return None
     if not target_services:
         target_services = sorted(
             {
@@ -173,10 +189,13 @@ async def _request_router_decision_with_llm(
         "}\n"
         "Rules:\n"
         "- If mode is LLM_ONLY, selected_tools must be [].\n"
-        "- If mode includes skill, provide either skill_name or selected_tools.\n"
+        "- If mode includes skill, provide skill_name and selected_tools.\n"
         "- If skill_name is provided, it must map to allowed tools.\n"
         "- selected_tools must contain allowed tool names only.\n"
         "- Do not invent skill/tool names.\n"
+        "- If request mentions connected service (notion/linear) and an operation, avoid LLM_ONLY.\n"
+        "- For 'recent/latest/list issues' on linear, use skill_name=linear.issue_search and include arguments.linear_first.\n"
+        "- For create page requests on notion, use skill_name=notion.page_create.\n"
         f"- Allowed tools: {', '.join(allowed_tools)}\n\n"
         f"[user_request]\n{user_text}\n"
     )
@@ -282,6 +301,56 @@ def _extract_linear_issue_title_for_create(text: str) -> str | None:
     return None
 
 
+def _extract_count_limit(text: str, *, default: int = 5, minimum: int = 1, maximum: int = 20) -> int:
+    m = re.search(r"(\d{1,3})\s*(?:개|건|items?)", text or "", flags=re.IGNORECASE)
+    if not m:
+        m = re.search(r"\bfirst\s*[:=]?\s*(\d{1,3})\b", text or "", flags=re.IGNORECASE)
+    if not m:
+        return default
+    value = int(m.group(1))
+    return max(minimum, min(maximum, value))
+
+
+def _is_linear_recent_list_intent(text: str) -> bool:
+    lower = (text or "").lower()
+    has_issue_token = ("이슈" in text) or ("issue" in lower)
+    has_list_token = any(token in lower for token in ("최근", "latest", "list", "목록", "검색", "조회"))
+    return has_issue_token and has_list_token
+
+
+def _normalize_router_arguments(*, decision: RouterDecision, user_text: str) -> RouterDecision:
+    args = dict(getattr(decision, "arguments", {}) or {})
+    skill_name = str(getattr(decision, "skill_name", None) or "").strip()
+    text = user_text or ""
+
+    if skill_name == "linear.issue_search":
+        if not str(args.get("linear_query") or "").strip():
+            ref = _extract_linear_issue_reference(text)
+            if ref:
+                args["linear_query"] = ref
+        args["linear_first"] = int(args.get("linear_first") or _extract_count_limit(text, default=5))
+    elif skill_name == "linear.issue_create":
+        if not str(args.get("linear_team_ref") or "").strip():
+            args["linear_team_ref"] = _extract_linear_team_reference(text)
+        if not str(args.get("linear_issue_title") or "").strip():
+            args["linear_issue_title"] = _extract_linear_issue_title_for_create(text)
+    elif skill_name in {"linear.issue_update", "linear.issue_delete"}:
+        if not str(args.get("linear_issue_ref") or "").strip():
+            args["linear_issue_ref"] = _extract_linear_issue_reference(text)
+    elif skill_name in {"notion.page_update", "notion.page_delete"}:
+        if not str(args.get("notion_page_title") or "").strip():
+            args["notion_page_title"] = _extract_notion_page_title(text)
+
+    return RouterDecision(
+        mode=str(getattr(decision, "mode", MODE_LLM_ONLY)),
+        reason=str(getattr(decision, "reason", "normalized")),
+        skill_name=skill_name or None,
+        target_services=list(getattr(decision, "target_services", []) or []),
+        selected_tools=list(getattr(decision, "selected_tools", []) or []),
+        arguments=args,
+    )
+
+
 def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDecision:
     text = (user_text or "").strip()
     connected = {service.strip().lower() for service in connected_services if service.strip()}
@@ -357,6 +426,15 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
         )
 
     # Read/search/analysis intents
+    if has_linear and _is_linear_recent_list_intent(text):
+        return _decision_for_skill(
+            mode=MODE_SKILL_THEN_LLM,
+            reason="linear_recent_issues_then_llm",
+            skill_name="linear.issue_search",
+            target_services=["linear"],
+            arguments={"linear_query": "", "linear_first": _extract_count_limit(text, default=10)},
+        )
+
     if has_linear and _is_analysis_intent(text):
         issue_ref = _extract_linear_issue_reference(text)
         if issue_ref:
@@ -507,6 +585,33 @@ def _looks_unavailable_answer(text: str) -> bool:
     lower = (text or "").lower()
     tokens = ("실시간 조회 불가", "실시간 정보를 제공할 수 없", "확인할 수 없", "조회할 수 없", "cannot provide")
     return any(token in lower for token in tokens)
+
+
+def _extract_first_url(text: str) -> str | None:
+    match = re.search(r"https?://[^\s\)\]\}\>,]+", text or "", flags=re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(0).rstrip(").,!?\"'`")
+
+
+def _is_translation_intent(text: str) -> bool:
+    lower = (text or "").lower()
+    tokens = ("번역", "translate", "translated", "한국어로", "영어로", "일본어로")
+    return any(token in lower for token in tokens)
+
+
+def _build_url_translation_prompt(*, user_text: str, source_url: str, source_title: str, source_text: str) -> str:
+    return (
+        "아래 URL 본문을 요청 언어로 번역해줘.\n"
+        "규칙:\n"
+        "- 요약/의역/해설 금지, 원문 문단 구조를 최대한 유지\n"
+        "- 원문에 없는 내용 추가 금지\n"
+        "- 번역문만 출력\n\n"
+        f"[사용자 요청]\n{user_text}\n\n"
+        f"[원문 URL]\n{source_url}\n\n"
+        f"[원문 제목]\n{source_title or '-'}\n\n"
+        f"[원문 본문]\n{source_text}"
+    )
 
 
 def _linear_issues_to_context(tool_result: dict) -> str:
@@ -830,6 +935,7 @@ async def try_run_v2_orchestration(
     router_source = "rule"
     router_llm_provider: str | None = None
     router_llm_model: str | None = None
+    router_llm_fallback_reason: str | None = None
 
     if bool(getattr(settings, "skill_router_v2_llm_enabled", False)):
         llm_decision, router_llm_provider, router_llm_model = await _request_router_decision_with_llm(
@@ -837,15 +943,18 @@ async def try_run_v2_orchestration(
             connected_services=connected_services,
         )
         if llm_decision is not None:
-            decision = llm_decision
+            decision = _normalize_router_arguments(decision=llm_decision, user_text=user_text)
             router_source = "llm"
         else:
-            decision = route_request_v2(user_text, connected_services)
+            decision = _normalize_router_arguments(decision=route_request_v2(user_text, connected_services), user_text=user_text)
             router_source = "llm_fallback_rule"
+            router_llm_fallback_reason = "invalid_payload_or_parse_failed"
     else:
-        decision = route_request_v2(user_text, connected_services)
+        decision = _normalize_router_arguments(decision=route_request_v2(user_text, connected_services), user_text=user_text)
     plan = _build_plan(user_text, decision)
     plan.notes.append(f"router_source={router_source}")
+    if router_llm_fallback_reason:
+        plan.notes.append(f"router_llm_fallback_reason={router_llm_fallback_reason}")
     if router_llm_provider and router_llm_model:
         plan.notes.append(f"router_llm_provider={router_llm_provider}")
         plan.notes.append(f"router_llm_model={router_llm_model}")
@@ -874,11 +983,43 @@ async def try_run_v2_orchestration(
             )
 
         if decision.mode == MODE_LLM_THEN_SKILL:
-            llm_text, provider, model = await _request_llm_text(
-                prompt=_build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_THEN_SKILL)
+            skill_name = str(decision.skill_name or "").strip() or infer_skill_name_from_runtime_tools(
+                decision.selected_tools
             )
+            llm_text = ""
+            provider = ""
+            model = ""
+            source_url = ""
+            if skill_name == "notion.page_create" and _is_translation_intent(user_text):
+                maybe_url = _extract_first_url(user_text)
+                if maybe_url:
+                    fetched = await execute_tool(
+                        user_id=user_id,
+                        tool_name="http_fetch_url_text",
+                        payload={"url": maybe_url, "max_chars": 12000},
+                    )
+                    fetched_data = fetched.get("data") or {}
+                    source_url = str(fetched_data.get("final_url") or fetched_data.get("url") or maybe_url).strip()
+                    source_title = str(fetched_data.get("title") or "").strip()
+                    source_text = str(fetched_data.get("text") or "").strip()
+                    if not source_text:
+                        raise HTTPException(status_code=400, detail="validation_error")
+                    llm_text, provider, model = await _request_llm_text(
+                        prompt=_build_url_translation_prompt(
+                            user_text=user_text,
+                            source_url=source_url,
+                            source_title=source_title,
+                            source_text=source_text,
+                        )
+                    )
+
+            if not llm_text:
+                llm_text, provider, model = await _request_llm_text(
+                    prompt=_build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_THEN_SKILL)
+                )
             plan.notes.append(f"llm_provider={provider}")
             plan.notes.append(f"llm_model={model}")
+
             if _looks_realtime_request(user_text) and _looks_unavailable_answer(llm_text):
                 execution = AgentExecutionResult(
                     success=False,
@@ -903,9 +1044,6 @@ async def try_run_v2_orchestration(
                     execution=execution,
                     plan_source="router_v2",
                 )
-            skill_name = str(decision.skill_name or "").strip() or infer_skill_name_from_runtime_tools(
-                decision.selected_tools
-            )
 
             if skill_name == "notion.page_create":
                 title = f"metel 결과 - {user_text[:40]}".strip()
@@ -947,6 +1085,7 @@ async def try_run_v2_orchestration(
                     artifacts={
                         "router_mode": decision.mode,
                         "created_page_url": page_url,
+                        "source_url": source_url,
                         "llm_provider": provider,
                         "llm_model": model,
                     },
@@ -1175,20 +1314,29 @@ async def try_run_v2_orchestration(
                 decision.selected_tools
             )
             if skill_name == "linear.issue_search" or ("linear" in decision.target_services and not skill_name):
-                query = str(decision.arguments.get("linear_query") or "").strip() or user_text
-                issue_ref = _extract_linear_issue_reference(query)
+                query = str(decision.arguments.get("linear_query") or "").strip()
+                first = int(decision.arguments.get("linear_first") or _extract_count_limit(user_text, default=5))
+                first = max(1, min(20, first))
+                issue_ref = _extract_linear_issue_reference(query or user_text)
                 if issue_ref:
                     tool_result = await _linear_search_with_issue_ref_fallback(user_id=user_id, issue_ref=issue_ref)
                 else:
-                    tool_result = await execute_tool(
-                        user_id=user_id,
-                        tool_name="linear_search_issues",
-                        payload={"query": query, "first": 5},
-                    )
+                    if _is_linear_recent_list_intent(user_text) or not query:
+                        tool_result = await execute_tool(
+                            user_id=user_id,
+                            tool_name="linear_list_issues",
+                            payload={"first": first},
+                        )
+                    else:
+                        tool_result = await execute_tool(
+                            user_id=user_id,
+                            tool_name="linear_search_issues",
+                            payload={"query": query, "first": first},
+                        )
                 if _linear_issue_count(tool_result) <= 0:
                     raise NeedsInputSignal(
                         missing_fields=["target.issue_ref"],
-                        questions=[f"'{query}' 이슈를 찾지 못했습니다. 이슈 키(예: OPT-35)를 확인해 주세요."],
+                        questions=[f"'{query or issue_ref or user_text}' 이슈를 찾지 못했습니다. 이슈 키(예: OPT-35)를 확인해 주세요."],
                     )
                 issue_context = _linear_issues_to_context(tool_result)
                 prompt = (
@@ -1206,7 +1354,11 @@ async def try_run_v2_orchestration(
                     summary="Linear 조회 후 LLM 정리 완료",
                     artifacts={"router_mode": decision.mode, "llm_provider": provider, "llm_model": model},
                     steps=[
-                        AgentExecutionStep(name="skill_linear_search_issues", status="success", detail=f"query={query}"),
+                        AgentExecutionStep(
+                            name="skill_linear_issue_lookup",
+                            status="success",
+                            detail=f"query={query or issue_ref or '-'};first={first}",
+                        ),
                         AgentExecutionStep(name="llm_solve", status="success", detail=f"provider={provider}:{model}"),
                     ],
                 )

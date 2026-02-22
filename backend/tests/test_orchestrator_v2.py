@@ -43,6 +43,18 @@ def test_parse_router_payload_accepts_skill_name_without_selected_tools():
     assert "notion_create_page" in decision.selected_tools
 
 
+def test_parse_router_payload_rejects_extra_keys():
+    payload = {
+        "mode": "LLM_ONLY",
+        "reason": "x",
+        "selected_tools": [],
+        "arguments": {},
+        "unexpected": "value",
+    }
+    decision = _parse_router_payload(payload, ["notion"])
+    assert decision is None
+
+
 def test_parse_router_payload_derives_target_service_from_skill_name():
     payload = {
         "mode": "LLM_THEN_SKILL",
@@ -78,6 +90,13 @@ def test_route_request_v2_skill_then_llm_for_linear_analysis():
     decision = route_request_v2("linear의 OPT-35 이슈 설명을 해결하는 방법을 정리해줘", ["linear"])
     assert decision.mode == MODE_SKILL_THEN_LLM
     assert decision.arguments.get("linear_query") == "OPT-35"
+
+
+def test_route_request_v2_skill_then_llm_for_linear_recent_list():
+    decision = route_request_v2("linear 최근 이슈 10개 검색해줘", ["linear"])
+    assert decision.mode == MODE_SKILL_THEN_LLM
+    assert decision.skill_name == "linear.issue_search"
+    assert decision.arguments.get("linear_first") == 10
 
 
 def test_route_request_v2_skill_then_llm_for_notion_analysis():
@@ -262,6 +281,48 @@ def test_try_run_v2_orchestration_skill_then_llm(monkeypatch):
     assert "해결 방법" in result.execution.user_message
 
 
+def test_try_run_v2_orchestration_skill_then_llm_linear_recent_list(monkeypatch):
+    calls = {"list": 0}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        assert user_id == "user-1"
+        if tool_name == "linear_list_issues":
+            calls["list"] += 1
+            assert payload.get("first") == 10
+            return {
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {"id": "i1", "identifier": "OPT-1", "title": "첫 이슈", "description": "desc1"},
+                            {"id": "i2", "identifier": "OPT-2", "title": "둘째 이슈", "description": "desc2"},
+                        ]
+                    }
+                }
+            }
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        assert "OPT-1" in prompt
+        return "최근 이슈 요약", "openai", "gpt-4o-mini"
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear 최근 이슈 10개 검색해줘",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert calls["list"] == 1
+    assert "최근 이슈 요약" in result.execution.user_message
+
+
 def test_try_run_v2_orchestration_skill_then_llm_linear_returns_needs_input_when_not_found(monkeypatch):
     async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
         if tool_name == "linear_search_issues":
@@ -430,6 +491,58 @@ def test_try_run_v2_orchestration_llm_then_notion_create_skips_on_realtime_unava
     assert result.ok is False
     assert result.execution is not None
     assert result.execution.artifacts.get("error_code") == "realtime_data_unavailable"
+
+
+def test_try_run_v2_orchestration_llm_then_notion_create_translates_url_then_creates_page(monkeypatch):
+    calls = {"fetch": 0, "create": 0}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        assert user_id == "user-1"
+        if tool_name == "http_fetch_url_text":
+            calls["fetch"] += 1
+            assert payload.get("url") == "https://example.com/article"
+            return {
+                "data": {
+                    "url": "https://example.com/article",
+                    "final_url": "https://example.com/article",
+                    "title": "Example Article",
+                    "text": "Hello world. This is an English article.",
+                }
+            }
+        if tool_name == "notion_create_page":
+            calls["create"] += 1
+            children = payload.get("children") or []
+            text = (
+                (((children[0] or {}).get("paragraph") or {}).get("rich_text") or [{}])[0]
+                .get("text", {})
+                .get("content", "")
+            )
+            assert "안녕하세요" in text
+            return {"data": {"url": "https://notion.so/new-page"}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        assert "원문 URL" in prompt
+        assert "번역문만 출력" in prompt
+        return "안녕하세요. 이것은 번역된 기사입니다.", "openai", "gpt-4o-mini"
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="기사(https://example.com/article)를 한국어로 번역해서 notion에 페이지로 생성해줘",
+            connected_services=["notion"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert calls["fetch"] == 1
+    assert calls["create"] == 1
+    assert result.execution.artifacts.get("source_url") == "https://example.com/article"
 
 
 def test_try_run_v2_orchestration_llm_then_linear_update(monkeypatch):

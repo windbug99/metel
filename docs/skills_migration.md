@@ -631,6 +631,8 @@ ERROR
   - `skill_router_v2_llm_enabled=true` 시 LLM JSON 라우팅 시도
   - JSON 파싱/검증 실패 시 규칙 라우터로 자동 fallback
   - 허용 스킬 allowlist 검증으로 임의 tool 발명 방지
+  - 라우터 JSON 엄격화: 허용 키 외 거부, skill mode에서 `skill_name+selected_tools+arguments` 강제
+  - fallback 사유 노트 기록: `router_llm_fallback_reason=...`
 - [x] V2 Shadow mode / 점진 전환 게이트 구현
   - `skill_v2_shadow_mode` (그림자 실행 후 legacy 응답 유지)
   - `skill_v2_traffic_percent` (0~100% 트래픽 샘플링)
@@ -668,7 +670,8 @@ ERROR
   - 계약 테스트: `backend/tests/test_skill_contracts.py`
 - [x] URL 본문 수집용 최소 스킬 계약 추가
   - `web.url_fetch_text` (`backend/agent/skills/contracts/web_url_fetch_text.json`)
-  - 현재 단계는 계약 추가까지이며, 런타임 도구(`http_fetch_url_text`) 연결은 다음 단계에서 진행
+  - 런타임 도구 `http_fetch_url_text` 연결 완료 (`backend/agent/tool_specs/web.json`, `backend/agent/tool_runner.py`)
+  - URL 번역 요청 시 `URL fetch -> LLM 번역 -> Notion 생성` 경로로 오케스트레이터 연동 완료
 - [x] 계약 파일을 런타임(오케스트레이터/runner)에서 직접 로드/검증하는 경로 연결
   - 오케스트레이터 allowlist를 계약 기반 `runtime_tools`로 전환
   - V2 실행 전 계약 검증(`validate_all_contracts`) 실패 시 fail-closed 처리
@@ -679,6 +682,11 @@ ERROR
   - 계약 기반 `infer_skill_name_from_runtime_tools`로 `skill_name` 추론
   - `target_services`도 계약의 provider 정보 우선 사용
   - `MODE_SKILL_THEN_LLM` 분기에서 `skill_name` 우선 매칭으로 실행 안정성 개선
+- [x] Router arguments 슬롯 정규화 보강
+  - `linear.issue_search`의 `linear_first` 자동 추출(예: "최근 이슈 10개")
+  - `linear/notion` 주요 스킬 인자 누락 시 사용자 문장에서 보정
+- [x] Linear 최근 이슈 조회 의도 지원
+  - `linear 최근 이슈 N개 검색`을 `SKILL_THEN_LLM` + `linear_list_issues(first=N)`로 처리
 
 ### 다음 단계
 - [ ] 운영 환경에서 V2 Shadow mode 지표 수집(최소 3일)
