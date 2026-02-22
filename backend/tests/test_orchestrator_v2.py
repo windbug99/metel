@@ -975,6 +975,116 @@ def test_try_run_v2_orchestration_llm_then_linear_update(monkeypatch):
     assert result.execution.artifacts.get("updated_issue_id") == "issue-internal-35"
 
 
+def test_try_run_v2_orchestration_llm_then_linear_update_returns_needs_input_when_issue_ref_missing(monkeypatch):
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        raise AssertionError("tool should not run when issue_ref is missing")
+
+    async def _fake_llm(*, prompt: str):
+        return "수정 설명 요약", "openai", "gpt-4o-mini"
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear 이슈 업데이트해줘",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("needs_input") == "true"
+    assert "이슈 키" in result.execution.user_message
+
+
+def test_try_run_v2_orchestration_llm_then_linear_update_title_change_without_llm(monkeypatch):
+    calls = {"search": 0, "update": 0}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        if tool_name == "linear_search_issues":
+            calls["search"] += 1
+            return {
+                "data": {
+                    "issues": {
+                        "nodes": [{"id": "issue-internal-35", "identifier": "OPT-35", "title": "이전 제목"}]
+                    }
+                }
+            }
+        if tool_name == "linear_update_issue":
+            calls["update"] += 1
+            assert payload.get("issue_id") == "issue-internal-35"
+            assert payload.get("title") == "새로운 제목"
+            assert "description" not in payload
+            return {"data": {"issueUpdate": {"success": True}}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        raise AssertionError("llm should not run for explicit linear title update")
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text='linear의 OPT-35 이슈 제목을 "새로운 제목"으로 업데이트해줘',
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert calls["search"] == 1
+    assert calls["update"] == 1
+    assert "새로운 제목" in result.execution.user_message
+
+
+def test_try_run_v2_orchestration_llm_then_linear_update_description_without_llm(monkeypatch):
+    calls = {"search": 0, "update": 0}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        if tool_name == "linear_search_issues":
+            calls["search"] += 1
+            return {
+                "data": {
+                    "issues": {
+                        "nodes": [{"id": "issue-internal-35", "identifier": "OPT-35", "title": "로그인 오류"}]
+                    }
+                }
+            }
+        if tool_name == "linear_update_issue":
+            calls["update"] += 1
+            assert payload.get("issue_id") == "issue-internal-35"
+            assert payload.get("description") == "재현 경로와 콘솔 로그를 추가해줘"
+            assert "title" not in payload
+            return {"data": {"issueUpdate": {"success": True}}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        raise AssertionError("llm should not run for explicit linear description update")
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear의 OPT-35 이슈 설명 업데이트: 재현 경로와 콘솔 로그를 추가해줘",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert calls["search"] == 1
+    assert calls["update"] == 1
+
+
 def test_try_run_v2_orchestration_llm_then_linear_update_falls_back_to_list_issues(monkeypatch):
     calls = {"search": 0, "list": 0, "update": 0}
 

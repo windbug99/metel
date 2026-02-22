@@ -880,6 +880,95 @@ def test_run_agent_analysis_skips_v2_when_rollout_miss(monkeypatch):
     assert any(note == "skill_v2_rollout=rollout_0_miss" for note in result.plan.notes)
 
 
+def test_run_agent_analysis_resumes_router_v2_needs_input_with_followup(monkeypatch):
+    clear_pending_action("user-v2-needs-input")
+
+    class _Settings:
+        llm_autonomous_enabled = False
+        skill_router_v2_enabled = True
+        skill_runner_v2_enabled = True
+        skill_v2_shadow_mode = False
+        skill_v2_traffic_percent = 100
+        llm_response_finalizer_enabled = False
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    calls: list[str] = []
+
+    async def _fake_v2(**kwargs):
+        user_text = kwargs["user_text"]
+        calls.append(user_text)
+        plan = AgentPlan(
+            user_text=user_text,
+            requirements=[AgentRequirement(summary="v2")],
+            target_services=["notion"],
+            selected_tools=["notion_search", "notion_append_block_children"],
+            workflow_steps=["1"],
+            notes=[],
+        )
+        if len(calls) == 1:
+            execution = AgentExecutionResult(
+                success=False,
+                user_message="입력값이 더 필요합니다.",
+                summary="추가 입력 필요",
+                artifacts={"needs_input": "true", "error_code": "validation_error"},
+            )
+            return AgentRunResult(
+                ok=False,
+                stage="execution",
+                plan=plan,
+                result_summary=execution.summary,
+                execution=execution,
+                plan_source="router_v2",
+            )
+        execution = AgentExecutionResult(
+            success=True,
+            user_message="본문 업데이트 완료",
+            summary="완료",
+            artifacts={},
+        )
+        return AgentRunResult(
+            ok=True,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_run_v2_orchestration", _fake_v2)
+
+    first = asyncio.run(
+        run_agent_analysis(
+            '노션에서 "스프린트 보고서" 페이지 업데이트해줘',
+            ["notion"],
+            "user-v2-needs-input",
+        )
+    )
+    assert first.ok is False
+    assert first.execution is not None
+    assert first.execution.artifacts.get("needs_input") == "true"
+    assert get_pending_action("user-v2-needs-input") is not None
+
+    second = asyncio.run(
+        run_agent_analysis(
+            '본문에 내용 추가 "우리는 달려간다"',
+            ["notion"],
+            "user-v2-needs-input",
+        )
+    )
+    assert second.ok is True
+    assert second.execution is not None
+    assert "본문 업데이트 완료" in second.execution.user_message
+    assert len(calls) == 2
+    assert '노션에서 "스프린트 보고서" 페이지 업데이트해줘' in calls[1]
+    assert '본문에 내용 추가 "우리는 달려간다"' in calls[1]
+    assert get_pending_action("user-v2-needs-input") is None
+
+
 def test_run_agent_analysis_falls_back_to_rule(monkeypatch):
     rule_plan = _sample_plan()
     class _Settings:

@@ -439,6 +439,39 @@ def _extract_linear_issue_title_for_create(text: str) -> str | None:
     return None
 
 
+def _extract_linear_update_new_title(text: str) -> str | None:
+    normalized = " ".join((text or "").strip().split())
+    patterns = [
+        r'(?i)(?:이슈\s*)?(?:제목|title)(?:을|를)?\s*["“]?([^"”]+?)["”]?\s*(?:로|으로)?\s*(?:업데이트|수정|변경|바꿔|rename)',
+        r"(?i)(?:새\s*제목|new\s*title)\s*[:：]?\s*['\"“”]?(.+?)['\"“”]?(?:\s|$)",
+        r"(?i)(?:제목|title)\s*[:：]\s*['\"“”]?(.+?)['\"“”]?(?:\s|$)",
+    ]
+    for pattern in patterns:
+        matched = re.search(pattern, normalized)
+        if not matched:
+            continue
+        candidate = str(matched.group(1) or "").strip(" \"'`.,")
+        if candidate:
+            return candidate[:120]
+    return None
+
+
+def _extract_linear_update_description_text(text: str) -> str | None:
+    raw = " ".join((text or "").strip().split())
+    patterns = [
+        r"(?i)(?:설명|description|내용|본문)\s*(?:업데이트|수정|변경)?\s*[:：]\s*(.+)$",
+        r'(?i)(?:설명|description|내용|본문)에\s*["“]?(.+?)["”]?\s*(?:추가|append|넣어|작성|반영)',
+    ]
+    for pattern in patterns:
+        matched = re.search(pattern, raw)
+        if not matched:
+            continue
+        candidate = str(matched.group(1) or "").strip(" \"'`")
+        if candidate:
+            return candidate[:5000]
+    return None
+
+
 def _extract_count_limit(text: str, *, default: int = 5, minimum: int = 1, maximum: int = 20) -> int:
     m = re.search(r"(\d{1,3})\s*(?:개|건|items?)", text or "", flags=re.IGNORECASE)
     if not m:
@@ -1339,6 +1372,8 @@ async def try_run_v2_orchestration(
             source_url = ""
             notion_update_new_title = ""
             notion_update_body_text = ""
+            linear_update_new_title = ""
+            linear_update_description_text = ""
             if skill_name == "notion.page_update":
                 notion_update_new_title = _extract_notion_update_new_title(user_text) or ""
                 notion_update_body_text = _extract_notion_update_body_text(user_text) or ""
@@ -1349,6 +1384,9 @@ async def try_run_v2_orchestration(
                             "무엇을 업데이트할지 알려주세요. 예: 제목을 \"스프린트 보고서\"로 변경 / 본문에 배포 회고 추가"
                         ],
                     )
+            if skill_name == "linear.issue_update":
+                linear_update_new_title = _extract_linear_update_new_title(user_text) or ""
+                linear_update_description_text = _extract_linear_update_description_text(user_text) or ""
             if skill_name == "notion.page_create" and _is_translation_intent(user_text):
                 maybe_url = _extract_first_url(user_text)
                 if maybe_url:
@@ -1373,7 +1411,8 @@ async def try_run_v2_orchestration(
                     )
 
             if not llm_text and not (
-                skill_name == "notion.page_update" and (notion_update_new_title or notion_update_body_text)
+                (skill_name == "notion.page_update" and (notion_update_new_title or notion_update_body_text))
+                or (skill_name == "linear.issue_update" and (linear_update_new_title or linear_update_description_text))
             ):
                 llm_text, provider, model = await _request_llm_text(
                     prompt=_build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_THEN_SKILL)
@@ -1583,16 +1622,32 @@ async def try_run_v2_orchestration(
             if skill_name == "linear.issue_update":
                 issue_ref = str(decision.arguments.get("linear_issue_ref") or "").strip()
                 if not issue_ref:
-                    raise HTTPException(status_code=400, detail="validation_error")
+                    raise NeedsInputSignal(
+                        missing_fields=["target.issue_ref"],
+                        questions=["업데이트할 Linear 이슈 키를 알려주세요. 예: OPT-35"],
+                    )
                 issue_id = await _resolve_linear_issue_id_for_update(user_id=user_id, issue_ref=issue_ref)
+                patch_payload: dict = {"issue_id": issue_id}
+                if linear_update_new_title:
+                    patch_payload["title"] = linear_update_new_title[:120]
+                if linear_update_description_text:
+                    patch_payload["description"] = linear_update_description_text
+                if "title" not in patch_payload and "description" not in patch_payload:
+                    patch_payload["description"] = llm_text
                 await execute_tool(
                     user_id=user_id,
                     tool_name="linear_update_issue",
-                    payload={"issue_id": issue_id, "description": llm_text},
+                    payload=patch_payload,
                 )
+                if linear_update_new_title:
+                    user_message = f"Linear 이슈 제목이 \"{linear_update_new_title[:120]}\"로 업데이트되었습니다.\n\n대상 이슈: {issue_ref}"
+                elif linear_update_description_text:
+                    user_message = f"Linear 이슈 설명이 업데이트되었습니다.\n\n대상 이슈: {issue_ref}"
+                else:
+                    user_message = f"{llm_text}\n\nLinear 이슈 업데이트 완료: {issue_ref}"
                 execution = AgentExecutionResult(
                     success=True,
-                    user_message=f"{llm_text}\n\nLinear 이슈 업데이트 완료: {issue_ref}",
+                    user_message=user_message,
                     summary="LLM 생성 후 Linear 이슈 업데이트 완료",
                     artifacts={
                         "router_mode": decision.mode,

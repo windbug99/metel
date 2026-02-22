@@ -663,6 +663,31 @@ def _pending_persistence_error_result(*, plan, plan_source: str, stage: str = "v
     )
 
 
+def _is_router_v2_needs_input(execution: AgentExecutionResult | None) -> bool:
+    if execution is None:
+        return False
+    return str(execution.artifacts.get("needs_input", "") or "").strip().lower() == "true"
+
+
+def _persist_router_v2_pending_action(
+    *,
+    user_id: str,
+    base_user_text: str,
+    plan,
+    plan_source: str,
+) -> None:
+    set_pending_action(
+        user_id=user_id,
+        intent="router_v2",
+        action="router_v2_needs_input",
+        task_id="router_v2_needs_input",
+        plan=plan,
+        plan_source=plan_source,
+        collected_slots={"base_user_text": base_user_text},
+        missing_slots=["follow_up"],
+    )
+
+
 def _apply_slot_loop_from_validation_error(
     *,
     execution: AgentExecutionResult,
@@ -772,6 +797,39 @@ async def _try_resume_pending_action(
     if not pending.missing_slots:
         clear_pending_action(user_id)
         return None
+
+    if pending.plan_source == "router_v2" and pending.action == "router_v2_needs_input":
+        base_user_text = str((pending.collected_slots or {}).get("base_user_text") or pending.plan.user_text or "").strip()
+        merged_user_text = (f"{base_user_text}\n{(user_text or '').strip()}").strip() if base_user_text else (user_text or "").strip()
+        clear_pending_action(user_id)
+        v2_result = await try_run_v2_orchestration(
+            user_text=merged_user_text,
+            connected_services=list(pending.plan.target_services or []),
+            user_id=user_id,
+        )
+        if v2_result is None:
+            return None
+        settings = get_settings()
+        if v2_result.execution is not None:
+            finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=v2_result.execution, settings=settings)
+            v2_result.execution.user_message = finalized_message
+            if finalizer_mode != "disabled":
+                v2_result.plan.notes.append(f"response_finalizer={finalizer_mode}")
+        if _is_router_v2_needs_input(v2_result.execution):
+            try:
+                _persist_router_v2_pending_action(
+                    user_id=user_id,
+                    base_user_text=merged_user_text,
+                    plan=v2_result.plan,
+                    plan_source=v2_result.plan_source,
+                )
+            except PendingActionStorageError:
+                return _pending_persistence_error_result(plan=v2_result.plan, plan_source=v2_result.plan_source, stage="validation")
+            v2_result.plan.notes.append("slot_loop_started")
+        else:
+            v2_result.plan.notes.append("slot_loop_completed")
+        v2_result.plan.notes.append("pending_action_resumed")
+        return v2_result
 
     target_slot = pending.missing_slots[0]
     collected = collect_slots_from_user_reply(
@@ -1029,6 +1087,21 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
                         v2_result.execution.user_message = finalized_message
                         if finalizer_mode != "disabled":
                             v2_result.plan.notes.append(f"response_finalizer={finalizer_mode}")
+                        if _is_router_v2_needs_input(v2_result.execution):
+                            try:
+                                _persist_router_v2_pending_action(
+                                    user_id=user_id,
+                                    base_user_text=user_text,
+                                    plan=v2_result.plan,
+                                    plan_source=v2_result.plan_source,
+                                )
+                            except PendingActionStorageError:
+                                return _pending_persistence_error_result(
+                                    plan=v2_result.plan,
+                                    plan_source=v2_result.plan_source,
+                                    stage="validation",
+                                )
+                            v2_result.plan.notes.append("slot_loop_started")
                     v2_result.plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
                     v2_result.plan.notes.extend(pre_notes)
                     return v2_result
