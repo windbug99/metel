@@ -2,7 +2,7 @@ import asyncio
 import httpx
 
 from agent.loop import run_agent_analysis
-from agent.pending_action import clear_pending_action, get_pending_action
+from agent.pending_action import PendingActionStorageError, clear_pending_action, get_pending_action
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRequirement, AgentTask
 
 
@@ -437,6 +437,64 @@ def test_run_agent_analysis_rejects_orphan_slot_only_input_when_slot_loop_disabl
     assert result.execution is not None
     assert result.execution.artifacts.get("next_action") == "start_new_request"
     assert "보류 작업이 없습니다" in result.execution.user_message
+
+
+def test_run_agent_analysis_returns_persistence_error_when_pending_store_fails(monkeypatch):
+    clear_pending_action("user-persist-fail")
+    llm_plan = AgentPlan(
+        user_text="Linear 이슈 생성해줘",
+        requirements=[AgentRequirement(summary="Linear 이슈 생성")],
+        target_services=["linear"],
+        selected_tools=["linear_create_issue"],
+        workflow_steps=["1. create"],
+        tasks=[
+            AgentTask(
+                id="task_linear_create_issue",
+                title="Linear 이슈 생성",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_create_issue",
+                payload={},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    class _Settings:
+        llm_autonomous_enabled = False
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        return AgentExecutionResult(
+            success=False,
+            user_message="title missing",
+            summary="validation",
+            artifacts={
+                "error_code": "validation_error",
+                "slot_action": "linear_create_issue",
+                "slot_task_id": "task_linear_create_issue",
+                "missing_slot": "title",
+                "missing_slots": "title",
+                "slot_payload_json": "{}",
+            },
+        )
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+    monkeypatch.setattr(
+        "agent.loop.set_pending_action",
+        lambda **kwargs: (_ for _ in ()).throw(PendingActionStorageError("pending_action_persistence_failed")),
+    )
+
+    result = asyncio.run(run_agent_analysis("Linear 이슈 생성해줘", ["linear"], "user-persist-fail"))
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("error_code") == "pending_action_persistence_error"
+    assert "안전하게 저장하지 못해" in result.execution.user_message
 
 
 def test_run_agent_analysis_skips_regex_prescreen_when_llm_planner_enabled(monkeypatch):

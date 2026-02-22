@@ -14,7 +14,7 @@ from agent.intent_keywords import (
     is_summary_intent,
     is_update_intent,
 )
-from agent.pending_action import clear_pending_action, get_pending_action, set_pending_action
+from agent.pending_action import PendingActionStorageError, clear_pending_action, get_pending_action, set_pending_action
 from agent.planner import build_agent_plan
 from agent.planner_llm import try_build_agent_plan_with_llm
 from agent.registry import load_registry
@@ -597,6 +597,27 @@ def _build_focused_pending_plan(
     )
 
 
+def _pending_persistence_error_result(*, plan, plan_source: str, stage: str = "validation") -> AgentRunResult:
+    execution = AgentExecutionResult(
+        success=False,
+        summary="작업 상태 저장에 실패했습니다.",
+        user_message=(
+            "입력 상태를 안전하게 저장하지 못해 작업을 이어갈 수 없습니다.\n"
+            "처음 요청부터 다시 입력해주세요."
+        ),
+        artifacts={"error_code": "pending_action_persistence_error", "next_action": "start_new_request"},
+        steps=[AgentExecutionStep(name="pending_action_persist", status="error", detail="pending_action_persistence_failed")],
+    )
+    return AgentRunResult(
+        ok=False,
+        stage=stage,
+        plan=plan,
+        result_summary=execution.summary,
+        execution=execution,
+        plan_source=plan_source,
+    )
+
+
 def _apply_slot_loop_from_validation_error(
     *,
     execution: AgentExecutionResult,
@@ -639,16 +660,30 @@ def _apply_slot_loop_from_validation_error(
         missing_slots = [missing_slot]
     plan.notes.append("slot_loop_started")
     plan.notes.append("slot_loop_restarted_from_validation_error")
-    set_pending_action(
-        user_id=user_id,
-        intent=action,
-        action=action,
-        task_id=task_id,
-        plan=plan,
-        plan_source=plan_source,
-        collected_slots=payload,
-        missing_slots=missing_slots,
-    )
+    try:
+        set_pending_action(
+            user_id=user_id,
+            intent=action,
+            action=action,
+            task_id=task_id,
+            plan=plan,
+            plan_source=plan_source,
+            collected_slots=payload,
+            missing_slots=missing_slots,
+        )
+    except PendingActionStorageError:
+        execution.success = False
+        execution.summary = "작업 상태 저장에 실패했습니다."
+        execution.user_message = (
+            "입력 상태를 안전하게 저장하지 못해 작업을 이어갈 수 없습니다.\n"
+            "처음 요청부터 다시 입력해주세요."
+        )
+        execution.artifacts["error_code"] = "pending_action_persistence_error"
+        execution.artifacts["next_action"] = "start_new_request"
+        execution.steps.append(
+            AgentExecutionStep(name="pending_action_persist", status="error", detail="pending_action_persistence_failed")
+        )
+        return
     execution.user_message = (
         f"{_build_slot_question_message(action, missing_slot)}\n\n"
         f"{_build_validation_guide_message(action, missing_slot)}"
@@ -703,16 +738,19 @@ async def _try_resume_pending_action(
     pending.collected_slots = collected.collected_slots
 
     if collected.validation_errors:
-        set_pending_action(
-            user_id=pending.user_id,
-            intent=pending.intent,
-            action=pending.action,
-            task_id=pending.task_id,
-            plan=pending.plan,
-            plan_source=pending.plan_source,
-            collected_slots=pending.collected_slots,
-            missing_slots=[target_slot],
-        )
+        try:
+            set_pending_action(
+                user_id=pending.user_id,
+                intent=pending.intent,
+                action=pending.action,
+                task_id=pending.task_id,
+                plan=pending.plan,
+                plan_source=pending.plan_source,
+                collected_slots=pending.collected_slots,
+                missing_slots=[target_slot],
+            )
+        except PendingActionStorageError:
+            return _pending_persistence_error_result(plan=pending.plan, plan_source=pending.plan_source)
         pending.plan.notes.append("slot_loop_validation_error")
         execution = AgentExecutionResult(
             success=False,
@@ -748,16 +786,19 @@ async def _try_resume_pending_action(
         confidence=confidence,
         user_text=user_text,
     ):
-        set_pending_action(
-            user_id=pending.user_id,
-            intent=pending.intent,
-            action=pending.action,
-            task_id=pending.task_id,
-            plan=pending.plan,
-            plan_source=pending.plan_source,
-            collected_slots=pending.collected_slots,
-            missing_slots=[target_slot],
-        )
+        try:
+            set_pending_action(
+                user_id=pending.user_id,
+                intent=pending.intent,
+                action=pending.action,
+                task_id=pending.task_id,
+                plan=pending.plan,
+                plan_source=pending.plan_source,
+                collected_slots=pending.collected_slots,
+                missing_slots=[target_slot],
+            )
+        except PendingActionStorageError:
+            return _pending_persistence_error_result(plan=pending.plan, plan_source=pending.plan_source)
         pending.plan.notes.append("slot_loop_low_confidence_reask")
         execution = AgentExecutionResult(
             success=False,
@@ -824,16 +865,19 @@ async def _try_resume_pending_action(
             )
 
         next_slot = collected.ask_next_slot or collected.missing_slots[0]
-        set_pending_action(
-            user_id=pending.user_id,
-            intent=pending.intent,
-            action=pending.action,
-            task_id=pending.task_id,
-            plan=pending.plan,
-            plan_source=pending.plan_source,
-            collected_slots=pending.collected_slots,
-            missing_slots=collected.missing_slots,
-        )
+        try:
+            set_pending_action(
+                user_id=pending.user_id,
+                intent=pending.intent,
+                action=pending.action,
+                task_id=pending.task_id,
+                plan=pending.plan,
+                plan_source=pending.plan_source,
+                collected_slots=pending.collected_slots,
+                missing_slots=collected.missing_slots,
+            )
+        except PendingActionStorageError:
+            return _pending_persistence_error_result(plan=pending.plan, plan_source=pending.plan_source)
         pending.plan.notes.append(f"slot_loop_turn:{next_slot}")
         execution = AgentExecutionResult(
             success=False,

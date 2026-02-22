@@ -21,6 +21,10 @@ except Exception:  # pragma: no cover - import error is handled by memory fallba
 logger = logging.getLogger("metel-backend.pending_action")
 
 
+class PendingActionStorageError(RuntimeError):
+    pass
+
+
 @dataclass
 class PendingAction:
     user_id: str
@@ -306,10 +310,9 @@ def set_pending_action(
         try:
             return _db_upsert_pending_action(item)
         except Exception as exc:
-            if mode == "db":
-                logger.warning("pending_action db write failed (db mode): %s", exc)
-                return item
-            logger.warning("pending_action db write failed, fallback to memory: %s", exc)
+            _mem_clear_pending_action(user_id)
+            logger.error("pending_action db write failed (%s mode): %s", mode, exc)
+            raise PendingActionStorageError("pending_action_persistence_failed") from exc
     return item
 
 
