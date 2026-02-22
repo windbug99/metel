@@ -65,7 +65,7 @@ class Settings(BaseSettings):
 
     frontend_url: str = "http://localhost:3000"
     allowed_origins: str = "http://localhost:3000"
-    pending_action_storage: str = "auto"
+    pending_action_storage: str = "db"
     pending_action_ttl_seconds: int = 900
     pending_action_table: str = "pending_actions"
     slot_loop_enabled: bool = True

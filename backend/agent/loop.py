@@ -948,15 +948,11 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     """
     settings = get_settings()
     slot_loop_enabled = _is_slot_loop_enabled(settings, user_id)
-    if slot_loop_enabled:
-        resumed = await _try_resume_pending_action(user_id=user_id, user_text=user_text)
-        if resumed is not None:
-            return resumed
-
-    else:
-        _ = get_pending_action(user_id)
-        if _ is not None:
-            clear_pending_action(user_id)
+    # Always attempt pending-action resume first, even when rollout/flag is off.
+    # This prevents cross-instance config drift from losing in-progress slot state.
+    resumed = await _try_resume_pending_action(user_id=user_id, user_text=user_text)
+    if resumed is not None:
+        return resumed
 
     if _looks_like_slot_only_input(user_text):
         plan = build_agent_plan(user_text=user_text, connected_services=connected_services)

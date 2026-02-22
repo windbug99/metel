@@ -1,5 +1,6 @@
 from agent.pending_action import clear_pending_action
 from agent.pending_action import get_pending_action
+from agent.pending_action import PendingActionStorageError
 from agent.pending_action import _pending_from_row
 from agent.pending_action import set_pending_action
 from agent.types import AgentPlan
@@ -41,29 +42,32 @@ def test_pending_action_memory_mode_roundtrip(monkeypatch):
     assert get_pending_action("user-memory") is None
 
 
-def test_pending_action_auto_mode_falls_back_to_memory_when_db_fails(monkeypatch):
-    monkeypatch.setattr("agent.pending_action._storage_mode", lambda: "auto")
+def test_pending_action_db_mode_fails_closed_when_db_fails(monkeypatch):
+    monkeypatch.setattr("agent.pending_action._storage_mode", lambda: "db")
     monkeypatch.setattr("agent.pending_action._db_upsert_pending_action", lambda item: (_ for _ in ()).throw(RuntimeError("db down")))
     monkeypatch.setattr("agent.pending_action._db_get_pending_action", lambda user_id: (_ for _ in ()).throw(RuntimeError("db down")))
     monkeypatch.setattr("agent.pending_action._db_update_status", lambda user_id, status: (_ for _ in ()).throw(RuntimeError("db down")))
     clear_pending_action("user-fallback")
 
-    set_pending_action(
-        user_id="user-fallback",
-        intent="update",
-        action="linear_update_issue",
-        task_id="task2",
-        plan=_plan(),
-        plan_source="rule",
-        collected_slots={"issue_id": "OPT-36"},
-        missing_slots=["description"],
-        ttl_seconds=300,
-    )
+    try:
+        set_pending_action(
+            user_id="user-fallback",
+            intent="update",
+            action="linear_update_issue",
+            task_id="task2",
+            plan=_plan(),
+            plan_source="rule",
+            collected_slots={"issue_id": "OPT-36"},
+            missing_slots=["description"],
+            ttl_seconds=300,
+        )
+        raised = False
+    except PendingActionStorageError:
+        raised = True
 
     item = get_pending_action("user-fallback")
-    assert item is not None
-    assert item.action == "linear_update_issue"
-    assert item.missing_slots == ["description"]
+    assert raised is True
+    assert item is None
     clear_pending_action("user-fallback")
 
 

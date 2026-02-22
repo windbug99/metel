@@ -43,12 +43,15 @@ _PENDING_ACTIONS: dict[str, PendingAction] = {}
 
 def _storage_mode() -> str:
     try:
-        mode = (get_settings().pending_action_storage or "auto").strip().lower()
+        mode = (get_settings().pending_action_storage or "db").strip().lower()
     except Exception:
-        return "memory"
-    if mode in {"auto", "db", "memory"}:
+        return "db"
+    if mode in {"db", "memory"}:
         return mode
-    return "auto"
+    if mode == "auto":
+        # stability-first: avoid split-brain between db state and in-memory state.
+        return "db"
+    return "db"
 
 
 def _default_ttl_seconds() -> int:
@@ -267,17 +270,14 @@ def get_pending_action(user_id: str) -> PendingAction | None:
     mode = _storage_mode()
     if mode == "memory":
         return _mem_get_pending_action(user_id)
-    if mode in {"auto", "db"}:
+    if mode == "db":
         try:
             result = _db_get_pending_action(user_id)
-            if result or mode == "db":
-                return result
+            return result
         except Exception as exc:
-            if mode == "db":
-                logger.warning("pending_action db read failed (db mode): %s", exc)
-                return None
-            logger.warning("pending_action db read failed, fallback to memory: %s", exc)
-    return _mem_get_pending_action(user_id)
+            logger.warning("pending_action db read failed (db mode): %s", exc)
+            return None
+    return None
 
 
 def set_pending_action(
@@ -306,7 +306,7 @@ def set_pending_action(
     mode = _storage_mode()
     if mode == "memory":
         return item
-    if mode in {"auto", "db"}:
+    if mode == "db":
         try:
             return _db_upsert_pending_action(item)
         except Exception as exc:
@@ -321,11 +321,8 @@ def clear_pending_action(user_id: str) -> None:
     mode = _storage_mode()
     if mode == "memory":
         return
-    if mode in {"auto", "db"}:
+    if mode == "db":
         try:
             _db_update_status(user_id, "completed")
         except Exception as exc:
-            if mode == "db":
-                logger.warning("pending_action db clear failed (db mode): %s", exc)
-            else:
-                logger.warning("pending_action db clear failed, fallback to memory: %s", exc)
+            logger.warning("pending_action db clear failed (db mode): %s", exc)

@@ -497,6 +497,92 @@ def test_run_agent_analysis_returns_persistence_error_when_pending_store_fails(m
     assert "안전하게 저장하지 못해" in result.execution.user_message
 
 
+def test_run_agent_analysis_resumes_pending_even_when_slot_loop_disabled(monkeypatch):
+    clear_pending_action("user-slot-off-resume")
+    llm_plan = AgentPlan(
+        user_text="Linear 이슈 생성해줘",
+        requirements=[AgentRequirement(summary="Linear 이슈 생성")],
+        target_services=["linear"],
+        selected_tools=["linear_create_issue"],
+        workflow_steps=["1. create"],
+        tasks=[
+            AgentTask(
+                id="task_linear_create_issue",
+                title="Linear 이슈 생성",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_create_issue",
+                payload={},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    calls = {"count": 0}
+    pending_store: dict[str, object] = {}
+
+    class _SettingsOn:
+        llm_autonomous_enabled = False
+        slot_loop_enabled = True
+        slot_loop_rollout_percent = 100
+
+    class _SettingsOff:
+        llm_autonomous_enabled = False
+        slot_loop_enabled = False
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return AgentExecutionResult(
+                success=False,
+                user_message="title missing",
+                summary="validation",
+                artifacts={
+                    "error_code": "validation_error",
+                    "slot_action": "linear_create_issue",
+                    "slot_task_id": "task_linear_create_issue",
+                    "missing_slot": "title",
+                    "missing_slots": "title",
+                    "slot_payload_json": "{}",
+                },
+            )
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
+
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+    monkeypatch.setattr("agent.loop.set_pending_action", lambda **kwargs: pending_store.__setitem__(kwargs["user_id"], kwargs))
+    monkeypatch.setattr("agent.loop.get_pending_action", lambda user_id: None)
+    monkeypatch.setattr("agent.loop.clear_pending_action", lambda user_id: pending_store.pop(user_id, None))
+
+    class _PendingObj:
+        def __init__(self, payload):
+            self.user_id = payload["user_id"]
+            self.intent = payload["intent"]
+            self.action = payload["action"]
+            self.task_id = payload["task_id"]
+            self.plan = payload["plan"]
+            self.plan_source = payload["plan_source"]
+            self.collected_slots = dict(payload["collected_slots"])
+            self.missing_slots = list(payload["missing_slots"])
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _SettingsOn())
+    monkeypatch.setattr("agent.loop.get_pending_action", lambda user_id: (_PendingObj(pending_store[user_id]) if user_id in pending_store else None))
+    first = asyncio.run(run_agent_analysis("Linear 이슈 생성해줘", ["linear"], "user-slot-off-resume"))
+    assert first.ok is False
+    assert "user-slot-off-resume" in pending_store
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _SettingsOff())
+    second = asyncio.run(run_agent_analysis('제목: "로그인 오류"', ["linear"], "user-slot-off-resume"))
+    assert second.ok is True
+    assert second.result_summary == "done"
+    assert "user-slot-off-resume" not in pending_store
+    clear_pending_action("user-slot-off-resume")
+
+
 def test_run_agent_analysis_skips_regex_prescreen_when_llm_planner_enabled(monkeypatch):
     llm_plan = _sample_plan()
 
