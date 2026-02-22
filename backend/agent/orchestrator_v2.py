@@ -1503,11 +1503,7 @@ async def try_run_v2_orchestration(
                     tool_result = await execute_tool(
                         user_id=user_id,
                         tool_name="notion_search",
-                        payload={
-                            "filter": {"property": "object", "value": "page"},
-                            "sort": {"direction": "descending", "timestamp": "last_edited_time"},
-                            "page_size": first,
-                        },
+                        payload={"page_size": first},
                     )
                     execution = AgentExecutionResult(
                         success=True,
@@ -1606,9 +1602,15 @@ async def try_run_v2_orchestration(
         )
     except HTTPException as exc:
         detail = str(exc.detail or "unknown_error")
+        detail_hint = detail
+        if len(detail_hint) > 220:
+            detail_hint = detail_hint[:220].rstrip() + "..."
         execution = AgentExecutionResult(
             success=False,
-            user_message="요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+            user_message=(
+                "요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.\n"
+                f"(error: {detail_hint})"
+            ),
             summary="V2 오케스트레이션 실행 실패",
             artifacts={"error_code": detail, "router_mode": decision.mode},
             steps=[AgentExecutionStep(name="router_v2", status="error", detail=detail)],
