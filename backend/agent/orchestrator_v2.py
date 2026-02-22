@@ -472,6 +472,42 @@ def _extract_linear_update_description_text(text: str) -> str | None:
     return None
 
 
+def _extract_linear_update_state_id(text: str) -> str | None:
+    normalized = " ".join((text or "").strip().split())
+    matched = re.search(r"(?i)(?:state_id|state id|상태id|상태_id)\s*[:：]\s*([^\s,]+)", normalized)
+    if not matched:
+        return None
+    candidate = str(matched.group(1) or "").strip(" \"'`.,")
+    return candidate or None
+
+
+def _extract_linear_update_priority(text: str) -> int | None:
+    normalized = " ".join((text or "").strip().split())
+    matched = re.search(r"(?i)(?:priority|우선순위)\s*[:：]\s*([0-4])", normalized)
+    if not matched:
+        return None
+    try:
+        return int(matched.group(1))
+    except Exception:
+        return None
+
+
+def _needs_linear_update_clarification(text: str) -> bool:
+    lower = (text or "").lower()
+    if not _is_update_intent(text):
+        return False
+    if _extract_linear_update_new_title(text):
+        return False
+    if _extract_linear_update_description_text(text):
+        return False
+    if _extract_linear_update_state_id(text):
+        return False
+    if _extract_linear_update_priority(text) is not None:
+        return False
+    explicit_tokens = ("제목", "title", "설명", "description", "본문", "내용")
+    return not any(token in lower or token in text for token in explicit_tokens)
+
+
 def _extract_count_limit(text: str, *, default: int = 5, minimum: int = 1, maximum: int = 20) -> int:
     m = re.search(r"(\d{1,3})\s*(?:개|건|items?)", text or "", flags=re.IGNORECASE)
     if not m:
@@ -1374,6 +1410,8 @@ async def try_run_v2_orchestration(
             notion_update_body_text = ""
             linear_update_new_title = ""
             linear_update_description_text = ""
+            linear_update_state_id = ""
+            linear_update_priority: int | None = None
             if skill_name == "notion.page_update":
                 notion_update_new_title = _extract_notion_update_new_title(user_text) or ""
                 notion_update_body_text = _extract_notion_update_body_text(user_text) or ""
@@ -1387,6 +1425,8 @@ async def try_run_v2_orchestration(
             if skill_name == "linear.issue_update":
                 linear_update_new_title = _extract_linear_update_new_title(user_text) or ""
                 linear_update_description_text = _extract_linear_update_description_text(user_text) or ""
+                linear_update_state_id = _extract_linear_update_state_id(user_text) or ""
+                linear_update_priority = _extract_linear_update_priority(user_text)
             if skill_name == "notion.page_create" and _is_translation_intent(user_text):
                 maybe_url = _extract_first_url(user_text)
                 if maybe_url:
@@ -1412,7 +1452,15 @@ async def try_run_v2_orchestration(
 
             if not llm_text and not (
                 (skill_name == "notion.page_update" and (notion_update_new_title or notion_update_body_text))
-                or (skill_name == "linear.issue_update" and (linear_update_new_title or linear_update_description_text))
+                or (
+                    skill_name == "linear.issue_update"
+                    and (
+                        linear_update_new_title
+                        or linear_update_description_text
+                        or linear_update_state_id
+                        or linear_update_priority is not None
+                    )
+                )
             ):
                 llm_text, provider, model = await _request_llm_text(
                     prompt=_build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_THEN_SKILL)
@@ -1626,13 +1674,35 @@ async def try_run_v2_orchestration(
                         missing_fields=["target.issue_ref"],
                         questions=["업데이트할 Linear 이슈 키를 알려주세요. 예: OPT-35"],
                     )
+                if (
+                    not linear_update_new_title
+                    and not linear_update_description_text
+                    and not linear_update_state_id
+                    and linear_update_priority is None
+                    and _needs_linear_update_clarification(user_text)
+                ):
+                    raise NeedsInputSignal(
+                        missing_fields=["patch"],
+                        questions=[
+                            "어떤 항목을 업데이트할까요? 예: 제목을 \"...\"로 변경 / 설명 업데이트: ... / state_id: <id> / priority: 0~4"
+                        ],
+                    )
                 issue_id = await _resolve_linear_issue_id_for_update(user_id=user_id, issue_ref=issue_ref)
                 patch_payload: dict = {"issue_id": issue_id}
                 if linear_update_new_title:
                     patch_payload["title"] = linear_update_new_title[:120]
                 if linear_update_description_text:
                     patch_payload["description"] = linear_update_description_text
-                if "title" not in patch_payload and "description" not in patch_payload:
+                if linear_update_state_id:
+                    patch_payload["state_id"] = linear_update_state_id
+                if linear_update_priority is not None:
+                    patch_payload["priority"] = linear_update_priority
+                if (
+                    "title" not in patch_payload
+                    and "description" not in patch_payload
+                    and "state_id" not in patch_payload
+                    and "priority" not in patch_payload
+                ):
                     patch_payload["description"] = llm_text
                 await execute_tool(
                     user_id=user_id,
@@ -1643,6 +1713,13 @@ async def try_run_v2_orchestration(
                     user_message = f"Linear 이슈 제목이 \"{linear_update_new_title[:120]}\"로 업데이트되었습니다.\n\n대상 이슈: {issue_ref}"
                 elif linear_update_description_text:
                     user_message = f"Linear 이슈 설명이 업데이트되었습니다.\n\n대상 이슈: {issue_ref}"
+                elif linear_update_state_id or linear_update_priority is not None:
+                    updates: list[str] = []
+                    if linear_update_state_id:
+                        updates.append(f"state_id={linear_update_state_id}")
+                    if linear_update_priority is not None:
+                        updates.append(f"priority={linear_update_priority}")
+                    user_message = f"Linear 이슈 속성이 업데이트되었습니다. ({', '.join(updates)})\n\n대상 이슈: {issue_ref}"
                 else:
                     user_message = f"{llm_text}\n\nLinear 이슈 업데이트 완료: {issue_ref}"
                 execution = AgentExecutionResult(

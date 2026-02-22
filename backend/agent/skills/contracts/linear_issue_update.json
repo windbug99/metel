@@ -25,6 +25,7 @@
         "properties": {
           "title": { "type": ["string", "null"] },
           "description": { "type": ["string", "null"] },
+          "priority": { "type": ["integer", "null"] },
           "state_id": { "type": ["string", "null"] }
         },
         "additionalProperties": false

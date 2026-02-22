@@ -928,29 +928,9 @@ def test_try_run_v2_orchestration_llm_then_notion_create_translates_url_then_cre
     assert result.execution.artifacts.get("source_url") == "https://example.com/article"
 
 
-def test_try_run_v2_orchestration_llm_then_linear_update(monkeypatch):
-    calls = {"search": 0, "update": 0}
-
+def test_try_run_v2_orchestration_llm_then_linear_update_requires_patch_detail(monkeypatch):
     async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
-        assert user_id == "user-1"
-        if tool_name == "linear_search_issues":
-            calls["search"] += 1
-            assert payload.get("query") == "OPT-35"
-            return {
-                "data": {
-                    "issues": {
-                        "nodes": [
-                            {"id": "issue-internal-35", "identifier": "OPT-35", "title": "로그인 오류"}
-                        ]
-                    }
-                }
-            }
-        if tool_name == "linear_update_issue":
-            calls["update"] += 1
-            assert payload.get("issue_id") == "issue-internal-35"
-            assert payload.get("description") == "수정 설명 요약"
-            return {"data": {"issueUpdate": {"success": True}}}
-        raise AssertionError(f"unexpected tool call: {tool_name}")
+        raise AssertionError("tool should not run for generic linear update without patch detail")
 
     async def _fake_llm(*, prompt: str):
         return "수정 설명 요약", "openai", "gpt-4o-mini"
@@ -967,12 +947,10 @@ def test_try_run_v2_orchestration_llm_then_linear_update(monkeypatch):
     )
 
     assert result is not None
-    assert result.ok is True
+    assert result.ok is False
     assert result.execution is not None
-    assert calls["search"] == 1
-    assert calls["update"] == 1
-    assert result.execution.artifacts.get("router_mode") == MODE_LLM_THEN_SKILL
-    assert result.execution.artifacts.get("updated_issue_id") == "issue-internal-35"
+    assert result.execution.artifacts.get("needs_input") == "true"
+    assert "어떤 항목을 업데이트" in result.execution.user_message
 
 
 def test_try_run_v2_orchestration_llm_then_linear_update_returns_needs_input_when_issue_ref_missing(monkeypatch):
@@ -1085,6 +1063,48 @@ def test_try_run_v2_orchestration_llm_then_linear_update_description_without_llm
     assert calls["update"] == 1
 
 
+def test_try_run_v2_orchestration_llm_then_linear_update_state_priority_without_llm(monkeypatch):
+    calls = {"search": 0, "update": 0}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        if tool_name == "linear_search_issues":
+            calls["search"] += 1
+            return {
+                "data": {
+                    "issues": {
+                        "nodes": [{"id": "issue-internal-35", "identifier": "OPT-35", "title": "로그인 오류"}]
+                    }
+                }
+            }
+        if tool_name == "linear_update_issue":
+            calls["update"] += 1
+            assert payload.get("issue_id") == "issue-internal-35"
+            assert payload.get("state_id") == "state-123"
+            assert payload.get("priority") == 2
+            return {"data": {"issueUpdate": {"success": True}}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        raise AssertionError("llm should not run for explicit linear state/priority update")
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear의 OPT-35 이슈 업데이트 state_id: state-123 priority: 2",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert calls["search"] == 1
+    assert calls["update"] == 1
+
+
 def test_try_run_v2_orchestration_llm_then_linear_update_falls_back_to_list_issues(monkeypatch):
     calls = {"search": 0, "list": 0, "update": 0}
 
@@ -1112,7 +1132,7 @@ def test_try_run_v2_orchestration_llm_then_linear_update_falls_back_to_list_issu
 
     result = asyncio.run(
         try_run_v2_orchestration(
-            user_text="linear의 OPT-35 이슈 업데이트해줘",
+            user_text="linear의 OPT-35 이슈 설명 업데이트: 수정 설명 요약",
             connected_services=["linear"],
             user_id="user-1",
         )
