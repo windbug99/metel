@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import HTTPException
@@ -470,6 +471,24 @@ def _notion_parent_payload() -> dict:
     return {"page_id": parent_page_id} if parent_page_id else {"workspace": True}
 
 
+def _build_grounded_llm_prompt(*, user_text: str, mode: str) -> str:
+    today_utc = datetime.now(timezone.utc).date().isoformat()
+    guard = (
+        "다음 규칙을 반드시 지켜 답변해줘.\n"
+        "1) 확인되지 않은 사실/수치/날짜/고유명사를 임의로 만들지 마.\n"
+        "2) 실시간 데이터가 필요한 요청인데 근거가 없으면 '실시간 조회 불가'라고 명시해.\n"
+        "3) 답변은 한국어로 간결하게 작성해.\n"
+        f"4) 오늘 날짜 기준(UTC)은 {today_utc}.\n"
+    )
+    if mode == MODE_LLM_THEN_SKILL:
+        extra = (
+            "5) 외부 서비스 조작 방법(클릭/메뉴얼) 설명을 쓰지 말고, "
+            "실제로 저장/업데이트할 결과 본문만 작성해.\n"
+        )
+        return f"{guard}{extra}\n[사용자 요청]\n{user_text}"
+    return f"{guard}\n[사용자 요청]\n{user_text}"
+
+
 def _linear_issues_to_context(tool_result: dict) -> str:
     data = tool_result.get("data") or {}
     nodes = (((data.get("issues") or {}).get("nodes")) or [])
@@ -484,6 +503,14 @@ def _linear_issues_to_context(tool_result: dict) -> str:
         if description:
             lines.append(f"설명: {description[:1200]}")
     return "\n".join(lines)
+
+
+def _linear_issue_count(tool_result: dict) -> int:
+    data = tool_result.get("data") or {}
+    nodes = (((data.get("issues") or {}).get("nodes")) or [])
+    if not isinstance(nodes, list):
+        return 0
+    return len(nodes)
 
 
 def _notion_blocks_to_context(tool_result: dict) -> str:
@@ -771,7 +798,9 @@ async def try_run_v2_orchestration(
 
     try:
         if decision.mode == MODE_LLM_ONLY:
-            answer, provider, model = await _request_llm_text(prompt=user_text)
+            answer, provider, model = await _request_llm_text(
+                prompt=_build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_ONLY)
+            )
             plan.notes.append(f"llm_provider={provider}")
             plan.notes.append(f"llm_model={model}")
             execution = AgentExecutionResult(
@@ -791,7 +820,9 @@ async def try_run_v2_orchestration(
             )
 
         if decision.mode == MODE_LLM_THEN_SKILL:
-            llm_text, provider, model = await _request_llm_text(prompt=user_text)
+            llm_text, provider, model = await _request_llm_text(
+                prompt=_build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_THEN_SKILL)
+            )
             plan.notes.append(f"llm_provider={provider}")
             plan.notes.append(f"llm_model={model}")
             skill_name = str(decision.skill_name or "").strip() or infer_skill_name_from_runtime_tools(
@@ -1072,6 +1103,11 @@ async def try_run_v2_orchestration(
                     tool_name="linear_search_issues",
                     payload={"query": query, "first": 5},
                 )
+                if _linear_issue_count(tool_result) <= 0:
+                    raise NeedsInputSignal(
+                        missing_fields=["target.issue_ref"],
+                        questions=[f"'{query}' 이슈를 찾지 못했습니다. 이슈 키(예: OPT-35)를 확인해 주세요."],
+                    )
                 issue_context = _linear_issues_to_context(tool_result)
                 prompt = (
                     "다음 Linear 이슈 정보를 바탕으로 해결 방법을 한국어로 간결하게 정리해줘. "

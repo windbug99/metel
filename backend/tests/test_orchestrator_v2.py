@@ -252,6 +252,32 @@ def test_try_run_v2_orchestration_skill_then_llm(monkeypatch):
     assert "해결 방법" in result.execution.user_message
 
 
+def test_try_run_v2_orchestration_skill_then_llm_linear_returns_needs_input_when_not_found(monkeypatch):
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        assert tool_name == "linear_search_issues"
+        return {"data": {"issues": {"nodes": []}}}
+
+    async def _fake_llm(*, prompt: str):
+        raise AssertionError("llm should not be called when linear issue search is empty")
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear의 OPT-35 이슈 설명을 해결하는 방법을 정리해줘",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("needs_input") == "true"
+    assert result.execution.artifacts.get("error_code") == "validation_error"
+
+
 def test_try_run_v2_orchestration_llm_then_notion_update(monkeypatch):
     calls = {"search": 0, "append": 0}
 
