@@ -176,11 +176,20 @@ def _build_user_facing_message(
             return f"{lead}\n{detail}\n다시 시도해 주세요."
         return f"{lead} 다시 시도해 주세요."
 
-    lead = _first_non_empty_line(execution_message) or "요청하신 작업을 완료했습니다."
-    url = _extract_first_url(execution_message)
-    if url and url not in lead:
-        return f"{lead}\n{url}"
-    return lead
+    cleaned = (execution_message or "").strip()
+    if not cleaned:
+        return "요청하신 작업을 완료했습니다."
+    # Success responses should preserve core content (not only first line),
+    # while still avoiding very long Telegram messages.
+    max_success_chars = 1200
+    if len(cleaned) <= max_success_chars:
+        return cleaned
+
+    shortened = cleaned[:max_success_chars].rstrip()
+    url = _extract_first_url(cleaned)
+    if url and url not in shortened:
+        shortened = f"{shortened}\n{url}"
+    return f"{shortened}\n\n(요약 표시)"
 
 
 def _should_use_preface_llm(*, ok: bool, error_code: str | None, execution_message: str) -> bool:

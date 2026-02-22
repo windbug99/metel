@@ -142,6 +142,18 @@ def test_build_user_facing_message_success_keeps_link():
     assert "https://linear.app/issue/OPT-1" in text
 
 
+def test_build_user_facing_message_success_keeps_multiline_body():
+    text = _build_user_facing_message(
+        ok=True,
+        execution_message="### 사실\n- OPT-43: 로그인 버튼 클릭 시 404\n### 해결 방향\n- 라우팅 경로 확인",
+        error_code=None,
+        slot_action=None,
+        missing_slot=None,
+    )
+    assert "### 사실" in text
+    assert "### 해결 방향" in text
+
+
 def test_truncate_telegram_message():
     source = "a" * 500
     out = _truncate_telegram_message(source, max_chars=140)
