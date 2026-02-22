@@ -220,6 +220,53 @@ def test_try_run_v2_orchestration_uses_llm_router_when_enabled(monkeypatch):
     assert any(note == "router_source=llm" for note in result.plan.notes)
 
 
+def test_try_run_v2_orchestration_overrides_llm_mode_for_linear_recent_list(monkeypatch):
+    class _Settings:
+        skill_router_v2_llm_enabled = True
+
+    async def _fake_router(**kwargs):
+        # Deliberately wrong mode from LLM router.
+        return (
+            type(
+                "_Decision",
+                (),
+                {
+                    "mode": MODE_LLM_THEN_SKILL,
+                    "reason": "llm_wrong_mode",
+                    "skill_name": "linear.issue_search",
+                    "target_services": ["linear"],
+                    "selected_tools": ["linear_search_issues"],
+                    "arguments": {"linear_query": "", "linear_first": 3},
+                },
+            )(),
+            "openai",
+            "gpt-4o-mini",
+        )
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        if tool_name == "linear_list_issues":
+            return {"data": {"issues": {"nodes": [{"id": "i1", "identifier": "OPT-1", "title": "첫 이슈"}]}}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    monkeypatch.setattr("agent.orchestrator_v2.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.orchestrator_v2._request_router_decision_with_llm", _fake_router)
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear 최근 이슈 3개 검색해줘",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert "Linear 최근 이슈" in result.execution.user_message
+    assert any(note.startswith("router_decision_override=") for note in result.plan.notes)
+
+
 def test_try_run_v2_orchestration_blocks_when_contracts_invalid(monkeypatch):
     monkeypatch.setattr("agent.orchestrator_v2.validate_all_contracts", lambda: (1, {"bad.json": ["x"]}))
 

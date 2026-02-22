@@ -378,6 +378,60 @@ def _normalize_router_arguments(*, decision: RouterDecision, user_text: str) -> 
     )
 
 
+def _apply_decision_safety_overrides(
+    *,
+    decision: RouterDecision,
+    user_text: str,
+    connected_services: list[str],
+) -> tuple[RouterDecision, str | None]:
+    text = user_text or ""
+    connected = {service.strip().lower() for service in connected_services if service and service.strip()}
+    skill_name = str(decision.skill_name or "").strip()
+
+    # Force deterministic routing for recent-list intents.
+    if "linear" in connected and _is_linear_recent_list_intent(text):
+        return _normalize_router_arguments(
+            decision=route_request_v2(user_text=text, connected_services=connected_services),
+            user_text=text,
+        ), "force_rule_linear_recent_list"
+    if "notion" in connected and _is_notion_recent_list_intent(text):
+        return _normalize_router_arguments(
+            decision=route_request_v2(user_text=text, connected_services=connected_services),
+            user_text=text,
+        ), "force_rule_notion_recent_list"
+
+    # If LLM picks search skill with mutation mode, coerce to read mode.
+    if decision.mode == MODE_LLM_THEN_SKILL and skill_name in {"linear.issue_search", "notion.page_search"}:
+        return RouterDecision(
+            mode=MODE_SKILL_THEN_LLM,
+            reason=f"{decision.reason}_coerced_read_mode",
+            skill_name=decision.skill_name,
+            target_services=decision.target_services,
+            selected_tools=decision.selected_tools,
+            arguments=decision.arguments,
+        ), "coerce_mode_to_skill_then_llm"
+
+    # If LLM picks mutation skill with read mode, coerce to mutation mode.
+    if decision.mode == MODE_SKILL_THEN_LLM and skill_name in {
+        "notion.page_create",
+        "notion.page_update",
+        "notion.page_delete",
+        "linear.issue_create",
+        "linear.issue_update",
+        "linear.issue_delete",
+    }:
+        return RouterDecision(
+            mode=MODE_LLM_THEN_SKILL,
+            reason=f"{decision.reason}_coerced_mutation_mode",
+            skill_name=decision.skill_name,
+            target_services=decision.target_services,
+            selected_tools=decision.selected_tools,
+            arguments=decision.arguments,
+        ), "coerce_mode_to_llm_then_skill"
+
+    return decision, None
+
+
 def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDecision:
     text = (user_text or "").strip()
     connected = {service.strip().lower() for service in connected_services if service.strip()}
@@ -1041,10 +1095,18 @@ async def try_run_v2_orchestration(
             router_llm_fallback_reason = "invalid_payload_or_parse_failed"
     else:
         decision = _normalize_router_arguments(decision=route_request_v2(user_text, connected_services), user_text=user_text)
+
+    decision, override_reason = _apply_decision_safety_overrides(
+        decision=decision,
+        user_text=user_text,
+        connected_services=connected_services,
+    )
     plan = _build_plan(user_text, decision)
     plan.notes.append(f"router_source={router_source}")
     if router_llm_fallback_reason:
         plan.notes.append(f"router_llm_fallback_reason={router_llm_fallback_reason}")
+    if override_reason:
+        plan.notes.append(f"router_decision_override={override_reason}")
     if router_llm_provider and router_llm_model:
         plan.notes.append(f"router_llm_provider={router_llm_provider}")
         plan.notes.append(f"router_llm_model={router_llm_model}")
