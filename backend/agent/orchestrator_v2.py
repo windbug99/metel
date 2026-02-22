@@ -493,8 +493,27 @@ def _extract_linear_update_priority(text: str) -> int | None:
         return None
 
 
+def _is_linear_description_append_intent(text: str) -> bool:
+    raw = " ".join((text or "").strip().split())
+    lower = raw.lower()
+    has_target = any(token in raw or token in lower for token in ("설명", "description", "본문", "내용"))
+    has_append = any(token in raw or token in lower for token in ("추가", "append", "덧붙", "붙여", "반영"))
+    return has_target and has_append
+
+
+def _merge_linear_description(*, current: str, addition: str) -> str:
+    current_text = (current or "").strip()
+    addition_text = (addition or "").strip()
+    if not addition_text:
+        return current_text
+    if not current_text:
+        return addition_text
+    if addition_text in current_text:
+        return current_text
+    return f"{current_text}\n\n{addition_text}"
+
+
 def _needs_linear_update_clarification(text: str) -> bool:
-    lower = (text or "").lower()
     if not _is_update_intent(text):
         return False
     if _extract_linear_update_new_title(text):
@@ -505,8 +524,7 @@ def _needs_linear_update_clarification(text: str) -> bool:
         return False
     if _extract_linear_update_priority(text) is not None:
         return False
-    explicit_tokens = ("제목", "title", "설명", "description", "본문", "내용")
-    return not any(token in lower or token in text for token in explicit_tokens)
+    return True
 
 
 def _extract_count_limit(text: str, *, default: int = 5, minimum: int = 1, maximum: int = 20) -> int:
@@ -642,6 +660,7 @@ def _apply_decision_safety_overrides(
     linear_mutation_intent = "linear" in connected and _mentions_service(text, "linear") and (
         (_is_create_intent(text) and (("이슈" in text) or ("issue" in text.lower())))
         or _is_update_intent(text)
+        or _is_linear_description_append_intent(text)
         or _is_delete_intent(text)
     )
     if notion_mutation_intent or linear_mutation_intent:
@@ -694,7 +713,7 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
     # Mutation intents must win over analysis keywords ("방법", "정리", ...).
     # Otherwise create/update/delete requests are misrouted into search flows.
 
-    if has_linear and _is_update_intent(text):
+    if has_linear and (_is_update_intent(text) or _is_linear_description_append_intent(text)):
         issue_ref = _extract_linear_issue_reference(text)
         return _decision_for_skill(
             mode=MODE_LLM_THEN_SKILL,
@@ -912,6 +931,18 @@ def _build_grounded_llm_prompt(*, user_text: str, mode: str) -> str:
         )
         return f"{guard}{extra}\n[사용자 요청]\n{user_text}"
     return f"{guard}\n[사용자 요청]\n{user_text}"
+
+
+def _build_linear_append_generation_prompt(*, user_text: str) -> str:
+    return (
+        "다음 요청을 바탕으로 Linear 이슈 설명란에 바로 붙일 '최종 본문'만 작성해줘.\n"
+        "규칙:\n"
+        "- 단계/체크리스트/작업과정/머리말 금지\n"
+        "- 4~8문장, 핵심만 간결하게\n"
+        "- 확인되지 않은 사실은 단정하지 말 것\n"
+        "- URL이 있으면 참고 링크로 1줄 포함 가능\n\n"
+        f"[사용자 요청]\n{user_text}"
+    )
 
 
 def _looks_realtime_request(text: str) -> bool:
@@ -1186,7 +1217,7 @@ async def _resolve_notion_page_for_update(*, user_id: str, title: str) -> tuple[
     return page_id, page_url, title_property_key
 
 
-async def _resolve_linear_issue_id_for_update(*, user_id: str, issue_ref: str) -> tuple[str, str]:
+async def _resolve_linear_issue_id_for_update(*, user_id: str, issue_ref: str) -> tuple[str, str, str]:
     result = await _linear_search_with_issue_ref_fallback(user_id=user_id, issue_ref=issue_ref)
     nodes = _linear_issue_nodes(result)
     if not nodes:
@@ -1204,6 +1235,7 @@ async def _resolve_linear_issue_id_for_update(*, user_id: str, issue_ref: str) -
         identifier = str(node.get("identifier") or "").strip().lower()
         issue_id = str(node.get("id") or "").strip()
         title = str(node.get("title") or "").strip()
+        description = str(node.get("description") or "")
         if not issue_id:
             continue
         issue_url = str(node.get("url") or "").strip()
@@ -1211,13 +1243,18 @@ async def _resolve_linear_issue_id_for_update(*, user_id: str, issue_ref: str) -
             "label": f"{identifier.upper() if identifier else issue_id} {title}".strip(),
             "issue_id": issue_id,
             "issue_url": issue_url,
+            "description": description,
         }
         candidates.append(candidate)
         if issue_ref_lower and issue_ref_lower == identifier:
             exact.append(candidate)
 
     if len(exact) == 1:
-        return str(exact[0].get("issue_id") or ""), str(exact[0].get("issue_url") or "")
+        return (
+            str(exact[0].get("issue_id") or ""),
+            str(exact[0].get("issue_url") or ""),
+            str(exact[0].get("description") or ""),
+        )
     if len(exact) > 1 or len(candidates) > 1:
         raise NeedsInputSignal(
             missing_fields=["target.issue_id"],
@@ -1225,7 +1262,11 @@ async def _resolve_linear_issue_id_for_update(*, user_id: str, issue_ref: str) -
             choices={"candidates": (exact or candidates)[:5]},
         )
     if len(candidates) == 1:
-        return str(candidates[0].get("issue_id") or ""), str(candidates[0].get("issue_url") or "")
+        return (
+            str(candidates[0].get("issue_id") or ""),
+            str(candidates[0].get("issue_url") or ""),
+            str(candidates[0].get("description") or ""),
+        )
     raise NeedsInputSignal(
         missing_fields=["target.issue_id"],
         questions=["업데이트할 Linear 이슈를 확인해 주세요."],
@@ -1433,6 +1474,7 @@ async def try_run_v2_orchestration(
                 linear_update_description_text = _extract_linear_update_description_text(user_text) or ""
                 linear_update_state_id = _extract_linear_update_state_id(user_text) or ""
                 linear_update_priority = _extract_linear_update_priority(user_text)
+            linear_update_append_intent = skill_name == "linear.issue_update" and _is_linear_description_append_intent(user_text)
             if skill_name == "notion.page_create" and _is_translation_intent(user_text):
                 maybe_url = _extract_first_url(user_text)
                 if maybe_url:
@@ -1456,20 +1498,31 @@ async def try_run_v2_orchestration(
                         )
                     )
 
-            if not llm_text and not (
-                (skill_name == "notion.page_update" and (notion_update_new_title or notion_update_body_text))
-                or (
-                    skill_name == "linear.issue_update"
-                    and (
-                        linear_update_new_title
-                        or linear_update_description_text
-                        or linear_update_state_id
-                        or linear_update_priority is not None
-                    )
-                )
+            linear_update_has_explicit_patch = bool(
+                linear_update_new_title
+                or linear_update_description_text
+                or linear_update_state_id
+                or linear_update_priority is not None
+            )
+            linear_update_allow_generated_description = (
+                skill_name == "linear.issue_update"
+                and not linear_update_has_explicit_patch
+                and linear_update_append_intent
+            )
+
+            if skill_name == "linear.issue_update" and not (
+                linear_update_has_explicit_patch or linear_update_allow_generated_description
             ):
+                pass
+            elif not llm_text and not (
+                (skill_name == "notion.page_update" and (notion_update_new_title or notion_update_body_text))
+                or (skill_name == "linear.issue_update" and linear_update_has_explicit_patch)
+            ):
+                prompt = _build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_THEN_SKILL)
+                if linear_update_allow_generated_description:
+                    prompt = _build_linear_append_generation_prompt(user_text=user_text)
                 llm_text, provider, model = await _request_llm_text(
-                    prompt=_build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_THEN_SKILL)
+                    prompt=prompt
                 )
             if provider and model:
                 plan.notes.append(f"llm_provider={provider}")
@@ -1693,12 +1746,21 @@ async def try_run_v2_orchestration(
                             "어떤 항목을 업데이트할까요? 예: 제목을 \"...\"로 변경 / 설명 업데이트: ... / state_id: <id> / priority: 0~4"
                         ],
                     )
-                issue_id, resolved_issue_url = await _resolve_linear_issue_id_for_update(user_id=user_id, issue_ref=issue_ref)
+                issue_id, resolved_issue_url, current_issue_description = await _resolve_linear_issue_id_for_update(
+                    user_id=user_id,
+                    issue_ref=issue_ref,
+                )
                 patch_payload: dict = {"issue_id": issue_id}
                 if linear_update_new_title:
                     patch_payload["title"] = linear_update_new_title[:120]
                 if linear_update_description_text:
-                    patch_payload["description"] = linear_update_description_text
+                    if linear_update_append_intent:
+                        patch_payload["description"] = _merge_linear_description(
+                            current=current_issue_description,
+                            addition=linear_update_description_text,
+                        )
+                    else:
+                        patch_payload["description"] = linear_update_description_text
                 if linear_update_state_id:
                     patch_payload["state_id"] = linear_update_state_id
                 if linear_update_priority is not None:
@@ -1709,7 +1771,18 @@ async def try_run_v2_orchestration(
                     and "state_id" not in patch_payload
                     and "priority" not in patch_payload
                 ):
-                    patch_payload["description"] = llm_text
+                    if linear_update_allow_generated_description:
+                        patch_payload["description"] = _merge_linear_description(
+                            current=current_issue_description,
+                            addition=llm_text,
+                        )
+                    else:
+                        raise NeedsInputSignal(
+                            missing_fields=["patch"],
+                            questions=[
+                                "어떤 항목을 업데이트할까요? 예: 제목을 \"...\"로 변경 / 설명 업데이트: ... / state_id: <id> / priority: 0~4"
+                            ],
+                        )
                 update_result = await execute_tool(
                     user_id=user_id,
                     tool_name="linear_update_issue",
@@ -1740,7 +1813,7 @@ async def try_run_v2_orchestration(
                         updates.append(f"priority={linear_update_priority}")
                     user_message = f"Linear 이슈 속성이 업데이트되었습니다. ({', '.join(updates)})\n\n대상 이슈: {issue_ref}"
                 else:
-                    user_message = f"{llm_text}\n\nLinear 이슈 업데이트 완료: {issue_ref}"
+                    user_message = f"Linear 이슈 설명이 업데이트되었습니다.\n\n대상 이슈: {issue_ref}"
                 if issue_url:
                     user_message += f"\n링크: {issue_url}"
                 execution = AgentExecutionResult(
@@ -1817,7 +1890,7 @@ async def try_run_v2_orchestration(
                 issue_ref = str(decision.arguments.get("linear_issue_ref") or "").strip()
                 if not issue_ref:
                     raise HTTPException(status_code=400, detail="validation_error")
-                issue_id, _ = await _resolve_linear_issue_id_for_update(user_id=user_id, issue_ref=issue_ref)
+                issue_id, _, _ = await _resolve_linear_issue_id_for_update(user_id=user_id, issue_ref=issue_ref)
                 delete_result = await execute_tool(
                     user_id=user_id,
                     tool_name="linear_update_issue",

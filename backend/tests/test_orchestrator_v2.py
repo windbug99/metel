@@ -142,6 +142,13 @@ def test_route_request_v2_llm_then_skill_for_linear_update():
     assert decision.arguments.get("linear_issue_ref") == "OPT-35"
 
 
+def test_route_request_v2_llm_then_skill_for_linear_description_append_intent():
+    decision = route_request_v2("openweather API 사용방법을 정리해서 linear opt-46 설명에 추가하세요", ["linear"])
+    assert decision.mode == MODE_LLM_THEN_SKILL
+    assert decision.skill_name == "linear.issue_update"
+    assert decision.arguments.get("linear_issue_ref") == "opt-46"
+
+
 def test_route_request_v2_llm_then_skill_for_linear_update_without_ref():
     decision = route_request_v2("linear 이슈 업데이트", ["linear"])
     assert decision.mode == MODE_LLM_THEN_SKILL
@@ -954,6 +961,31 @@ def test_try_run_v2_orchestration_llm_then_linear_update_requires_patch_detail(m
     assert "어떤 항목을 업데이트" in result.execution.user_message
 
 
+def test_try_run_v2_orchestration_linear_description_update_without_content_requires_patch(monkeypatch):
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        raise AssertionError("tool should not run when update patch content is missing")
+
+    async def _fake_llm(*, prompt: str):
+        raise AssertionError("llm should not run when update patch content is missing")
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear opt-46 이슈 설명 업데이트",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("needs_input") == "true"
+    assert "어떤 항목을 업데이트" in result.execution.user_message
+
+
 def test_try_run_v2_orchestration_llm_then_linear_update_returns_needs_input_when_issue_ref_missing(monkeypatch):
     async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
         raise AssertionError("tool should not run when issue_ref is missing")
@@ -1129,6 +1161,67 @@ def test_try_run_v2_orchestration_llm_then_linear_update_description_modify_phra
     assert calls["search"] == 1
     assert calls["update"] == 1
     assert "https://linear.app/pouder/issue/OPT-46" in result.execution.user_message
+
+
+def test_try_run_v2_orchestration_llm_then_linear_update_description_append_with_generated_content(monkeypatch):
+    calls = {"search": 0, "update": 0}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        if tool_name == "linear_search_issues":
+            calls["search"] += 1
+            return {
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "issue-internal-46",
+                                "identifier": "OPT-46",
+                                "title": "add openweather",
+                                "url": "https://linear.app/pouder/issue/OPT-46/add-openweather",
+                                "description": "기존 설명",
+                            }
+                        ]
+                    }
+                }
+            }
+        if tool_name == "linear_update_issue":
+            calls["update"] += 1
+            assert payload.get("issue_id") == "issue-internal-46"
+            description = str(payload.get("description") or "")
+            assert "기존 설명" in description
+            assert "OpenWeather API 사용 방법 요약" in description
+            return {
+                "data": {
+                    "issueUpdate": {
+                        "success": True,
+                        "issue": {"url": "https://linear.app/pouder/issue/OPT-46/add-openweather"},
+                    }
+                }
+            }
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        assert "openweather" in prompt.lower()
+        return "OpenWeather API 사용 방법 요약", "openai", "gpt-4o-mini"
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="openweather API 사용방법을 정리해서 linear opt-46 설명에 추가하세요",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert calls["search"] == 1
+    assert calls["update"] == 1
+    assert "Linear 이슈 설명이 업데이트" in result.execution.user_message
+    assert "https://linear.app/pouder/issue/OPT-46/add-openweather" in result.execution.user_message
 
 
 def test_try_run_v2_orchestration_llm_then_linear_update_state_priority_without_llm(monkeypatch):
