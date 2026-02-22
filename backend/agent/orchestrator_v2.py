@@ -14,6 +14,8 @@ from agent.skill_contracts import (
     service_for_skill,
     validate_all_contracts,
 )
+from agent.intent_contract import IntentPayload, IntentValidationError, validate_intent_json
+from agent import intent_normalizer
 from agent.tool_runner import execute_tool
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRequirement, AgentRunResult
 from app.core.config import get_settings
@@ -356,7 +358,7 @@ def _needs_notion_update_clarification(text: str) -> bool:
     lower = (text or "").lower()
     if not _is_update_intent(text):
         return False
-    if _extract_notion_update_new_title(text):
+    if intent_normalizer.extract_notion_update_new_title(text):
         return False
     detail_tokens = (
         "본문",
@@ -516,13 +518,13 @@ def _merge_linear_description(*, current: str, addition: str) -> str:
 def _needs_linear_update_clarification(text: str) -> bool:
     if not _is_update_intent(text):
         return False
-    if _extract_linear_update_new_title(text):
+    if intent_normalizer.extract_linear_update_new_title(text):
         return False
-    if _extract_linear_update_description_text(text):
+    if intent_normalizer.extract_linear_update_description_text(text):
         return False
-    if _extract_linear_update_state_id(text):
+    if intent_normalizer.extract_linear_update_state_id(text):
         return False
-    if _extract_linear_update_priority(text) is not None:
+    if intent_normalizer.extract_linear_update_priority(text) is not None:
         return False
     return True
 
@@ -566,33 +568,53 @@ def _normalize_router_arguments(*, decision: RouterDecision, user_text: str) -> 
 
     if skill_name == "linear.issue_search":
         if not str(args.get("linear_query") or "").strip():
-            ref = _extract_linear_issue_reference(text)
+            ref = intent_normalizer.extract_linear_issue_reference(text)
             if ref:
                 args["linear_query"] = ref
-        args["linear_first"] = _safe_int(
+        if not str(args.get("linear_issue_ref") or "").strip():
+            ref = intent_normalizer.extract_linear_issue_reference(str(args.get("linear_query") or "") or text)
+            if ref:
+                args["linear_issue_ref"] = ref
+        args["linear_first"] = intent_normalizer.safe_int(
             args.get("linear_first"),
-            default=_extract_count_limit(text, default=5),
+            default=intent_normalizer.extract_count_limit(text, default=5),
             minimum=1,
             maximum=20,
         )
     elif skill_name == "linear.issue_create":
         if not str(args.get("linear_team_ref") or "").strip():
-            args["linear_team_ref"] = _extract_linear_team_reference(text)
+            args["linear_team_ref"] = intent_normalizer.extract_linear_team_reference(text)
         if not str(args.get("linear_issue_title") or "").strip():
-            args["linear_issue_title"] = _extract_linear_issue_title_for_create(text)
+            args["linear_issue_title"] = intent_normalizer.extract_linear_issue_title_for_create(text)
     elif skill_name == "notion.page_create":
         if not str(args.get("notion_page_title") or "").strip():
-            args["notion_page_title"] = _extract_notion_page_title_for_create(text)
+            args["notion_page_title"] = intent_normalizer.extract_notion_page_title_for_create(text)
     elif skill_name in {"linear.issue_update", "linear.issue_delete"}:
         if not str(args.get("linear_issue_ref") or "").strip():
-            args["linear_issue_ref"] = _extract_linear_issue_reference(text)
+            args["linear_issue_ref"] = intent_normalizer.extract_linear_issue_reference(text)
+        if skill_name == "linear.issue_update":
+            if not str(args.get("linear_update_new_title") or "").strip():
+                args["linear_update_new_title"] = intent_normalizer.extract_linear_update_new_title(text)
+            if not str(args.get("linear_update_description_text") or "").strip():
+                args["linear_update_description_text"] = intent_normalizer.extract_linear_update_description_text(text)
+            if not str(args.get("linear_update_state_id") or "").strip():
+                args["linear_update_state_id"] = intent_normalizer.extract_linear_update_state_id(text)
+            if args.get("linear_update_priority") is None:
+                args["linear_update_priority"] = intent_normalizer.extract_linear_update_priority(text)
+            if args.get("linear_update_append_intent") is None:
+                args["linear_update_append_intent"] = _is_linear_description_append_intent(text)
     elif skill_name in {"notion.page_update", "notion.page_delete"}:
         if not str(args.get("notion_page_title") or "").strip():
-            args["notion_page_title"] = _extract_notion_page_title(text)
+            args["notion_page_title"] = intent_normalizer.extract_notion_page_title(text)
+        if skill_name == "notion.page_update":
+            if not str(args.get("notion_update_new_title") or "").strip():
+                args["notion_update_new_title"] = intent_normalizer.extract_notion_update_new_title(text)
+            if not str(args.get("notion_update_body_text") or "").strip():
+                args["notion_update_body_text"] = intent_normalizer.extract_notion_update_body_text(text)
     elif skill_name == "notion.page_search":
-        args["notion_first"] = _safe_int(
+        args["notion_first"] = intent_normalizer.safe_int(
             args.get("notion_first"),
-            default=_extract_count_limit(text, default=5),
+            default=intent_normalizer.extract_count_limit(text, default=5),
             minimum=1,
             maximum=20,
         )
@@ -714,7 +736,7 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
     # Otherwise create/update/delete requests are misrouted into search flows.
 
     if has_linear and (_is_update_intent(text) or _is_linear_description_append_intent(text)):
-        issue_ref = _extract_linear_issue_reference(text)
+        issue_ref = intent_normalizer.extract_linear_issue_reference(text)
         return _decision_for_skill(
             mode=MODE_LLM_THEN_SKILL,
             reason="llm_result_to_linear_issue_update",
@@ -730,13 +752,13 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
             skill_name="linear.issue_create",
             target_services=["linear"],
             arguments={
-                "linear_team_ref": _extract_linear_team_reference(text),
-                "linear_issue_title": _extract_linear_issue_title_for_create(text),
+                "linear_team_ref": intent_normalizer.extract_linear_team_reference(text),
+                "linear_issue_title": intent_normalizer.extract_linear_issue_title_for_create(text),
             },
         )
 
     if has_linear and _is_delete_intent(text) and ("이슈" in text or "issue" in text.lower()):
-        issue_ref = _extract_linear_issue_reference(text)
+        issue_ref = intent_normalizer.extract_linear_issue_reference(text)
         return _decision_for_skill(
             mode=MODE_LLM_THEN_SKILL,
             reason="llm_result_to_linear_issue_delete",
@@ -746,7 +768,7 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
         )
 
     if has_notion and _is_update_intent(text):
-        page_title = _extract_notion_page_title(text)
+        page_title = intent_normalizer.extract_notion_page_title(text)
         return _decision_for_skill(
             mode=MODE_LLM_THEN_SKILL,
             reason="llm_result_to_notion_page_update",
@@ -756,7 +778,7 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
         )
 
     if has_notion and _is_delete_intent(text):
-        page_title = _extract_notion_page_title(text)
+        page_title = intent_normalizer.extract_notion_page_title(text)
         return _decision_for_skill(
             mode=MODE_LLM_THEN_SKILL,
             reason="llm_result_to_notion_page_delete",
@@ -771,7 +793,7 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
             reason="llm_result_to_notion_page",
             skill_name="notion.page_create",
             target_services=["notion"],
-            arguments={"notion_page_title": _extract_notion_page_title_for_create(text)},
+            arguments={"notion_page_title": intent_normalizer.extract_notion_page_title_for_create(text)},
         )
 
     # Read/search/analysis intents
@@ -781,7 +803,7 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
             reason="notion_recent_pages_list",
             skill_name="notion.page_search",
             target_services=["notion"],
-            arguments={"notion_page_title": "", "notion_first": _extract_count_limit(text, default=5)},
+            arguments={"notion_page_title": "", "notion_first": intent_normalizer.extract_count_limit(text, default=5)},
         )
 
     if has_linear and _is_linear_recent_list_intent(text):
@@ -790,11 +812,11 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
             reason="linear_recent_issues_then_llm",
             skill_name="linear.issue_search",
             target_services=["linear"],
-            arguments={"linear_query": "", "linear_first": _extract_count_limit(text, default=10)},
+            arguments={"linear_query": "", "linear_first": intent_normalizer.extract_count_limit(text, default=10)},
         )
 
     if has_linear and _is_analysis_intent(text):
-        issue_ref = _extract_linear_issue_reference(text)
+        issue_ref = intent_normalizer.extract_linear_issue_reference(text)
         if issue_ref:
             return _decision_for_skill(
                 mode=MODE_SKILL_THEN_LLM,
@@ -805,7 +827,7 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
             )
 
     if has_notion and _is_analysis_intent(text):
-        page_title = _extract_notion_page_title(text)
+        page_title = intent_normalizer.extract_notion_page_title(text)
         if page_title:
             return _decision_for_skill(
                 mode=MODE_SKILL_THEN_LLM,
@@ -1347,6 +1369,863 @@ def _build_needs_input_message(*, questions: list[str], choices: dict | None) ->
     return "\n".join(lines)
 
 
+def _router_decision_from_intent(intent: IntentPayload) -> RouterDecision:
+    skill_name = str(intent.skill_name or "").strip() or None
+    selected_tools = runtime_tools_for_skill(skill_name) if skill_name else []
+    target_services: list[str] = []
+    if skill_name:
+        service = service_for_skill(skill_name)
+        if service:
+            target_services = [service]
+    return RouterDecision(
+        mode=intent.mode,
+        reason=intent.decision_reason or "intent_json",
+        skill_name=skill_name,
+        target_services=target_services,
+        selected_tools=selected_tools,
+        arguments=dict(intent.arguments or {}),
+    )
+
+
+def _is_read_skill(skill_name: str | None) -> bool:
+    token = str(skill_name or "").strip()
+    return token in {"linear.issue_search", "notion.page_search"}
+
+
+def _is_mutation_skill(skill_name: str | None) -> bool:
+    token = str(skill_name or "").strip()
+    return token in {
+        "notion.page_create",
+        "notion.page_update",
+        "notion.page_delete",
+        "linear.issue_create",
+        "linear.issue_update",
+        "linear.issue_delete",
+    }
+
+
+def _validate_execute_intent_policy(*, decision: RouterDecision) -> None:
+    mode = str(decision.mode or "").strip()
+    skill_name = str(decision.skill_name or "").strip() or None
+    if mode == MODE_LLM_ONLY and skill_name:
+        raise HTTPException(status_code=400, detail="invalid_intent_mode_skill_combo")
+    if mode == MODE_LLM_THEN_SKILL:
+        if not skill_name or not _is_mutation_skill(skill_name):
+            raise HTTPException(status_code=400, detail="invalid_intent_mode_skill_combo")
+    if mode == MODE_SKILL_THEN_LLM:
+        if not skill_name or not _is_read_skill(skill_name):
+            raise HTTPException(status_code=400, detail="invalid_intent_mode_skill_combo")
+
+
+async def _execute_skill_then_llm_from_intent(
+    *,
+    user_text: str,
+    user_id: str,
+    decision: RouterDecision,
+    plan: AgentPlan,
+) -> AgentRunResult:
+    skill_name = str(decision.skill_name or "").strip() or infer_skill_name_from_runtime_tools(
+        decision.selected_tools
+    )
+    if skill_name == "linear.issue_search" or ("linear" in decision.target_services and not skill_name):
+        query = str(decision.arguments.get("linear_query") or "").strip()
+        first = intent_normalizer.safe_int(
+            decision.arguments.get("linear_first"),
+            default=5,
+            minimum=1,
+            maximum=20,
+        )
+        issue_ref = str(decision.arguments.get("linear_issue_ref") or "").strip()
+        if issue_ref:
+            tool_result = await _linear_search_with_issue_ref_fallback(user_id=user_id, issue_ref=issue_ref)
+        else:
+            if _is_linear_recent_list_intent(user_text) or not query:
+                tool_result = await execute_tool(
+                    user_id=user_id,
+                    tool_name="linear_list_issues",
+                    payload={"first": first},
+                )
+            else:
+                tool_result = await execute_tool(
+                    user_id=user_id,
+                    tool_name="linear_search_issues",
+                    payload={"query": query, "first": first},
+                )
+        if _linear_issue_count(tool_result) <= 0:
+            raise NeedsInputSignal(
+                missing_fields=["target.issue_ref"],
+                questions=[f"'{query or issue_ref or user_text}' 이슈를 찾지 못했습니다. 이슈 키(예: OPT-35)를 확인해 주세요."],
+            )
+        if _is_linear_recent_list_intent(user_text) and not _is_analysis_intent(user_text):
+            execution = AgentExecutionResult(
+                success=True,
+                user_message=_linear_issue_list_text(tool_result, limit=first),
+                summary="Linear 최근 이슈 조회 완료",
+                artifacts={"router_mode": decision.mode},
+                steps=[
+                    AgentExecutionStep(
+                        name="skill_linear_issue_lookup",
+                        status="success",
+                        detail=f"query={query or issue_ref or '-'};first={first}",
+                    )
+                ],
+            )
+            return AgentRunResult(
+                ok=True,
+                stage="execution",
+                plan=plan,
+                result_summary=execution.summary,
+                execution=execution,
+                plan_source="router_v2",
+            )
+        issue_context = _linear_issues_to_context(tool_result)
+        prompt = (
+            "다음 Linear 이슈 정보를 바탕으로 해결 방법을 한국어로 간결하게 정리해줘. "
+            "사실과 추론을 구분하고, 실행 가능한 체크리스트 형태로 답변해줘.\n\n"
+            f"[사용자 요청]\n{user_text}\n\n"
+            f"[Linear 이슈]\n{issue_context}"
+        )
+        answer, provider, model = await _request_llm_text(prompt=prompt)
+        plan.notes.append(f"llm_provider={provider}")
+        plan.notes.append(f"llm_model={model}")
+        links_block = _linear_issue_links_block(tool_result, limit=10)
+        user_message = answer
+        if links_block:
+            user_message = f"{answer}\n\n{links_block}"
+        execution = AgentExecutionResult(
+            success=True,
+            user_message=user_message,
+            summary="Linear 조회 후 LLM 정리 완료",
+            artifacts={"router_mode": decision.mode, "llm_provider": provider, "llm_model": model},
+            steps=[
+                AgentExecutionStep(
+                    name="skill_linear_issue_lookup",
+                    status="success",
+                    detail=f"query={query or issue_ref or '-'};first={first}",
+                ),
+                AgentExecutionStep(name="llm_solve", status="success", detail=f"provider={provider}:{model}"),
+            ],
+        )
+        return AgentRunResult(
+            ok=True,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    if skill_name == "notion.page_search" or ("notion" in decision.target_services and not skill_name):
+        if _is_notion_recent_list_intent(user_text):
+            first = intent_normalizer.safe_int(
+                decision.arguments.get("notion_first"),
+                default=5,
+                minimum=1,
+                maximum=20,
+            )
+            tool_result = await execute_tool(
+                user_id=user_id,
+                tool_name="notion_search",
+                payload={"page_size": first},
+            )
+            execution = AgentExecutionResult(
+                success=True,
+                user_message=_notion_page_list_text(tool_result, limit=first),
+                summary="Notion 최근 페이지 조회 완료",
+                artifacts={"router_mode": decision.mode},
+                steps=[
+                    AgentExecutionStep(
+                        name="skill_notion_search",
+                        status="success",
+                        detail=f"query=;page_size={first}",
+                    )
+                ],
+            )
+            return AgentRunResult(
+                ok=True,
+                stage="execution",
+                plan=plan,
+                result_summary=execution.summary,
+                execution=execution,
+                plan_source="router_v2",
+            )
+        page_title = str(decision.arguments.get("notion_page_title") or "").strip()
+        if not page_title:
+            raise NeedsInputSignal(
+                missing_fields=["target.page_title"],
+                questions=["조회할 Notion 페이지 제목을 알려주세요. 예: 제목: 스프린트 회고"],
+            )
+        page_id, page_url, _ = await _resolve_notion_page_for_update(user_id=user_id, title=page_title)
+        block_result = await execute_tool(
+            user_id=user_id,
+            tool_name="notion_retrieve_block_children",
+            payload={"block_id": page_id, "page_size": 50},
+        )
+        page_context = _notion_blocks_to_context(block_result)
+        prompt = (
+            "다음 Notion 페이지 본문을 바탕으로 사용자의 요청에 맞게 한국어로 정리해줘. "
+            "본문에 없는 내용은 추측하지 말고, 필요한 경우 확인 질문을 제안해줘.\n\n"
+            f"[사용자 요청]\n{user_text}\n\n"
+            f"[페이지 제목]\n{page_title}\n\n"
+            f"[본문]\n{page_context}"
+        )
+        answer, provider, model = await _request_llm_text(prompt=prompt)
+        plan.notes.append(f"llm_provider={provider}")
+        plan.notes.append(f"llm_model={model}")
+        user_message = answer
+        if page_url:
+            user_message += f"\n\n참조 페이지: {page_url}"
+        execution = AgentExecutionResult(
+            success=True,
+            user_message=user_message,
+            summary="Notion 조회 후 LLM 정리 완료",
+            artifacts={
+                "router_mode": decision.mode,
+                "llm_provider": provider,
+                "llm_model": model,
+                "source_page_id": page_id,
+                "source_page_url": page_url,
+            },
+            steps=[
+                AgentExecutionStep(name="skill_notion_search", status="success", detail=f"title={page_title}"),
+                AgentExecutionStep(name="skill_notion_retrieve_block_children", status="success", detail=f"page_id={page_id}"),
+                AgentExecutionStep(name="llm_solve", status="success", detail=f"provider={provider}:{model}"),
+            ],
+        )
+        return AgentRunResult(
+            ok=True,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    raise HTTPException(status_code=400, detail="unsupported_service")
+
+
+async def _execute_llm_then_skill_from_intent(
+    *,
+    user_text: str,
+    user_id: str,
+    decision: RouterDecision,
+    plan: AgentPlan,
+) -> AgentRunResult:
+    skill_name = str(decision.skill_name or "").strip() or infer_skill_name_from_runtime_tools(
+        decision.selected_tools
+    )
+
+    llm_text = ""
+    provider = ""
+    model = ""
+    source_url = ""
+    notion_update_new_title = ""
+    notion_update_body_text = ""
+    linear_update_new_title = ""
+    linear_update_description_text = ""
+    linear_update_state_id = ""
+    linear_update_priority: int | None = None
+
+    if skill_name == "notion.page_update":
+        notion_update_new_title = str(decision.arguments.get("notion_update_new_title") or "").strip()
+        notion_update_body_text = str(decision.arguments.get("notion_update_body_text") or "").strip()
+        if not notion_update_new_title and not notion_update_body_text:
+            raise NeedsInputSignal(
+                missing_fields=["patch"],
+                questions=[
+                    "무엇을 업데이트할지 알려주세요. 예: 제목을 \"스프린트 보고서\"로 변경 / 본문에 배포 회고 추가"
+                ],
+            )
+    if skill_name == "linear.issue_update":
+        linear_update_new_title = str(decision.arguments.get("linear_update_new_title") or "").strip()
+        linear_update_description_text = str(decision.arguments.get("linear_update_description_text") or "").strip()
+        linear_update_state_id = str(decision.arguments.get("linear_update_state_id") or "").strip()
+        priority_raw = decision.arguments.get("linear_update_priority")
+        linear_update_priority = int(priority_raw) if str(priority_raw).strip().isdigit() else None
+    linear_update_append_intent = bool(decision.arguments.get("linear_update_append_intent")) if skill_name == "linear.issue_update" else False
+
+    if skill_name == "notion.page_create" and _is_translation_intent(user_text):
+        maybe_url = _extract_first_url(user_text)
+        if maybe_url:
+            fetched = await execute_tool(
+                user_id=user_id,
+                tool_name="http_fetch_url_text",
+                payload={"url": maybe_url, "max_chars": 12000},
+            )
+            fetched_data = fetched.get("data") or {}
+            source_url = str(fetched_data.get("final_url") or fetched_data.get("url") or maybe_url).strip()
+            source_title = str(fetched_data.get("title") or "").strip()
+            source_text = str(fetched_data.get("text") or "").strip()
+            if not source_text:
+                raise HTTPException(status_code=400, detail="validation_error")
+            llm_text, provider, model = await _request_llm_text(
+                prompt=_build_url_translation_prompt(
+                    user_text=user_text,
+                    source_url=source_url,
+                    source_title=source_title,
+                    source_text=source_text,
+                )
+            )
+
+    linear_update_has_explicit_patch = bool(
+        linear_update_new_title
+        or linear_update_description_text
+        or linear_update_state_id
+        or linear_update_priority is not None
+    )
+    linear_update_allow_generated_description = (
+        skill_name == "linear.issue_update"
+        and not linear_update_has_explicit_patch
+        and linear_update_append_intent
+    )
+
+    if skill_name == "linear.issue_update" and not (
+        linear_update_has_explicit_patch or linear_update_allow_generated_description
+    ):
+        pass
+    elif not llm_text and not (
+        (skill_name == "notion.page_update" and (notion_update_new_title or notion_update_body_text))
+        or (skill_name == "linear.issue_update" and linear_update_has_explicit_patch)
+    ):
+        prompt = _build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_THEN_SKILL)
+        if linear_update_allow_generated_description:
+            prompt = _build_linear_append_generation_prompt(user_text=user_text)
+        llm_text, provider, model = await _request_llm_text(
+            prompt=prompt
+        )
+
+    if provider and model:
+        plan.notes.append(f"llm_provider={provider}")
+        plan.notes.append(f"llm_model={model}")
+
+    if _looks_realtime_request(user_text) and _looks_unavailable_answer(llm_text):
+        execution = AgentExecutionResult(
+            success=False,
+            user_message=llm_text,
+            summary="실시간 조회 불가로 외부 서비스 반영 생략",
+            artifacts={
+                "router_mode": decision.mode,
+                "error_code": "realtime_data_unavailable",
+                "llm_provider": provider,
+                "llm_model": model,
+            },
+            steps=[
+                AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
+                AgentExecutionStep(name="skip_skill_apply", status="error", detail="realtime_data_unavailable"),
+            ],
+        )
+        return AgentRunResult(
+            ok=False,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    if skill_name == "notion.page_create":
+        title = str(decision.arguments.get("notion_page_title") or "").strip() or "new page"
+        children = [
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {"content": llm_text[:1800]},
+                        }
+                    ]
+                },
+            }
+        ]
+        result = await execute_tool(
+            user_id=user_id,
+            tool_name="notion_create_page",
+            payload={
+                "parent": _notion_parent_payload(),
+                "properties": {"title": {"title": [{"type": "text", "text": {"content": title[:100]}}]}},
+                "children": children,
+            },
+        )
+        page_url = str((result.get("data") or {}).get("url") or "").strip()
+        msg = llm_text
+        if page_url:
+            msg += f"\n\nNotion 페이지: {page_url}"
+        execution = AgentExecutionResult(
+            success=True,
+            user_message=msg,
+            summary="LLM 생성 후 Notion 반영 완료",
+            artifacts={
+                "router_mode": decision.mode,
+                "created_page_url": page_url,
+                "source_url": source_url,
+                "llm_provider": provider,
+                "llm_model": model,
+            },
+            steps=[
+                AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
+                AgentExecutionStep(name="skill_notion_create_page", status="success", detail="notion_create_page"),
+            ],
+        )
+        return AgentRunResult(
+            ok=True,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    if skill_name == "notion.page_update":
+        page_title = str(decision.arguments.get("notion_page_title") or "").strip()
+        if not page_title:
+            raise NeedsInputSignal(
+                missing_fields=["target.page_title"],
+                questions=["업데이트할 Notion 페이지 제목을 알려주세요. 예: 제목: 스프린트 회고"],
+            )
+        page_id, page_url, title_property_key = await _resolve_notion_page_for_update(
+            user_id=user_id, title=page_title
+        )
+        if notion_update_new_title:
+            prop_key = title_property_key or "title"
+            await execute_tool(
+                user_id=user_id,
+                tool_name="notion_update_page",
+                payload={
+                    "page_id": page_id,
+                    "properties": {
+                        prop_key: {
+                            "title": [
+                                {"type": "text", "text": {"content": notion_update_new_title[:100]}}
+                            ]
+                        }
+                    },
+                },
+            )
+            msg = f"\"{page_title}\" 페이지 제목이 \"{notion_update_new_title[:100]}\"로 업데이트되었습니다."
+            if page_url:
+                msg += f"\n\n업데이트 대상 페이지: {page_title}\n링크: {page_url}"
+            execution = AgentExecutionResult(
+                success=True,
+                user_message=msg,
+                summary="Notion 페이지 제목 업데이트 완료",
+                artifacts={
+                    "router_mode": decision.mode,
+                    "updated_page_id": page_id,
+                    "updated_page_url": page_url,
+                },
+                steps=[
+                    AgentExecutionStep(
+                        name="skill_notion_update_page_title",
+                        status="success",
+                        detail=f"page_title={page_title};new_title={notion_update_new_title[:60]}",
+                    ),
+                ],
+            )
+            return AgentRunResult(
+                ok=True,
+                stage="execution",
+                plan=plan,
+                result_summary=execution.summary,
+                execution=execution,
+                plan_source="router_v2",
+            )
+        children = [
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [
+                        {
+                            "type": "text",
+                            "text": {
+                                "content": (notion_update_body_text or llm_text)[:1800],
+                            },
+                        }
+                    ]
+                },
+            }
+        ]
+        await execute_tool(
+            user_id=user_id,
+            tool_name="notion_append_block_children",
+            payload={"block_id": page_id, "children": children},
+        )
+        if notion_update_body_text:
+            msg = f"\"{page_title}\" 페이지 본문에 \"{notion_update_body_text}\"를 추가했습니다."
+        else:
+            msg = f"{llm_text}"
+        msg += f"\n\n업데이트 대상 페이지: {page_title}"
+        if page_url:
+            msg += f"\n링크: {page_url}"
+        execution = AgentExecutionResult(
+            success=True,
+            user_message=msg,
+            summary="LLM 생성 후 Notion 페이지 업데이트 완료",
+            artifacts={
+                "router_mode": decision.mode,
+                "updated_page_id": page_id,
+                "updated_page_url": page_url,
+                "llm_provider": provider,
+                "llm_model": model,
+            },
+            steps=[
+                AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
+                AgentExecutionStep(
+                    name="skill_notion_append_block_children",
+                    status="success",
+                    detail=f"page_title={page_title}",
+                ),
+            ],
+        )
+        return AgentRunResult(
+            ok=True,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    if skill_name == "linear.issue_update":
+        issue_ref = str(decision.arguments.get("linear_issue_ref") or "").strip()
+        if not issue_ref:
+            raise NeedsInputSignal(
+                missing_fields=["target.issue_ref"],
+                questions=["업데이트할 Linear 이슈 키를 알려주세요. 예: OPT-35"],
+            )
+        if (
+            not linear_update_new_title
+            and not linear_update_description_text
+            and not linear_update_state_id
+            and linear_update_priority is None
+            and not linear_update_append_intent
+        ):
+            raise NeedsInputSignal(
+                missing_fields=["patch"],
+                questions=[
+                    "어떤 항목을 업데이트할까요? 예: 제목을 \"...\"로 변경 / 설명 업데이트: ... / state_id: <id> / priority: 0~4"
+                ],
+            )
+        issue_id, resolved_issue_url, current_issue_description = await _resolve_linear_issue_id_for_update(
+            user_id=user_id,
+            issue_ref=issue_ref,
+        )
+        patch_payload: dict = {"issue_id": issue_id}
+        if linear_update_new_title:
+            patch_payload["title"] = linear_update_new_title[:120]
+        if linear_update_description_text:
+            if linear_update_append_intent:
+                patch_payload["description"] = _merge_linear_description(
+                    current=current_issue_description,
+                    addition=linear_update_description_text,
+                )
+            else:
+                patch_payload["description"] = linear_update_description_text
+        if linear_update_state_id:
+            patch_payload["state_id"] = linear_update_state_id
+        if linear_update_priority is not None:
+            patch_payload["priority"] = linear_update_priority
+        if (
+            "title" not in patch_payload
+            and "description" not in patch_payload
+            and "state_id" not in patch_payload
+            and "priority" not in patch_payload
+        ):
+            if linear_update_allow_generated_description:
+                patch_payload["description"] = _merge_linear_description(
+                    current=current_issue_description,
+                    addition=llm_text,
+                )
+            else:
+                raise NeedsInputSignal(
+                    missing_fields=["patch"],
+                    questions=[
+                        "어떤 항목을 업데이트할까요? 예: 제목을 \"...\"로 변경 / 설명 업데이트: ... / state_id: <id> / priority: 0~4"
+                    ],
+                )
+        update_result = await execute_tool(
+            user_id=user_id,
+            tool_name="linear_update_issue",
+            payload=patch_payload,
+        )
+        update_success = bool((((update_result.get("data") or {}).get("issueUpdate") or {}).get("success")))
+        if not update_success and (
+            "title" in patch_payload
+            or "description" in patch_payload
+            or "state_id" in patch_payload
+            or "priority" in patch_payload
+        ):
+            raise HTTPException(status_code=400, detail="linear_issue_update_failed")
+        issue_url = str(
+            (((update_result.get("data") or {}).get("issueUpdate") or {}).get("issue") or {}).get("url") or ""
+        ).strip()
+        if not issue_url:
+            issue_url = resolved_issue_url
+        if linear_update_new_title:
+            user_message = f"Linear 이슈 제목이 \"{linear_update_new_title[:120]}\"로 업데이트되었습니다.\n\n대상 이슈: {issue_ref}"
+        elif linear_update_description_text:
+            user_message = f"Linear 이슈 설명이 업데이트되었습니다.\n\n대상 이슈: {issue_ref}"
+        elif linear_update_state_id or linear_update_priority is not None:
+            updates: list[str] = []
+            if linear_update_state_id:
+                updates.append(f"state_id={linear_update_state_id}")
+            if linear_update_priority is not None:
+                updates.append(f"priority={linear_update_priority}")
+            user_message = f"Linear 이슈 속성이 업데이트되었습니다. ({', '.join(updates)})\n\n대상 이슈: {issue_ref}"
+        else:
+            user_message = f"Linear 이슈 설명이 업데이트되었습니다.\n\n대상 이슈: {issue_ref}"
+        if issue_url:
+            user_message += f"\n링크: {issue_url}"
+        execution = AgentExecutionResult(
+            success=True,
+            user_message=user_message,
+            summary="LLM 생성 후 Linear 이슈 업데이트 완료",
+            artifacts={
+                "router_mode": decision.mode,
+                "updated_issue_id": issue_id,
+                "updated_issue_url": issue_url,
+                "llm_provider": provider,
+                "llm_model": model,
+            },
+            steps=[
+                AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
+                AgentExecutionStep(name="skill_linear_update_issue", status="success", detail=f"issue_ref={issue_ref}"),
+            ],
+        )
+        return AgentRunResult(
+            ok=True,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    if skill_name == "linear.issue_create":
+        issue_title = str(decision.arguments.get("linear_issue_title") or "").strip() or "new issue"
+        team_ref = str(decision.arguments.get("linear_team_ref") or "").strip() or None
+        team_id = await _resolve_linear_team_id_for_create(user_id=user_id, team_ref=team_ref)
+        result = await execute_tool(
+            user_id=user_id,
+            tool_name="linear_create_issue",
+            payload={"team_id": team_id, "title": issue_title[:120], "description": llm_text},
+        )
+        issue_url = str((((result.get("data") or {}).get("issueCreate") or {}).get("issue") or {}).get("url") or "").strip()
+        msg = f"{llm_text}\n\nLinear 이슈 생성 완료: {issue_title[:120]}"
+        if issue_url:
+            msg += f"\n링크: {issue_url}"
+        execution = AgentExecutionResult(
+            success=True,
+            user_message=msg,
+            summary="LLM 생성 후 Linear 이슈 생성 완료",
+            artifacts={
+                "router_mode": decision.mode,
+                "created_issue_url": issue_url,
+                "llm_provider": provider,
+                "llm_model": model,
+            },
+            steps=[
+                AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
+                AgentExecutionStep(
+                    name="skill_linear_create_issue",
+                    status="success",
+                    detail=f"team_ref={team_ref or 'auto'}",
+                ),
+            ],
+        )
+        return AgentRunResult(
+            ok=True,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    if skill_name == "linear.issue_delete":
+        issue_ref = str(decision.arguments.get("linear_issue_ref") or "").strip()
+        if not issue_ref:
+            raise HTTPException(status_code=400, detail="validation_error")
+        issue_id, _, _ = await _resolve_linear_issue_id_for_update(user_id=user_id, issue_ref=issue_ref)
+        delete_result = await execute_tool(
+            user_id=user_id,
+            tool_name="linear_update_issue",
+            payload={"issue_id": issue_id, "archived": True},
+        )
+        archive_success = bool((((delete_result.get("data") or {}).get("issueArchive") or {}).get("success")))
+        update_success = bool((((delete_result.get("data") or {}).get("issueUpdate") or {}).get("success")))
+        if not archive_success and not update_success:
+            raise HTTPException(status_code=400, detail="linear_issue_delete_failed")
+        execution = AgentExecutionResult(
+            success=True,
+            user_message=f"요청한 Linear 이슈를 삭제(archive) 처리했습니다.\n- 이슈: {issue_ref}",
+            summary="Linear 이슈 삭제 완료",
+            artifacts={
+                "router_mode": decision.mode,
+                "deleted_issue_id": issue_id,
+                "llm_provider": provider,
+                "llm_model": model,
+            },
+            steps=[
+                AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
+                AgentExecutionStep(name="skill_linear_update_issue_delete", status="success", detail=f"issue_ref={issue_ref}"),
+            ],
+        )
+        return AgentRunResult(
+            ok=True,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    if skill_name == "notion.page_delete":
+        page_title = str(decision.arguments.get("notion_page_title") or "").strip()
+        if not page_title:
+            raise NeedsInputSignal(
+                missing_fields=["target.page_title"],
+                questions=["삭제할 Notion 페이지 제목을 알려주세요. 예: 제목: 스프린트 회고"],
+            )
+        page_id, page_url, _ = await _resolve_notion_page_for_update(user_id=user_id, title=page_title)
+        await execute_tool(
+            user_id=user_id,
+            tool_name="notion_update_page",
+            payload={"page_id": page_id, "in_trash": True},
+        )
+        execution = AgentExecutionResult(
+            success=True,
+            user_message=f"요청한 Notion 페이지를 삭제(휴지통 이동)했습니다.\n- 제목: {page_title}" + (
+                f"\n- 링크: {page_url}" if page_url else ""
+            ),
+            summary="Notion 페이지 삭제 완료",
+            artifacts={
+                "router_mode": decision.mode,
+                "deleted_page_id": page_id,
+                "deleted_page_url": page_url,
+                "llm_provider": provider,
+                "llm_model": model,
+            },
+            steps=[
+                AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
+                AgentExecutionStep(name="skill_notion_update_page_delete", status="success", detail=f"page_title={page_title}"),
+            ],
+        )
+        return AgentRunResult(
+            ok=True,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    raise HTTPException(status_code=400, detail="unsupported_skill")
+
+
+async def execute_from_intent(
+    *,
+    user_text: str,
+    user_id: str,
+    decision: RouterDecision,
+    plan: AgentPlan,
+) -> AgentRunResult:
+    _validate_execute_intent_policy(decision=decision)
+
+    if decision.mode == MODE_LLM_ONLY:
+        answer, provider, model = await _request_llm_text(
+            prompt=_build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_ONLY)
+        )
+        plan.notes.append(f"llm_provider={provider}")
+        plan.notes.append(f"llm_model={model}")
+        execution = AgentExecutionResult(
+            success=True,
+            user_message=answer,
+            summary="LLM 응답 생성 완료",
+            artifacts={"router_mode": decision.mode, "llm_provider": provider, "llm_model": model},
+            steps=[AgentExecutionStep(name="llm_only", status="success", detail=f"provider={provider}:{model}")],
+        )
+        return AgentRunResult(
+            ok=True,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    if decision.mode == MODE_SKILL_THEN_LLM:
+        return await _execute_skill_then_llm_from_intent(
+            user_text=user_text,
+            user_id=user_id,
+            decision=decision,
+            plan=plan,
+        )
+
+    if decision.mode == MODE_LLM_THEN_SKILL:
+        return await _execute_llm_then_skill_from_intent(
+            user_text=user_text,
+            user_id=user_id,
+            decision=decision,
+            plan=plan,
+        )
+
+    raise HTTPException(status_code=400, detail="unsupported_mode")
+
+
+async def build_intent_json(
+    *,
+    user_text: str,
+    connected_services: list[str],
+) -> tuple[IntentPayload, dict[str, str]]:
+    settings = get_settings()
+    router_source = "rule"
+    router_llm_provider = ""
+    router_llm_model = ""
+    router_llm_fallback_reason = ""
+
+    if bool(getattr(settings, "skill_router_v2_llm_enabled", False)):
+        llm_decision, router_llm_provider, router_llm_model = await _request_router_decision_with_llm(
+            user_text=user_text,
+            connected_services=connected_services,
+        )
+        if llm_decision is not None:
+            decision = _normalize_router_arguments(decision=llm_decision, user_text=user_text)
+            router_source = "llm"
+        else:
+            decision = _normalize_router_arguments(decision=route_request_v2(user_text, connected_services), user_text=user_text)
+            router_source = "llm_fallback_rule"
+            router_llm_fallback_reason = "invalid_payload_or_parse_failed"
+    else:
+        decision = _normalize_router_arguments(decision=route_request_v2(user_text, connected_services), user_text=user_text)
+
+    decision, override_reason = _apply_decision_safety_overrides(
+        decision=decision,
+        user_text=user_text,
+        connected_services=connected_services,
+    )
+
+    payload = {
+        "mode": decision.mode,
+        "skill_name": decision.skill_name,
+        "arguments": dict(decision.arguments or {}),
+        "missing_fields": [],
+        "confidence": 1.0 if router_source == "llm" else 0.9,
+        "decision_reason": decision.reason or "intent_decision",
+    }
+    intent = validate_intent_json(payload, connected_services=connected_services)
+    metadata = {
+        "router_source": router_source,
+        "router_llm_provider": router_llm_provider,
+        "router_llm_model": router_llm_model,
+        "router_llm_fallback_reason": router_llm_fallback_reason,
+        "router_decision_override": override_reason or "",
+    }
+    return intent, metadata
+
+
 async def try_run_v2_orchestration(
     *,
     user_text: str,
@@ -1385,767 +2264,56 @@ async def try_run_v2_orchestration(
             plan_source="router_v2",
         )
 
-    settings = get_settings()
-    decision: RouterDecision
-    router_source = "rule"
-    router_llm_provider: str | None = None
-    router_llm_model: str | None = None
-    router_llm_fallback_reason: str | None = None
-
-    if bool(getattr(settings, "skill_router_v2_llm_enabled", False)):
-        llm_decision, router_llm_provider, router_llm_model = await _request_router_decision_with_llm(
+    try:
+        intent, intent_meta = await build_intent_json(
             user_text=user_text,
             connected_services=connected_services,
         )
-        if llm_decision is not None:
-            decision = _normalize_router_arguments(decision=llm_decision, user_text=user_text)
-            router_source = "llm"
-        else:
-            decision = _normalize_router_arguments(decision=route_request_v2(user_text, connected_services), user_text=user_text)
-            router_source = "llm_fallback_rule"
-            router_llm_fallback_reason = "invalid_payload_or_parse_failed"
-    else:
-        decision = _normalize_router_arguments(decision=route_request_v2(user_text, connected_services), user_text=user_text)
+    except IntentValidationError as exc:
+        execution = AgentExecutionResult(
+            success=False,
+            user_message="요청 해석에 실패했습니다. 요청 문장을 조금 더 구체적으로 입력해주세요.",
+            summary="Intent JSON 검증 실패",
+            artifacts={"error_code": str(exc.code or "invalid_intent_json")},
+            steps=[AgentExecutionStep(name="intent_json_validation", status="error", detail=str(exc))],
+        )
+        fallback_plan = AgentPlan(
+            user_text=user_text,
+            requirements=[AgentRequirement(summary="intent_json_validation")],
+            target_services=[],
+            selected_tools=[],
+            workflow_steps=["1. intent validation"],
+            tasks=[],
+            notes=["planner=router_v2", "router_mode=LLM_ONLY", "router_source=intent_invalid"],
+        )
+        return AgentRunResult(
+            ok=False,
+            stage="planning",
+            plan=fallback_plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
 
-    decision, override_reason = _apply_decision_safety_overrides(
-        decision=decision,
-        user_text=user_text,
-        connected_services=connected_services,
-    )
+    decision = _router_decision_from_intent(intent)
     plan = _build_plan(user_text, decision)
-    plan.notes.append(f"router_source={router_source}")
-    if router_llm_fallback_reason:
-        plan.notes.append(f"router_llm_fallback_reason={router_llm_fallback_reason}")
-    if override_reason:
-        plan.notes.append(f"router_decision_override={override_reason}")
-    if router_llm_provider and router_llm_model:
-        plan.notes.append(f"router_llm_provider={router_llm_provider}")
-        plan.notes.append(f"router_llm_model={router_llm_model}")
+    plan.notes.append(f"router_source={intent_meta.get('router_source') or 'rule'}")
+    if intent_meta.get("router_llm_fallback_reason"):
+        plan.notes.append(f"router_llm_fallback_reason={intent_meta['router_llm_fallback_reason']}")
+    if intent_meta.get("router_decision_override"):
+        plan.notes.append(f"router_decision_override={intent_meta['router_decision_override']}")
+    if intent_meta.get("router_llm_provider") and intent_meta.get("router_llm_model"):
+        plan.notes.append(f"router_llm_provider={intent_meta['router_llm_provider']}")
+        plan.notes.append(f"router_llm_model={intent_meta['router_llm_model']}")
 
     try:
-        if decision.mode == MODE_LLM_ONLY:
-            answer, provider, model = await _request_llm_text(
-                prompt=_build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_ONLY)
-            )
-            plan.notes.append(f"llm_provider={provider}")
-            plan.notes.append(f"llm_model={model}")
-            execution = AgentExecutionResult(
-                success=True,
-                user_message=answer,
-                summary="LLM 응답 생성 완료",
-                artifacts={"router_mode": decision.mode, "llm_provider": provider, "llm_model": model},
-                steps=[AgentExecutionStep(name="llm_only", status="success", detail=f"provider={provider}:{model}")],
-            )
-            return AgentRunResult(
-                ok=True,
-                stage="execution",
-                plan=plan,
-                result_summary=execution.summary,
-                execution=execution,
-                plan_source="router_v2",
-            )
-
-        if decision.mode == MODE_LLM_THEN_SKILL:
-            skill_name = str(decision.skill_name or "").strip() or infer_skill_name_from_runtime_tools(
-                decision.selected_tools
-            )
-            llm_text = ""
-            provider = ""
-            model = ""
-            source_url = ""
-            notion_update_new_title = ""
-            notion_update_body_text = ""
-            linear_update_new_title = ""
-            linear_update_description_text = ""
-            linear_update_state_id = ""
-            linear_update_priority: int | None = None
-            if skill_name == "notion.page_update":
-                notion_update_new_title = _extract_notion_update_new_title(user_text) or ""
-                notion_update_body_text = _extract_notion_update_body_text(user_text) or ""
-                if not notion_update_new_title and not notion_update_body_text and _needs_notion_update_clarification(user_text):
-                    raise NeedsInputSignal(
-                        missing_fields=["patch"],
-                        questions=[
-                            "무엇을 업데이트할지 알려주세요. 예: 제목을 \"스프린트 보고서\"로 변경 / 본문에 배포 회고 추가"
-                        ],
-                    )
-            if skill_name == "linear.issue_update":
-                linear_update_new_title = _extract_linear_update_new_title(user_text) or ""
-                linear_update_description_text = _extract_linear_update_description_text(user_text) or ""
-                linear_update_state_id = _extract_linear_update_state_id(user_text) or ""
-                linear_update_priority = _extract_linear_update_priority(user_text)
-            linear_update_append_intent = skill_name == "linear.issue_update" and _is_linear_description_append_intent(user_text)
-            if skill_name == "notion.page_create" and _is_translation_intent(user_text):
-                maybe_url = _extract_first_url(user_text)
-                if maybe_url:
-                    fetched = await execute_tool(
-                        user_id=user_id,
-                        tool_name="http_fetch_url_text",
-                        payload={"url": maybe_url, "max_chars": 12000},
-                    )
-                    fetched_data = fetched.get("data") or {}
-                    source_url = str(fetched_data.get("final_url") or fetched_data.get("url") or maybe_url).strip()
-                    source_title = str(fetched_data.get("title") or "").strip()
-                    source_text = str(fetched_data.get("text") or "").strip()
-                    if not source_text:
-                        raise HTTPException(status_code=400, detail="validation_error")
-                    llm_text, provider, model = await _request_llm_text(
-                        prompt=_build_url_translation_prompt(
-                            user_text=user_text,
-                            source_url=source_url,
-                            source_title=source_title,
-                            source_text=source_text,
-                        )
-                    )
-
-            linear_update_has_explicit_patch = bool(
-                linear_update_new_title
-                or linear_update_description_text
-                or linear_update_state_id
-                or linear_update_priority is not None
-            )
-            linear_update_allow_generated_description = (
-                skill_name == "linear.issue_update"
-                and not linear_update_has_explicit_patch
-                and linear_update_append_intent
-            )
-
-            if skill_name == "linear.issue_update" and not (
-                linear_update_has_explicit_patch or linear_update_allow_generated_description
-            ):
-                pass
-            elif not llm_text and not (
-                (skill_name == "notion.page_update" and (notion_update_new_title or notion_update_body_text))
-                or (skill_name == "linear.issue_update" and linear_update_has_explicit_patch)
-            ):
-                prompt = _build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_THEN_SKILL)
-                if linear_update_allow_generated_description:
-                    prompt = _build_linear_append_generation_prompt(user_text=user_text)
-                llm_text, provider, model = await _request_llm_text(
-                    prompt=prompt
-                )
-            if provider and model:
-                plan.notes.append(f"llm_provider={provider}")
-                plan.notes.append(f"llm_model={model}")
-
-            if _looks_realtime_request(user_text) and _looks_unavailable_answer(llm_text):
-                execution = AgentExecutionResult(
-                    success=False,
-                    user_message=llm_text,
-                    summary="실시간 조회 불가로 외부 서비스 반영 생략",
-                    artifacts={
-                        "router_mode": decision.mode,
-                        "error_code": "realtime_data_unavailable",
-                        "llm_provider": provider,
-                        "llm_model": model,
-                    },
-                    steps=[
-                        AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
-                        AgentExecutionStep(name="skip_skill_apply", status="error", detail="realtime_data_unavailable"),
-                    ],
-                )
-                return AgentRunResult(
-                    ok=False,
-                    stage="execution",
-                    plan=plan,
-                    result_summary=execution.summary,
-                    execution=execution,
-                    plan_source="router_v2",
-                )
-
-            if skill_name == "notion.page_create":
-                title = str(decision.arguments.get("notion_page_title") or "").strip()
-                if not title:
-                    title = _extract_notion_page_title_for_create(user_text) or ""
-                if not title:
-                    title = "new page"
-                children = [
-                    {
-                        "object": "block",
-                        "type": "paragraph",
-                        "paragraph": {
-                            "rich_text": [
-                                {
-                                    "type": "text",
-                                    "text": {
-                                        "content": llm_text[:1800],
-                                    },
-                                }
-                            ]
-                        },
-                    }
-                ]
-                result = await execute_tool(
-                    user_id=user_id,
-                    tool_name="notion_create_page",
-                    payload={
-                        "parent": _notion_parent_payload(),
-                        "properties": {
-                            "title": {"title": [{"type": "text", "text": {"content": title[:100]}}]},
-                        },
-                        "children": children,
-                    },
-                )
-                page_url = str((result.get("data") or {}).get("url") or "").strip()
-                msg = llm_text
-                if page_url:
-                    msg += f"\n\nNotion 페이지: {page_url}"
-                execution = AgentExecutionResult(
-                    success=True,
-                    user_message=msg,
-                    summary="LLM 생성 후 Notion 반영 완료",
-                    artifacts={
-                        "router_mode": decision.mode,
-                        "created_page_url": page_url,
-                        "source_url": source_url,
-                        "llm_provider": provider,
-                        "llm_model": model,
-                    },
-                    steps=[
-                        AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
-                        AgentExecutionStep(name="skill_notion_create_page", status="success", detail="notion_create_page"),
-                    ],
-                )
-                return AgentRunResult(
-                    ok=True,
-                    stage="execution",
-                    plan=plan,
-                    result_summary=execution.summary,
-                    execution=execution,
-                    plan_source="router_v2",
-                )
-
-            if skill_name == "notion.page_update":
-                page_title = str(decision.arguments.get("notion_page_title") or "").strip()
-                if not page_title:
-                    raise NeedsInputSignal(
-                        missing_fields=["target.page_title"],
-                        questions=["업데이트할 Notion 페이지 제목을 알려주세요. 예: 제목: 스프린트 회고"],
-                    )
-                page_id, page_url, title_property_key = await _resolve_notion_page_for_update(
-                    user_id=user_id, title=page_title
-                )
-                if notion_update_new_title:
-                    prop_key = title_property_key or "title"
-                    await execute_tool(
-                        user_id=user_id,
-                        tool_name="notion_update_page",
-                        payload={
-                            "page_id": page_id,
-                            "properties": {
-                                prop_key: {
-                                    "title": [
-                                        {"type": "text", "text": {"content": notion_update_new_title[:100]}}
-                                    ]
-                                }
-                            },
-                        },
-                    )
-                    msg = f"\"{page_title}\" 페이지 제목이 \"{notion_update_new_title[:100]}\"로 업데이트되었습니다."
-                    if page_url:
-                        msg += f"\n\n업데이트 대상 페이지: {page_title}\n링크: {page_url}"
-                    execution = AgentExecutionResult(
-                        success=True,
-                        user_message=msg,
-                        summary="Notion 페이지 제목 업데이트 완료",
-                        artifacts={
-                            "router_mode": decision.mode,
-                            "updated_page_id": page_id,
-                            "updated_page_url": page_url,
-                        },
-                        steps=[
-                            AgentExecutionStep(
-                                name="skill_notion_update_page_title",
-                                status="success",
-                                detail=f"page_title={page_title};new_title={notion_update_new_title[:60]}",
-                            ),
-                        ],
-                    )
-                    return AgentRunResult(
-                        ok=True,
-                        stage="execution",
-                        plan=plan,
-                        result_summary=execution.summary,
-                        execution=execution,
-                        plan_source="router_v2",
-                    )
-                children = [
-                    {
-                        "object": "block",
-                        "type": "paragraph",
-                        "paragraph": {
-                            "rich_text": [
-                                {
-                                    "type": "text",
-                                    "text": {
-                                        "content": (notion_update_body_text or llm_text)[:1800],
-                                    },
-                                }
-                            ]
-                        },
-                    }
-                ]
-                await execute_tool(
-                    user_id=user_id,
-                    tool_name="notion_append_block_children",
-                    payload={"block_id": page_id, "children": children},
-                )
-                if notion_update_body_text:
-                    msg = f"\"{page_title}\" 페이지 본문에 \"{notion_update_body_text}\"를 추가했습니다."
-                else:
-                    msg = f"{llm_text}"
-                msg += f"\n\n업데이트 대상 페이지: {page_title}"
-                if page_url:
-                    msg += f"\n링크: {page_url}"
-                execution = AgentExecutionResult(
-                    success=True,
-                    user_message=msg,
-                    summary="LLM 생성 후 Notion 페이지 업데이트 완료",
-                    artifacts={
-                        "router_mode": decision.mode,
-                        "updated_page_id": page_id,
-                        "updated_page_url": page_url,
-                        "llm_provider": provider,
-                        "llm_model": model,
-                    },
-                    steps=[
-                        AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
-                        AgentExecutionStep(
-                            name="skill_notion_append_block_children",
-                            status="success",
-                            detail=f"page_title={page_title}",
-                        ),
-                    ],
-                )
-                return AgentRunResult(
-                    ok=True,
-                    stage="execution",
-                    plan=plan,
-                    result_summary=execution.summary,
-                    execution=execution,
-                    plan_source="router_v2",
-                )
-
-            if skill_name == "linear.issue_update":
-                issue_ref = str(decision.arguments.get("linear_issue_ref") or "").strip()
-                if not issue_ref:
-                    raise NeedsInputSignal(
-                        missing_fields=["target.issue_ref"],
-                        questions=["업데이트할 Linear 이슈 키를 알려주세요. 예: OPT-35"],
-                    )
-                if (
-                    not linear_update_new_title
-                    and not linear_update_description_text
-                    and not linear_update_state_id
-                    and linear_update_priority is None
-                    and _needs_linear_update_clarification(user_text)
-                ):
-                    raise NeedsInputSignal(
-                        missing_fields=["patch"],
-                        questions=[
-                            "어떤 항목을 업데이트할까요? 예: 제목을 \"...\"로 변경 / 설명 업데이트: ... / state_id: <id> / priority: 0~4"
-                        ],
-                    )
-                issue_id, resolved_issue_url, current_issue_description = await _resolve_linear_issue_id_for_update(
-                    user_id=user_id,
-                    issue_ref=issue_ref,
-                )
-                patch_payload: dict = {"issue_id": issue_id}
-                if linear_update_new_title:
-                    patch_payload["title"] = linear_update_new_title[:120]
-                if linear_update_description_text:
-                    if linear_update_append_intent:
-                        patch_payload["description"] = _merge_linear_description(
-                            current=current_issue_description,
-                            addition=linear_update_description_text,
-                        )
-                    else:
-                        patch_payload["description"] = linear_update_description_text
-                if linear_update_state_id:
-                    patch_payload["state_id"] = linear_update_state_id
-                if linear_update_priority is not None:
-                    patch_payload["priority"] = linear_update_priority
-                if (
-                    "title" not in patch_payload
-                    and "description" not in patch_payload
-                    and "state_id" not in patch_payload
-                    and "priority" not in patch_payload
-                ):
-                    if linear_update_allow_generated_description:
-                        patch_payload["description"] = _merge_linear_description(
-                            current=current_issue_description,
-                            addition=llm_text,
-                        )
-                    else:
-                        raise NeedsInputSignal(
-                            missing_fields=["patch"],
-                            questions=[
-                                "어떤 항목을 업데이트할까요? 예: 제목을 \"...\"로 변경 / 설명 업데이트: ... / state_id: <id> / priority: 0~4"
-                            ],
-                        )
-                update_result = await execute_tool(
-                    user_id=user_id,
-                    tool_name="linear_update_issue",
-                    payload=patch_payload,
-                )
-                update_success = bool((((update_result.get("data") or {}).get("issueUpdate") or {}).get("success")))
-                if not update_success and (
-                    "title" in patch_payload
-                    or "description" in patch_payload
-                    or "state_id" in patch_payload
-                    or "priority" in patch_payload
-                ):
-                    raise HTTPException(status_code=400, detail="linear_issue_update_failed")
-                issue_url = str(
-                    (((update_result.get("data") or {}).get("issueUpdate") or {}).get("issue") or {}).get("url") or ""
-                ).strip()
-                if not issue_url:
-                    issue_url = resolved_issue_url
-                if linear_update_new_title:
-                    user_message = f"Linear 이슈 제목이 \"{linear_update_new_title[:120]}\"로 업데이트되었습니다.\n\n대상 이슈: {issue_ref}"
-                elif linear_update_description_text:
-                    user_message = f"Linear 이슈 설명이 업데이트되었습니다.\n\n대상 이슈: {issue_ref}"
-                elif linear_update_state_id or linear_update_priority is not None:
-                    updates: list[str] = []
-                    if linear_update_state_id:
-                        updates.append(f"state_id={linear_update_state_id}")
-                    if linear_update_priority is not None:
-                        updates.append(f"priority={linear_update_priority}")
-                    user_message = f"Linear 이슈 속성이 업데이트되었습니다. ({', '.join(updates)})\n\n대상 이슈: {issue_ref}"
-                else:
-                    user_message = f"Linear 이슈 설명이 업데이트되었습니다.\n\n대상 이슈: {issue_ref}"
-                if issue_url:
-                    user_message += f"\n링크: {issue_url}"
-                execution = AgentExecutionResult(
-                    success=True,
-                    user_message=user_message,
-                    summary="LLM 생성 후 Linear 이슈 업데이트 완료",
-                    artifacts={
-                        "router_mode": decision.mode,
-                        "updated_issue_id": issue_id,
-                        "updated_issue_url": issue_url,
-                        "llm_provider": provider,
-                        "llm_model": model,
-                    },
-                    steps=[
-                        AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
-                        AgentExecutionStep(name="skill_linear_update_issue", status="success", detail=f"issue_ref={issue_ref}"),
-                    ],
-                )
-                return AgentRunResult(
-                    ok=True,
-                    stage="execution",
-                    plan=plan,
-                    result_summary=execution.summary,
-                    execution=execution,
-                    plan_source="router_v2",
-                )
-
-            if skill_name == "linear.issue_create":
-                issue_title = str(decision.arguments.get("linear_issue_title") or "").strip()
-                if not issue_title:
-                    issue_title = _extract_linear_issue_title_for_create(user_text) or ""
-                if not issue_title:
-                    issue_title = "new issue"
-                team_ref = str(decision.arguments.get("linear_team_ref") or "").strip() or None
-                team_id = await _resolve_linear_team_id_for_create(user_id=user_id, team_ref=team_ref)
-                result = await execute_tool(
-                    user_id=user_id,
-                    tool_name="linear_create_issue",
-                    payload={"team_id": team_id, "title": issue_title[:120], "description": llm_text},
-                )
-                issue_url = str((((result.get("data") or {}).get("issueCreate") or {}).get("issue") or {}).get("url") or "").strip()
-                msg = f"{llm_text}\n\nLinear 이슈 생성 완료: {issue_title[:120]}"
-                if issue_url:
-                    msg += f"\n링크: {issue_url}"
-                execution = AgentExecutionResult(
-                    success=True,
-                    user_message=msg,
-                    summary="LLM 생성 후 Linear 이슈 생성 완료",
-                    artifacts={
-                        "router_mode": decision.mode,
-                        "created_issue_url": issue_url,
-                        "llm_provider": provider,
-                        "llm_model": model,
-                    },
-                    steps=[
-                        AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
-                        AgentExecutionStep(
-                            name="skill_linear_create_issue",
-                            status="success",
-                            detail=f"team_ref={team_ref or 'auto'}",
-                        ),
-                    ],
-                )
-                return AgentRunResult(
-                    ok=True,
-                    stage="execution",
-                    plan=plan,
-                    result_summary=execution.summary,
-                    execution=execution,
-                    plan_source="router_v2",
-                )
-
-            if skill_name == "linear.issue_delete":
-                issue_ref = str(decision.arguments.get("linear_issue_ref") or "").strip()
-                if not issue_ref:
-                    raise HTTPException(status_code=400, detail="validation_error")
-                issue_id, _, _ = await _resolve_linear_issue_id_for_update(user_id=user_id, issue_ref=issue_ref)
-                delete_result = await execute_tool(
-                    user_id=user_id,
-                    tool_name="linear_update_issue",
-                    payload={"issue_id": issue_id, "archived": True},
-                )
-                archive_success = bool((((delete_result.get("data") or {}).get("issueArchive") or {}).get("success")))
-                update_success = bool((((delete_result.get("data") or {}).get("issueUpdate") or {}).get("success")))
-                if not archive_success and not update_success:
-                    raise HTTPException(status_code=400, detail="linear_issue_delete_failed")
-                execution = AgentExecutionResult(
-                    success=True,
-                    user_message=f"요청한 Linear 이슈를 삭제(archive) 처리했습니다.\n- 이슈: {issue_ref}",
-                    summary="Linear 이슈 삭제 완료",
-                    artifacts={
-                        "router_mode": decision.mode,
-                        "deleted_issue_id": issue_id,
-                        "llm_provider": provider,
-                        "llm_model": model,
-                    },
-                    steps=[
-                        AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
-                        AgentExecutionStep(name="skill_linear_update_issue_delete", status="success", detail=f"issue_ref={issue_ref}"),
-                    ],
-                )
-                return AgentRunResult(
-                    ok=True,
-                    stage="execution",
-                    plan=plan,
-                    result_summary=execution.summary,
-                    execution=execution,
-                    plan_source="router_v2",
-                )
-
-            if skill_name == "notion.page_delete":
-                page_title = str(decision.arguments.get("notion_page_title") or "").strip()
-                if not page_title:
-                    raise NeedsInputSignal(
-                        missing_fields=["target.page_title"],
-                        questions=["삭제할 Notion 페이지 제목을 알려주세요. 예: 제목: 스프린트 회고"],
-                    )
-                page_id, page_url, _ = await _resolve_notion_page_for_update(user_id=user_id, title=page_title)
-                await execute_tool(
-                    user_id=user_id,
-                    tool_name="notion_update_page",
-                    payload={"page_id": page_id, "in_trash": True},
-                )
-                execution = AgentExecutionResult(
-                    success=True,
-                    user_message=f"요청한 Notion 페이지를 삭제(휴지통 이동)했습니다.\n- 제목: {page_title}" + (
-                        f"\n- 링크: {page_url}" if page_url else ""
-                    ),
-                    summary="Notion 페이지 삭제 완료",
-                    artifacts={
-                        "router_mode": decision.mode,
-                        "deleted_page_id": page_id,
-                        "deleted_page_url": page_url,
-                        "llm_provider": provider,
-                        "llm_model": model,
-                    },
-                    steps=[
-                        AgentExecutionStep(name="llm_generate", status="success", detail=f"provider={provider}:{model}"),
-                        AgentExecutionStep(name="skill_notion_update_page_delete", status="success", detail=f"page_title={page_title}"),
-                    ],
-                )
-                return AgentRunResult(
-                    ok=True,
-                    stage="execution",
-                    plan=plan,
-                    result_summary=execution.summary,
-                    execution=execution,
-                    plan_source="router_v2",
-                )
-
-            raise HTTPException(status_code=400, detail="unsupported_skill")
-
-        if decision.mode == MODE_SKILL_THEN_LLM:
-            skill_name = str(decision.skill_name or "").strip() or infer_skill_name_from_runtime_tools(
-                decision.selected_tools
-            )
-            if skill_name == "linear.issue_search" or ("linear" in decision.target_services and not skill_name):
-                query = str(decision.arguments.get("linear_query") or "").strip()
-                first = _safe_int(
-                    decision.arguments.get("linear_first"),
-                    default=_extract_count_limit(user_text, default=5),
-                    minimum=1,
-                    maximum=20,
-                )
-                issue_ref = _extract_linear_issue_reference(query or user_text)
-                if issue_ref:
-                    tool_result = await _linear_search_with_issue_ref_fallback(user_id=user_id, issue_ref=issue_ref)
-                else:
-                    if _is_linear_recent_list_intent(user_text) or not query:
-                        tool_result = await execute_tool(
-                            user_id=user_id,
-                            tool_name="linear_list_issues",
-                            payload={"first": first},
-                        )
-                    else:
-                        tool_result = await execute_tool(
-                            user_id=user_id,
-                            tool_name="linear_search_issues",
-                            payload={"query": query, "first": first},
-                        )
-                if _linear_issue_count(tool_result) <= 0:
-                    raise NeedsInputSignal(
-                        missing_fields=["target.issue_ref"],
-                        questions=[f"'{query or issue_ref or user_text}' 이슈를 찾지 못했습니다. 이슈 키(예: OPT-35)를 확인해 주세요."],
-                    )
-                # "최근/목록/검색" 요청은 해설 생성 대신 결과 리스트를 직접 반환한다.
-                if _is_linear_recent_list_intent(user_text) and not _is_analysis_intent(user_text):
-                    execution = AgentExecutionResult(
-                        success=True,
-                        user_message=_linear_issue_list_text(tool_result, limit=first),
-                        summary="Linear 최근 이슈 조회 완료",
-                        artifacts={"router_mode": decision.mode},
-                        steps=[
-                            AgentExecutionStep(
-                                name="skill_linear_issue_lookup",
-                                status="success",
-                                detail=f"query={query or issue_ref or '-'};first={first}",
-                            )
-                        ],
-                    )
-                    return AgentRunResult(
-                        ok=True,
-                        stage="execution",
-                        plan=plan,
-                        result_summary=execution.summary,
-                        execution=execution,
-                        plan_source="router_v2",
-                    )
-                issue_context = _linear_issues_to_context(tool_result)
-                prompt = (
-                    "다음 Linear 이슈 정보를 바탕으로 해결 방법을 한국어로 간결하게 정리해줘. "
-                    "사실과 추론을 구분하고, 실행 가능한 체크리스트 형태로 답변해줘.\n\n"
-                    f"[사용자 요청]\n{user_text}\n\n"
-                    f"[Linear 이슈]\n{issue_context}"
-                )
-                answer, provider, model = await _request_llm_text(prompt=prompt)
-                plan.notes.append(f"llm_provider={provider}")
-                plan.notes.append(f"llm_model={model}")
-                links_block = _linear_issue_links_block(tool_result, limit=10)
-                user_message = answer
-                if links_block:
-                    user_message = f"{answer}\n\n{links_block}"
-                execution = AgentExecutionResult(
-                    success=True,
-                    user_message=user_message,
-                    summary="Linear 조회 후 LLM 정리 완료",
-                    artifacts={"router_mode": decision.mode, "llm_provider": provider, "llm_model": model},
-                    steps=[
-                        AgentExecutionStep(
-                            name="skill_linear_issue_lookup",
-                            status="success",
-                            detail=f"query={query or issue_ref or '-'};first={first}",
-                        ),
-                        AgentExecutionStep(name="llm_solve", status="success", detail=f"provider={provider}:{model}"),
-                    ],
-                )
-                return AgentRunResult(
-                    ok=True,
-                    stage="execution",
-                    plan=plan,
-                    result_summary=execution.summary,
-                    execution=execution,
-                    plan_source="router_v2",
-                )
-
-            if skill_name == "notion.page_search" or ("notion" in decision.target_services and not skill_name):
-                if _is_notion_recent_list_intent(user_text):
-                    first = _safe_int(
-                        decision.arguments.get("notion_first"),
-                        default=_extract_count_limit(user_text, default=5),
-                        minimum=1,
-                        maximum=20,
-                    )
-                    tool_result = await execute_tool(
-                        user_id=user_id,
-                        tool_name="notion_search",
-                        payload={"page_size": first},
-                    )
-                    execution = AgentExecutionResult(
-                        success=True,
-                        user_message=_notion_page_list_text(tool_result, limit=first),
-                        summary="Notion 최근 페이지 조회 완료",
-                        artifacts={"router_mode": decision.mode},
-                        steps=[
-                            AgentExecutionStep(
-                                name="skill_notion_search",
-                                status="success",
-                                detail=f"query=;page_size={first}",
-                            )
-                        ],
-                    )
-                    return AgentRunResult(
-                        ok=True,
-                        stage="execution",
-                        plan=plan,
-                        result_summary=execution.summary,
-                        execution=execution,
-                        plan_source="router_v2",
-                    )
-                page_title = str(decision.arguments.get("notion_page_title") or "").strip()
-                if not page_title:
-                    raise NeedsInputSignal(
-                        missing_fields=["target.page_title"],
-                        questions=["조회할 Notion 페이지 제목을 알려주세요. 예: 제목: 스프린트 회고"],
-                    )
-                page_id, page_url, _ = await _resolve_notion_page_for_update(user_id=user_id, title=page_title)
-                block_result = await execute_tool(
-                    user_id=user_id,
-                    tool_name="notion_retrieve_block_children",
-                    payload={"block_id": page_id, "page_size": 50},
-                )
-                page_context = _notion_blocks_to_context(block_result)
-                prompt = (
-                    "다음 Notion 페이지 본문을 바탕으로 사용자의 요청에 맞게 한국어로 정리해줘. "
-                    "본문에 없는 내용은 추측하지 말고, 필요한 경우 확인 질문을 제안해줘.\n\n"
-                    f"[사용자 요청]\n{user_text}\n\n"
-                    f"[페이지 제목]\n{page_title}\n\n"
-                    f"[본문]\n{page_context}"
-                )
-                answer, provider, model = await _request_llm_text(prompt=prompt)
-                plan.notes.append(f"llm_provider={provider}")
-                plan.notes.append(f"llm_model={model}")
-                user_message = answer
-                if page_url:
-                    user_message += f"\n\n참조 페이지: {page_url}"
-                execution = AgentExecutionResult(
-                    success=True,
-                    user_message=user_message,
-                    summary="Notion 조회 후 LLM 정리 완료",
-                    artifacts={
-                        "router_mode": decision.mode,
-                        "llm_provider": provider,
-                        "llm_model": model,
-                        "source_page_id": page_id,
-                        "source_page_url": page_url,
-                    },
-                    steps=[
-                        AgentExecutionStep(name="skill_notion_search", status="success", detail=f"title={page_title}"),
-                        AgentExecutionStep(name="skill_notion_retrieve_block_children", status="success", detail=f"page_id={page_id}"),
-                        AgentExecutionStep(name="llm_solve", status="success", detail=f"provider={provider}:{model}"),
-                    ],
-                )
-                return AgentRunResult(
-                    ok=True,
-                    stage="execution",
-                    plan=plan,
-                    result_summary=execution.summary,
-                    execution=execution,
-                    plan_source="router_v2",
-                )
-
-            raise HTTPException(status_code=400, detail="unsupported_service")
+        direct_result = await execute_from_intent(
+            user_text=user_text,
+            user_id=user_id,
+            decision=decision,
+            plan=plan,
+        )
+        return direct_result
 
     except NeedsInputSignal as signal:
         needs_input_message = _build_needs_input_message(questions=signal.questions, choices=signal.choices)

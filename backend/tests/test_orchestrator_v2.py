@@ -1,11 +1,16 @@
 import asyncio
 
+from fastapi import HTTPException
+
+from agent.intent_contract import IntentPayload
 from agent.orchestrator_v2 import (
     MODE_LLM_ONLY,
     MODE_LLM_THEN_SKILL,
     MODE_SKILL_THEN_LLM,
     _extract_linear_update_description_text,
     _parse_router_payload,
+    build_intent_json,
+    execute_from_intent,
     route_request_v2,
     try_run_v2_orchestration,
 )
@@ -267,6 +272,194 @@ def test_try_run_v2_orchestration_uses_llm_router_when_enabled(monkeypatch):
     assert result.ok is True
     assert result.execution is not None
     assert any(note == "router_source=llm" for note in result.plan.notes)
+
+
+def test_try_run_v2_orchestration_rejects_invalid_intent_mode_skill_combo(monkeypatch):
+    async def _fake_intent(**kwargs):
+        return (
+            IntentPayload(
+                mode=MODE_LLM_THEN_SKILL,
+                skill_name="linear.issue_search",
+                arguments={},
+                missing_fields=[],
+                confidence=1.0,
+                decision_reason="bad_combo",
+            ),
+            {"router_source": "test"},
+        )
+
+    monkeypatch.setattr("agent.orchestrator_v2.build_intent_json", _fake_intent)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear 최근 이슈 검색",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("error_code") == "invalid_intent_mode_skill_combo"
+
+
+def test_build_intent_json_snapshot_linear_recent_list():
+    intent, meta = asyncio.run(
+        build_intent_json(
+            user_text="linear 최근 이슈 10개 검색해줘",
+            connected_services=["linear"],
+        )
+    )
+
+    assert intent.mode == MODE_SKILL_THEN_LLM
+    assert intent.skill_name == "linear.issue_search"
+    assert intent.arguments.get("linear_first") == 10
+    assert intent.arguments.get("linear_query") == ""
+    assert meta.get("router_source") in {"rule", "llm_fallback_rule"}
+
+
+def test_execute_from_intent_blocks_llm_only_with_skill():
+    decision = type(
+        "_Decision",
+        (),
+        {
+            "mode": MODE_LLM_ONLY,
+            "skill_name": "linear.issue_search",
+            "arguments": {},
+        },
+    )()
+    plan = type("_Plan", (), {"notes": []})()
+
+    try:
+        asyncio.run(
+            execute_from_intent(
+                user_text="linear 최근 이슈 검색",
+                user_id="user-1",
+                decision=decision,  # type: ignore[arg-type]
+                plan=plan,  # type: ignore[arg-type]
+            )
+        )
+    except HTTPException as exc:
+        assert str(exc.detail) == "invalid_intent_mode_skill_combo"
+    else:
+        raise AssertionError("expected HTTPException")
+
+
+def test_execute_from_intent_blocks_llm_then_skill_with_read_skill():
+    decision = type(
+        "_Decision",
+        (),
+        {
+            "mode": MODE_LLM_THEN_SKILL,
+            "skill_name": "notion.page_search",
+            "arguments": {},
+        },
+    )()
+    plan = type("_Plan", (), {"notes": []})()
+
+    try:
+        asyncio.run(
+            execute_from_intent(
+                user_text="notion 최근 페이지 3개 검색",
+                user_id="user-1",
+                decision=decision,  # type: ignore[arg-type]
+                plan=plan,  # type: ignore[arg-type]
+            )
+        )
+    except HTTPException as exc:
+        assert str(exc.detail) == "invalid_intent_mode_skill_combo"
+    else:
+        raise AssertionError("expected HTTPException")
+
+
+def test_execute_from_intent_handles_llm_only(monkeypatch):
+    async def _fake_llm(*, prompt: str):
+        return "일반 답변", "openai", "gpt-4o-mini"
+
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    decision = type(
+        "_Decision",
+        (),
+        {
+            "mode": MODE_LLM_ONLY,
+            "skill_name": None,
+            "arguments": {},
+        },
+    )()
+
+    plan = type(
+        "_Plan",
+        (),
+        {
+            "notes": [],
+        },
+    )()
+
+    result = asyncio.run(
+        execute_from_intent(
+            user_text="한국의 수도는?",
+            user_id="user-1",
+            decision=decision,  # type: ignore[arg-type]
+            plan=plan,  # type: ignore[arg-type]
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert "일반 답변" in result.execution.user_message
+
+
+def test_execute_from_intent_handles_skill_then_llm_linear_recent_list(monkeypatch):
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        if tool_name == "linear_list_issues":
+            return {
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "i1",
+                                "identifier": "OPT-1",
+                                "title": "첫 이슈",
+                                "url": "https://linear.app/issue/OPT-1",
+                            }
+                        ]
+                    }
+                }
+            }
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+
+    decision = type(
+        "_Decision",
+        (),
+        {
+            "mode": MODE_SKILL_THEN_LLM,
+            "skill_name": "linear.issue_search",
+            "arguments": {"linear_query": "", "linear_first": 1},
+            "selected_tools": ["linear_search_issues"],
+            "target_services": ["linear"],
+        },
+    )()
+
+    plan = type("_Plan", (), {"notes": []})()
+
+    result = asyncio.run(
+        execute_from_intent(
+            user_text="linear 최근 이슈 1개 검색해줘",
+            user_id="user-1",
+            decision=decision,  # type: ignore[arg-type]
+            plan=plan,  # type: ignore[arg-type]
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert "Linear 최근 이슈" in result.execution.user_message
 
 
 def test_try_run_v2_orchestration_overrides_llm_mode_for_linear_recent_list(monkeypatch):
