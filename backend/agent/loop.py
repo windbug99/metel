@@ -54,6 +54,9 @@ def _should_run_v2(*, settings, user_id: str) -> tuple[bool, str]:
     percent = int(getattr(settings, "skill_v2_traffic_percent", 100))
     if _v2_rollout_hit(user_id=user_id, percent=percent):
         return True, f"rollout_{max(0, min(100, percent))}"
+    # Shadow mode must execute V2 even on rollout miss so that shadow metrics are populated.
+    if bool(getattr(settings, "skill_v2_shadow_mode", False)):
+        return True, f"rollout_{max(0, min(100, percent))}_shadow"
     return False, f"rollout_{max(0, min(100, percent))}_miss"
 
 
@@ -1265,23 +1268,38 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
 
     contract_ok, contract_reason = validate_plan_contract(plan)
     if not contract_ok:
-        plan.notes.append(f"plan_contract_invalid:{contract_reason}")
-        summary = "작업 계획 검증에 실패했습니다."
-        execution = AgentExecutionResult(
-            success=False,
-            summary=summary,
-            user_message="요청을 실행하기 위한 작업 계획 검증에 실패했습니다. 다시 시도해주세요.",
-            artifacts={"error_code": "plan_contract_invalid", "contract_reason": str(contract_reason or "unknown")},
-            steps=[AgentExecutionStep(name="plan_contract", status="error", detail=str(contract_reason or "unknown"))],
-        )
-        return AgentRunResult(
-            ok=False,
-            stage="planning",
-            plan=plan,
-            result_summary=summary,
-            execution=execution,
-            plan_source=plan_source,
-        )
+        if plan_source == "llm" and planner_rule_fallback_enabled:
+            fallback_plan = build_agent_plan(user_text=user_text, connected_services=connected_services)
+            fallback_ok, fallback_reason = validate_plan_contract(fallback_plan)
+            if fallback_ok:
+                fallback_plan.notes.append(f"plan_contract_recovered_from_llm:{contract_reason}")
+                if llm_error:
+                    fallback_plan.notes.append(f"llm_planner_fallback:{llm_error}")
+                plan = fallback_plan
+                plan_source = "rule"
+                contract_ok = True
+            else:
+                plan.notes.append(f"plan_contract_fallback_failed:{fallback_reason}")
+        if contract_ok:
+            pass
+        else:
+            plan.notes.append(f"plan_contract_invalid:{contract_reason}")
+            summary = "작업 계획 검증에 실패했습니다."
+            execution = AgentExecutionResult(
+                success=False,
+                summary=summary,
+                user_message="요청을 실행하기 위한 작업 계획 검증에 실패했습니다. 다시 시도해주세요.",
+                artifacts={"error_code": "plan_contract_invalid", "contract_reason": str(contract_reason or "unknown")},
+                steps=[AgentExecutionStep(name="plan_contract", status="error", detail=str(contract_reason or "unknown"))],
+            )
+            return AgentRunResult(
+                ok=False,
+                stage="planning",
+                plan=plan,
+                result_summary=summary,
+                execution=execution,
+                plan_source=plan_source,
+            )
 
     execution = None
     autonomous_enabled = bool(getattr(settings, "llm_autonomous_enabled", False))

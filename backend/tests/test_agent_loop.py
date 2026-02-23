@@ -41,6 +41,7 @@ def test_run_agent_analysis_slot_question_and_resume(monkeypatch):
 
     class _Settings:
         llm_autonomous_enabled = False
+        llm_planner_rule_fallback_enabled = False
         slot_loop_enabled = True
         slot_loop_rollout_percent = 100
 
@@ -843,6 +844,61 @@ def test_run_agent_analysis_runs_v2_in_shadow_mode_but_returns_legacy(monkeypatc
     assert result.execution is not None
     assert result.execution.user_message == "legacy-ok"
     assert v2_calls["count"] == 1
+    assert any(note == "skill_v2_shadow_mode=1" for note in result.plan.notes)
+    assert any(note == "skill_v2_shadow_executed=1" for note in result.plan.notes)
+
+
+def test_run_agent_analysis_runs_v2_in_shadow_mode_even_when_rollout_zero(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        skill_router_v2_enabled = True
+        skill_runner_v2_enabled = True
+        skill_v2_shadow_mode = True
+        skill_v2_traffic_percent = 0
+        llm_response_finalizer_enabled = False
+
+    v2_calls = {"count": 0}
+
+    async def _fake_v2(**kwargs):
+        v2_calls["count"] += 1
+        plan = AgentPlan(
+            user_text=kwargs["user_text"],
+            requirements=[AgentRequirement(summary="v2")],
+            target_services=[],
+            selected_tools=[],
+            workflow_steps=["1"],
+            notes=[],
+        )
+        execution = AgentExecutionResult(success=True, user_message="v2-ok", summary="v2-done")
+        return AgentRunResult(
+            ok=True,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    llm_plan = _sample_plan()
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        return AgentExecutionResult(success=True, user_message="legacy-ok", summary="legacy-done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_run_v2_orchestration", _fake_v2)
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("오늘 서울 날씨 알려줘", ["notion"], "user-shadow-zero"))
+    assert result.ok is True
+    assert result.plan_source == "llm"
+    assert result.execution is not None
+    assert result.execution.user_message == "legacy-ok"
+    assert v2_calls["count"] == 1
+    assert any(note == "skill_v2_rollout=rollout_0_shadow" for note in result.plan.notes)
     assert any(note == "skill_v2_shadow_mode=1" for note in result.plan.notes)
     assert any(note == "skill_v2_shadow_executed=1" for note in result.plan.notes)
 
@@ -1993,6 +2049,7 @@ def test_run_agent_analysis_rejects_invalid_plan_contract(monkeypatch):
 
     class _Settings:
         llm_autonomous_enabled = False
+        llm_planner_rule_fallback_enabled = False
 
     async def _fake_try_build(**kwargs):
         return llm_plan, None
@@ -2010,6 +2067,72 @@ def test_run_agent_analysis_rejects_invalid_plan_contract(monkeypatch):
     assert result.execution.artifacts.get("error_code") == "plan_contract_invalid"
     assert result.execution.artifacts.get("contract_reason") == "missing_output_schema:task_linear_update_issue"
     assert result.plan_source == "llm"
+
+
+def test_run_agent_analysis_recovers_invalid_llm_plan_contract_with_rule_fallback(monkeypatch):
+    invalid_llm_plan = AgentPlan(
+        user_text="openweather API 사용방법을 정리해서 linear OPT-46 설명에 추가해줘",
+        requirements=[AgentRequirement(summary="요약")],
+        target_services=["linear", "spotify"],
+        selected_tools=["linear_search_issues"],
+        workflow_steps=["1. summarize"],
+        tasks=[
+            AgentTask(
+                id="task_llm_summary",
+                title="요약",
+                task_type="LLM",
+                instruction="요약",
+                output_schema={"type": "text", "sentences": 3},
+            )
+        ],
+        notes=[],
+    )
+    valid_rule_plan = AgentPlan(
+        user_text=invalid_llm_plan.user_text,
+        requirements=[AgentRequirement(summary="Linear 이슈 수정")],
+        target_services=["linear"],
+        selected_tools=["linear_search_issues", "linear_update_issue"],
+        workflow_steps=["1. search", "2. update"],
+        tasks=[
+            AgentTask(
+                id="task_linear_search",
+                title="Linear 이슈 조회",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_search_issues",
+                payload={"query": "OPT-46", "first": 5},
+                output_schema={"type": "tool_result", "service": "linear", "tool": "linear_search_issues"},
+            )
+        ],
+        notes=[],
+    )
+
+    class _Settings:
+        llm_autonomous_enabled = False
+        llm_planner_rule_fallback_enabled = True
+
+    async def _fake_try_build(**kwargs):
+        return invalid_llm_plan, None
+
+    def _fake_build_plan(user_text: str, connected_services: list[str]):
+        return valid_rule_plan
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        assert plan is valid_rule_plan
+        assert any(
+            note.startswith("plan_contract_recovered_from_llm:") or note.startswith("plan_realign_from_llm:")
+            for note in plan.notes
+        )
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.build_agent_plan", _fake_build_plan)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis(invalid_llm_plan.user_text, ["linear", "spotify"], "user-1"))
+    assert result.ok is True
+    assert result.plan_source == "rule"
 
 
 def test_run_agent_analysis_realigns_cross_service_tool_leak(monkeypatch):

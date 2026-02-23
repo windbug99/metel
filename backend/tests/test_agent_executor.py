@@ -393,8 +393,8 @@ def test_task_orchestration_does_not_reparse_user_text_when_planner_llm(monkeypa
 
     result = asyncio.run(execute_agent_plan("user-1", plan))
     assert result.success is False
-    assert result.artifacts.get("error_code") == "validation_error"
-    assert result.artifacts.get("missing_slot") == "title"
+    assert result.artifacts.get("error_code") == "auto_fill_failed"
+    assert "team_id" in str(result.artifacts.get("missing_slots") or "")
 
 
 def test_execute_linear_update_issue_returns_slot_metadata_when_missing(monkeypatch):
@@ -415,9 +415,9 @@ def test_execute_linear_update_issue_returns_slot_metadata_when_missing(monkeypa
 
     result = asyncio.run(execute_agent_plan("user-1", plan))
     assert result.success is False
-    assert result.artifacts.get("error_code") == "validation_error"
+    assert result.artifacts.get("error_code") == "auto_fill_failed"
     assert result.artifacts.get("slot_action") == "linear_update_issue"
-    assert result.artifacts.get("missing_slot") == "issue_id"
+    assert "issue_id" in str(result.artifacts.get("missing_slots") or "")
 
 
 def test_task_orchestration_tool_only_linear_update_missing_issue_id(monkeypatch):
@@ -449,7 +449,7 @@ def test_task_orchestration_tool_only_linear_update_missing_issue_id(monkeypatch
     result = asyncio.run(execute_agent_plan("user-1", plan))
     assert result.success is False
     assert result.artifacts.get("slot_action") == "linear_update_issue"
-    assert result.artifacts.get("missing_slot") == "issue_id"
+    assert "issue_id" in str(result.artifacts.get("missing_slots") or "")
 
 
 def test_task_orchestration_linear_update_requires_update_fields(monkeypatch):
@@ -487,10 +487,12 @@ def test_task_orchestration_linear_update_requires_update_fields(monkeypatch):
 
     result = asyncio.run(execute_agent_plan("user-1", plan))
     assert result.success is False
-    assert result.artifacts.get("error_code") == "validation_error"
+    assert result.artifacts.get("error_code") == "auto_fill_failed"
     assert result.artifacts.get("slot_action") == "linear_update_issue"
-    assert result.artifacts.get("missing_slot") in {"issue_id", "description"}
-    assert [name for name, _ in calls] == ["linear_search_issues", "linear_list_issues"]
+    assert "issue_id" in str(result.artifacts.get("missing_slots") or "")
+    call_names = [name for name, _ in calls]
+    assert "linear_search_issues" in call_names
+    assert "linear_list_issues" in call_names
 
 
 def test_task_orchestration_linear_update_resolves_identifier_to_issue_id(monkeypatch):
@@ -715,8 +717,8 @@ def test_task_orchestration_linear_update_drops_unresolved_identifier_issue_id(m
 
     result = asyncio.run(execute_agent_plan("user-1", plan))
     assert result.success is False
-    assert result.artifacts.get("error_code") == "validation_error"
-    assert result.artifacts.get("missing_slot") == "issue_id"
+    assert result.artifacts.get("error_code") == "auto_fill_failed"
+    assert "issue_id" in str(result.artifacts.get("missing_slots") or "")
 
 
 def test_execute_agent_plan_blocks_llm_plan_fallback_when_tasks_not_executable(monkeypatch):
@@ -780,5 +782,5 @@ def test_task_orchestration_linear_create_issue_removes_unresolved_team_alias(mo
 
     result = asyncio.run(execute_agent_plan("user-1", plan))
     assert result.success is False
-    assert result.artifacts.get("error_code") == "validation_error"
-    assert result.artifacts.get("missing_slot") == "team_id"
+    assert result.artifacts.get("error_code") == "auto_fill_failed"
+    assert "team_id" in str(result.artifacts.get("missing_slots") or "")

@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     telegram_debug_report_enabled: bool = False
     telegram_message_max_chars: int = 3500
     rule_reparse_for_llm_plan_enabled: bool = False
+    delete_operations_enabled: bool = False
+    auto_fill_no_question_enabled: bool = True
 
 
 @lru_cache

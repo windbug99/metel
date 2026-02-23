@@ -96,6 +96,24 @@ DAYS=3 CURRENT_PERCENT=0 ./scripts/stage6_quickcheck.sh
 - `docs/reports/skill_v2_rollout_latest.json`
 - `docs/reports/skill_v2_rollout_decision_latest.json`
 
+## 8) Telegram E2E 자동 실행 + 자동 채점
+
+로컬/스테이징에서 텔레그램으로 테스트 문장을 자동 발송하고 `command_logs` 기준으로 PASS/FAIL 리포트를 생성:
+
+```bash
+cd backend
+. .venv/bin/activate
+python scripts/run_stage6_telegram_e2e.py --chat-id <TELEGRAM_CHAT_ID> --reset-pending --reset-between-chains
+```
+
+옵션:
+- `--dry-run`: 문장 목록만 출력
+- `--poll-timeout-sec 60`: 각 문장 결과 대기시간 조정
+- `--output-json ../docs/reports/stage6_telegram_e2e_latest.json`: 리포트 경로 지정
+
+출력:
+- 기본 리포트: `docs/reports/stage6_telegram_e2e_latest.json`
+
 리포트만 다시 계산:
 
 ```bash

@@ -193,6 +193,13 @@ def test_route_request_v2_llm_then_skill_for_linear_create_service_first_title()
     assert decision.arguments.get("linear_issue_title") == "비밀번호 찾기 오류"
 
 
+def test_route_request_v2_linear_issue_to_notion_page_create():
+    decision = route_request_v2("linear opt-47 이슈로 notion에 페이지 생성하세요", ["linear", "notion"])
+    assert decision.mode == MODE_LLM_THEN_SKILL
+    assert decision.skill_name == "notion.page_create"
+    assert decision.arguments.get("linear_issue_ref") == "opt-47"
+
+
 def test_route_request_v2_llm_then_skill_for_notion_delete():
     decision = route_request_v2('노션에서 "스프린트 회고" 페이지 삭제해줘', ["notion"])
     assert decision.mode == MODE_LLM_THEN_SKILL
@@ -787,8 +794,7 @@ def test_try_run_v2_orchestration_skill_then_llm_linear_returns_needs_input_when
     assert result is not None
     assert result.ok is False
     assert result.execution is not None
-    assert result.execution.artifacts.get("needs_input") == "true"
-    assert result.execution.artifacts.get("error_code") == "validation_error"
+    assert result.execution.artifacts.get("error_code") == "not_found"
 
 
 def test_try_run_v2_orchestration_skill_then_llm_linear_falls_back_to_list_issues(monkeypatch):
@@ -917,8 +923,28 @@ def test_try_run_v2_orchestration_llm_then_notion_update(monkeypatch):
 
 
 def test_try_run_v2_orchestration_llm_then_notion_update_requires_patch_detail(monkeypatch):
+    calls = {"search": 0, "append": 0}
+
     async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
-        raise AssertionError("skill should not run without update patch detail")
+        assert user_id == "user-1"
+        if tool_name == "notion_search":
+            calls["search"] += 1
+            return {
+                "data": {
+                    "results": [
+                        {
+                            "id": "page-1",
+                            "url": "https://notion.so/page-1",
+                            "properties": {"title": {"type": "title", "title": [{"plain_text": "스프린트 회고"}]}},
+                        }
+                    ]
+                }
+            }
+        if tool_name == "notion_append_block_children":
+            calls["append"] += 1
+            assert payload.get("block_id") == "page-1"
+            return {"data": {"results": []}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
 
     async def _fake_llm(*, prompt: str):
         return "업데이트 안내", "openai", "gpt-4o-mini"
@@ -935,10 +961,10 @@ def test_try_run_v2_orchestration_llm_then_notion_update_requires_patch_detail(m
     )
 
     assert result is not None
-    assert result.ok is False
+    assert result.ok is True
     assert result.execution is not None
-    assert result.execution.artifacts.get("needs_input") == "true"
-    assert "무엇을 업데이트할지" in result.execution.user_message
+    assert calls["search"] == 1
+    assert calls["append"] == 1
 
 
 def test_try_run_v2_orchestration_llm_then_notion_update_title_change(monkeypatch):
@@ -1130,8 +1156,18 @@ def test_try_run_v2_orchestration_llm_then_notion_create_translates_url_then_cre
 
 
 def test_try_run_v2_orchestration_llm_then_linear_update_requires_patch_detail(monkeypatch):
+    calls = {"search": 0, "update": 0}
+
     async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
-        raise AssertionError("tool should not run for generic linear update without patch detail")
+        if tool_name == "linear_search_issues":
+            calls["search"] += 1
+            return {"data": {"issues": {"nodes": [{"id": "issue-35", "identifier": "OPT-35", "description": "기존 설명"}]}}}
+        if tool_name == "linear_update_issue":
+            calls["update"] += 1
+            assert payload.get("issue_id") == "issue-35"
+            assert payload.get("description")
+            return {"data": {"issueUpdate": {"success": True, "issue": {"url": "https://linear.app/issue/OPT-35"}}}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
 
     async def _fake_llm(*, prompt: str):
         return "수정 설명 요약", "openai", "gpt-4o-mini"
@@ -1148,18 +1184,28 @@ def test_try_run_v2_orchestration_llm_then_linear_update_requires_patch_detail(m
     )
 
     assert result is not None
-    assert result.ok is False
+    assert result.ok is True
     assert result.execution is not None
-    assert result.execution.artifacts.get("needs_input") == "true"
-    assert "어떤 항목을 업데이트" in result.execution.user_message
+    assert calls["search"] == 1
+    assert calls["update"] == 1
 
 
 def test_try_run_v2_orchestration_linear_description_update_without_content_requires_patch(monkeypatch):
+    calls = {"search": 0, "update": 0}
+
     async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
-        raise AssertionError("tool should not run when update patch content is missing")
+        if tool_name == "linear_search_issues":
+            calls["search"] += 1
+            return {"data": {"issues": {"nodes": [{"id": "issue-46", "identifier": "OPT-46", "description": "기존 설명"}]}}}
+        if tool_name == "linear_update_issue":
+            calls["update"] += 1
+            assert payload.get("issue_id") == "issue-46"
+            assert payload.get("description")
+            return {"data": {"issueUpdate": {"success": True}}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
 
     async def _fake_llm(*, prompt: str):
-        raise AssertionError("llm should not run when update patch content is missing")
+        return "설명 보강안", "openai", "gpt-4o-mini"
 
     monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
     monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
@@ -1173,15 +1219,27 @@ def test_try_run_v2_orchestration_linear_description_update_without_content_requ
     )
 
     assert result is not None
-    assert result.ok is False
+    assert result.ok is True
     assert result.execution is not None
-    assert result.execution.artifacts.get("needs_input") == "true"
-    assert "어떤 항목을 업데이트" in result.execution.user_message
+    assert calls["search"] == 1
+    assert calls["update"] == 1
 
 
 def test_try_run_v2_orchestration_llm_then_linear_update_returns_needs_input_when_issue_ref_missing(monkeypatch):
+    calls = {"list": 0, "search": 0, "update": 0}
+
     async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
-        raise AssertionError("tool should not run when issue_ref is missing")
+        if tool_name == "linear_list_issues":
+            calls["list"] += 1
+            return {"data": {"issues": {"nodes": [{"id": "issue-1", "identifier": "OPT-1", "description": "기존 설명"}]}}}
+        if tool_name == "linear_search_issues":
+            calls["search"] += 1
+            return {"data": {"issues": {"nodes": [{"id": "issue-1", "identifier": "OPT-1", "description": "기존 설명"}]}}}
+        if tool_name == "linear_update_issue":
+            calls["update"] += 1
+            assert payload.get("issue_id") == "issue-1"
+            return {"data": {"issueUpdate": {"success": True}}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
 
     async def _fake_llm(*, prompt: str):
         return "수정 설명 요약", "openai", "gpt-4o-mini"
@@ -1198,10 +1256,11 @@ def test_try_run_v2_orchestration_llm_then_linear_update_returns_needs_input_whe
     )
 
     assert result is not None
-    assert result.ok is False
+    assert result.ok is True
     assert result.execution is not None
-    assert result.execution.artifacts.get("needs_input") == "true"
-    assert "이슈 키" in result.execution.user_message
+    assert calls["list"] == 1
+    assert calls["search"] >= 1
+    assert calls["update"] == 1
 
 
 def test_try_run_v2_orchestration_llm_then_linear_update_title_change_without_llm(monkeypatch):
@@ -1541,6 +1600,9 @@ def test_try_run_v2_orchestration_llm_then_linear_create(monkeypatch):
 def test_try_run_v2_orchestration_llm_then_linear_delete(monkeypatch):
     calls = {"search": 0, "delete": 0}
 
+    class _Settings:
+        delete_operations_enabled = False
+
     async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
         assert user_id == "user-1"
         if tool_name == "linear_search_issues":
@@ -1559,6 +1621,7 @@ def test_try_run_v2_orchestration_llm_then_linear_delete(monkeypatch):
 
     monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
     monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+    monkeypatch.setattr("agent.orchestrator_v2.get_settings", lambda: _Settings())
 
     result = asyncio.run(
         try_run_v2_orchestration(
@@ -1569,15 +1632,18 @@ def test_try_run_v2_orchestration_llm_then_linear_delete(monkeypatch):
     )
 
     assert result is not None
-    assert result.ok is True
+    assert result.ok is False
     assert result.execution is not None
-    assert calls["search"] == 1
-    assert calls["delete"] == 1
-    assert result.execution.artifacts.get("deleted_issue_id") == "issue-delete-35"
+    assert result.execution.artifacts.get("error_code") == "delete_disabled"
+    assert calls["search"] == 0
+    assert calls["delete"] == 0
 
 
 def test_try_run_v2_orchestration_llm_then_linear_delete_fails_when_archive_unsuccessful(monkeypatch):
     calls = {"search": 0, "delete": 0}
+
+    class _Settings:
+        delete_operations_enabled = False
 
     async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
         assert user_id == "user-1"
@@ -1594,6 +1660,7 @@ def test_try_run_v2_orchestration_llm_then_linear_delete_fails_when_archive_unsu
 
     monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
     monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+    monkeypatch.setattr("agent.orchestrator_v2.get_settings", lambda: _Settings())
 
     result = asyncio.run(
         try_run_v2_orchestration(
@@ -1606,13 +1673,16 @@ def test_try_run_v2_orchestration_llm_then_linear_delete_fails_when_archive_unsu
     assert result is not None
     assert result.ok is False
     assert result.execution is not None
-    assert result.execution.artifacts.get("error_code") == "linear_issue_delete_failed"
-    assert calls["search"] == 1
-    assert calls["delete"] == 1
+    assert result.execution.artifacts.get("error_code") == "delete_disabled"
+    assert calls["search"] == 0
+    assert calls["delete"] == 0
 
 
 def test_try_run_v2_orchestration_llm_then_notion_delete(monkeypatch):
     calls = {"search": 0, "delete": 0}
+
+    class _Settings:
+        delete_operations_enabled = False
 
     async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
         assert user_id == "user-1"
@@ -1646,6 +1716,7 @@ def test_try_run_v2_orchestration_llm_then_notion_delete(monkeypatch):
 
     monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
     monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+    monkeypatch.setattr("agent.orchestrator_v2.get_settings", lambda: _Settings())
 
     result = asyncio.run(
         try_run_v2_orchestration(
@@ -1656,11 +1727,11 @@ def test_try_run_v2_orchestration_llm_then_notion_delete(monkeypatch):
     )
 
     assert result is not None
-    assert result.ok is True
+    assert result.ok is False
     assert result.execution is not None
-    assert calls["search"] == 1
-    assert calls["delete"] == 1
-    assert result.execution.artifacts.get("deleted_page_id") == "page-del-1"
+    assert result.execution.artifacts.get("error_code") == "delete_disabled"
+    assert calls["search"] == 0
+    assert calls["delete"] == 0
 
 
 def test_try_run_v2_orchestration_skill_then_llm_for_notion(monkeypatch):
@@ -1761,6 +1832,9 @@ def test_try_run_v2_orchestration_returns_needs_input_for_ambiguous_notion_updat
                     ]
                 }
             }
+        if tool_name == "notion_append_block_children":
+            assert payload.get("block_id") == "page-1"
+            return {"data": {"results": []}}
         raise AssertionError(f"unexpected tool call: {tool_name}")
 
     async def _fake_llm(*, prompt: str):
@@ -1778,11 +1852,9 @@ def test_try_run_v2_orchestration_returns_needs_input_for_ambiguous_notion_updat
     )
 
     assert result is not None
-    assert result.ok is False
+    assert result.ok is True
     assert result.execution is not None
-    assert result.execution.artifacts.get("needs_input") == "true"
-    assert result.execution.artifacts.get("error_code") == "validation_error"
-    assert "선택 가능한 항목" in result.execution.user_message
+    assert result.execution.artifacts.get("updated_page_id") == "page-1"
 
 
 def test_try_run_v2_orchestration_linear_create_uses_default_title_when_missing(monkeypatch):
@@ -1846,9 +1918,119 @@ def test_try_run_v2_orchestration_notion_create_uses_default_title_when_missing(
     assert captured.get("title") == "new page"
 
 
+def test_try_run_v2_orchestration_notion_create_from_linear_issue(monkeypatch):
+    calls = {"search": 0, "create": 0}
+    captured: dict = {}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        assert user_id == "user-1"
+        if tool_name == "linear_search_issues":
+            calls["search"] += 1
+            assert payload.get("query") == "opt-47"
+            return {
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "issue-47",
+                                "identifier": "OPT-47",
+                                "title": "로그인 오류",
+                                "description": "재현 경로: 앱 실행 후 로그인 버튼 클릭 시 500",
+                                "url": "https://linear.app/issue/OPT-47",
+                            }
+                        ]
+                    }
+                }
+            }
+        if tool_name == "notion_create_page":
+            calls["create"] += 1
+            title_nodes = (((payload.get("properties") or {}).get("title") or {}).get("title") or [])
+            captured["title"] = (((title_nodes[0] or {}).get("text") or {}).get("content") if title_nodes else "")
+            children = payload.get("children") or []
+            captured["content"] = (
+                (((children[0] or {}).get("paragraph") or {}).get("rich_text") or [{}])[0]
+                .get("text", {})
+                .get("content", "")
+            )
+            return {"data": {"url": "https://notion.so/new-page"}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        raise AssertionError("llm should not be called for linear->notion copy create intent")
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear opt-47 이슈로 notion에 페이지 생성하세요",
+            connected_services=["linear", "notion"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert calls["search"] == 1
+    assert calls["create"] == 1
+    assert captured.get("title") == "로그인 오류"
+    assert "Linear 이슈: OPT-47" in captured.get("content", "")
+    assert "재현 경로" in captured.get("content", "")
+
+
+def test_try_run_v2_orchestration_notion_create_from_linear_issue_falls_back_when_not_found(monkeypatch):
+    calls = {"search": 0, "create": 0}
+    captured: dict = {}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        assert user_id == "user-1"
+        if tool_name == "linear_search_issues":
+            calls["search"] += 1
+            return {"data": {"issues": {"nodes": []}}}
+        if tool_name == "linear_list_issues":
+            return {"data": {"issues": {"nodes": []}}}
+        if tool_name == "notion_create_page":
+            calls["create"] += 1
+            title_nodes = (((payload.get("properties") or {}).get("title") or {}).get("title") or [])
+            captured["title"] = (((title_nodes[0] or {}).get("text") or {}).get("content") if title_nodes else "")
+            children = payload.get("children") or []
+            captured["content"] = (
+                (((children[0] or {}).get("paragraph") or {}).get("rich_text") or [{}])[0]
+                .get("text", {})
+                .get("content", "")
+            )
+            return {"data": {"url": "https://notion.so/new-page"}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        raise AssertionError("llm should not be called for linear->notion copy create intent")
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear OPT-47 이슈로 notion에 페이지 생성하세요",
+            connected_services=["linear", "notion"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert calls["search"] >= 1
+    assert calls["create"] == 1
+    assert captured.get("title") == "Linear OPT-47"
+    assert "Linear 이슈 참조: OPT-47" in captured.get("content", "")
+
+
 def test_try_run_v2_orchestration_forces_rule_on_explicit_notion_mutation_intent(monkeypatch):
     class _Settings:
         skill_router_v2_llm_enabled = True
+
+    calls = {"search": 0, "append": 0}
 
     async def _fake_router(**kwargs):
         # Deliberately wrong: read flow for explicit update intent.
@@ -1872,9 +2054,31 @@ def test_try_run_v2_orchestration_forces_rule_on_explicit_notion_mutation_intent
     async def _fake_llm(*, prompt: str):
         return "업데이트 본문", "openai", "gpt-4o-mini"
 
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        assert user_id == "user-1"
+        if tool_name == "notion_search":
+            calls["search"] += 1
+            return {
+                "data": {
+                    "results": [
+                        {
+                            "id": "page-1",
+                            "url": "https://notion.so/page-1",
+                            "properties": {"title": {"type": "title", "title": [{"plain_text": "자동 선택 페이지"}]}},
+                        }
+                    ]
+                }
+            }
+        if tool_name == "notion_append_block_children":
+            calls["append"] += 1
+            assert payload.get("block_id") == "page-1"
+            return {"data": {"results": []}}
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
     monkeypatch.setattr("agent.orchestrator_v2.get_settings", lambda: _Settings())
     monkeypatch.setattr("agent.orchestrator_v2._request_router_decision_with_llm", _fake_router)
     monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
 
     result = asyncio.run(
         try_run_v2_orchestration(
@@ -1885,9 +2089,10 @@ def test_try_run_v2_orchestration_forces_rule_on_explicit_notion_mutation_intent
     )
 
     assert result is not None
-    assert result.ok is False
+    assert result.ok is True
     assert result.execution is not None
-    assert result.execution.artifacts.get("needs_input") == "true"
+    assert calls["search"] == 1
+    assert calls["append"] == 1
     assert any(note == "router_decision_override=force_rule_explicit_mutation_intent" for note in result.plan.notes)
 
 

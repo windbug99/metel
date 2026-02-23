@@ -348,6 +348,28 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
             )
 
     if tasks:
+        # Contract safety: ensure at least one TOOL task exists.
+        # Some summary-heavy prompts can yield only LLM tasks, which violates plan contract.
+        has_tool = any(str(task.task_type or "").strip().upper() == "TOOL" for task in tasks)
+        if has_tool:
+            return tasks
+        merged_tool_candidates = list(dict.fromkeys([*selected_tools, *available_tools]))
+        primary = _pick_primary_tool_for_intent(user_text, merged_tool_candidates)
+        if primary:
+            service = _tool_service_name(primary)
+            depends = [tasks[-1].id] if tasks else []
+            tasks.append(
+                AgentTask(
+                    id="task_primary_tool",
+                    title=f"도구 실행: {primary}",
+                    task_type="TOOL",
+                    service=service,
+                    tool_name=primary,
+                    depends_on=depends,
+                    payload={},
+                    output_schema={"type": "tool_result", "service": service or "", "tool": primary},
+                )
+            )
         return tasks
 
     # Generic synthesis path for newly-added services:

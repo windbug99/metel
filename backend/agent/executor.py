@@ -43,6 +43,12 @@ def _map_execution_error(detail: str) -> tuple[str, str, str]:
     lower = code.lower()
     upstream_message_match = re.search(r"\|message=([^|]+)", code)
     upstream_message = upstream_message_match.group(1).strip() if upstream_message_match else ""
+    if lower == "delete_disabled":
+        return (
+            "삭제 요청이 비활성화되어 있습니다.",
+            "현재 안전 정책으로 삭제는 지원하지 않습니다. 조회/생성/업데이트 요청으로 다시 시도해주세요.",
+            "delete_disabled",
+        )
 
     if "notion_not_connected" in lower or lower.endswith("_not_connected"):
         return (
@@ -101,6 +107,26 @@ def _map_execution_error(detail: str) -> tuple[str, str, str]:
         "요청을 실행하던 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
         "execution_error",
     )
+
+
+def _is_explicit_delete_request(text: str) -> bool:
+    raw = (text or "").strip()
+    lower = raw.lower()
+    has_delete = any(token in lower for token in ("삭제", "지워", "제거", "아카이브", "delete", "remove", "archive"))
+    if not has_delete:
+        return False
+    return any(token in lower for token in ("이슈", "issue", "페이지", "page", "문서"))
+
+
+def _is_delete_tool_call(tool_name: str, payload: dict) -> bool:
+    lower = (tool_name or "").strip().lower()
+    if any(token in lower for token in ("delete", "archive", "in_trash")):
+        return True
+    if "linear_update_issue" in lower and bool(payload.get("archived")):
+        return True
+    if "notion_update_page" in lower and bool(payload.get("archived") or payload.get("in_trash")):
+        return True
+    return False
 
 
 def _extract_page_title(page: dict) -> str:
@@ -304,6 +330,233 @@ async def _request_summary_with_provider(
         text_out = "".join(part.get("text", "") for part in parts if isinstance(part, dict)).strip()
         return text_out or None
     return None
+
+
+def _extract_json_object(text: str) -> dict | None:
+    candidate = (text or "").strip()
+    if not candidate:
+        return None
+    try:
+        parsed = json.loads(candidate)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    match = re.search(r"\{.*\}", candidate, flags=re.DOTALL)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if isinstance(parsed, dict):
+        return parsed
+    return None
+
+
+async def _request_json_with_provider(
+    *,
+    provider: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    openai_api_key: str | None,
+    google_api_key: str | None,
+) -> dict | None:
+    if provider == "openai":
+        if not openai_api_key:
+            return None
+        payload = {
+            "model": model,
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+        headers = {"Authorization": f"Bearer {openai_api_key}", "Content-Type": "application/json"}
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post(OPENAI_CHAT_COMPLETIONS_URL, headers=headers, json=payload)
+            if resp.status_code >= 400:
+                return None
+            content = ((resp.json().get("choices") or [{}])[0].get("message") or {}).get("content", "")
+            return _extract_json_object(str(content or ""))
+        except Exception:
+            return None
+    if provider == "gemini":
+        if not google_api_key:
+            return None
+        url = GEMINI_GENERATE_CONTENT_URL.format(model=model, api_key=google_api_key)
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}],
+            "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"},
+        }
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
+            if resp.status_code >= 400:
+                return None
+            parts = (((resp.json().get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
+            content = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
+            return _extract_json_object(content)
+        except Exception:
+            return None
+    return None
+
+
+async def _request_autofill_json(*, system_prompt: str, user_prompt: str) -> dict | None:
+    settings = get_settings()
+    attempts: list[tuple[str, str]] = []
+    primary_provider = str(getattr(settings, "llm_planner_provider", "openai") or "openai").strip().lower()
+    primary_model = str(getattr(settings, "llm_planner_model", "gpt-4o-mini") or "gpt-4o-mini").strip()
+    if primary_provider and primary_model:
+        attempts.append((primary_provider, primary_model))
+    fallback_provider = str(getattr(settings, "llm_planner_fallback_provider", "") or "").strip().lower()
+    fallback_model = str(getattr(settings, "llm_planner_fallback_model", "") or "").strip()
+    if fallback_provider and fallback_model:
+        attempts.append((fallback_provider, fallback_model))
+    if not attempts:
+        attempts = [("openai", "gpt-4o-mini"), ("gemini", "gemini-2.5-flash-lite")]
+    for provider, model in attempts:
+        parsed = await _request_json_with_provider(
+            provider=provider,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            openai_api_key=getattr(settings, "openai_api_key", None),
+            google_api_key=getattr(settings, "google_api_key", None),
+        )
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _fallback_linear_title_from_text(text: str) -> str:
+    normalized = " ".join((text or "").strip().split())
+    patterns = [
+        r"(?i)(.+?)\s*(?:이슈)\s*(?:생성|만들|작성|create)",
+        r"(?i)(?:linear|리니어)(?:에서|에|의)?\s*(.+?)\s*(?:이슈)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, normalized)
+        if not match:
+            continue
+        candidate = str(match.group(1) or "").strip(" \"'`.,")
+        candidate = re.sub(r"(?i)^(?:팀|team)\s*[:：]?\s*[^\s,]+\s*", "", candidate).strip()
+        if candidate:
+            return candidate[:120]
+    return "요청 기반 자동 생성 이슈"
+
+
+def _sanitize_linear_priority(value: object) -> int | None:
+    try:
+        parsed = int(str(value).strip())
+    except Exception:
+        return None
+    if parsed < 0 or parsed > 4:
+        return None
+    return parsed
+
+
+async def _get_linear_team_candidates(*, user_id: str, plan: AgentPlan, steps: list[AgentExecutionStep]) -> list[dict]:
+    try:
+        result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "linear_list_teams", "linear_list_teams"),
+            payload={"first": 20},
+        )
+    except Exception:
+        return []
+    nodes = (((result.get("data") or {}).get("teams") or {}).get("nodes") or [])
+    if isinstance(nodes, list):
+        steps.append(AgentExecutionStep(name="linear_list_teams_for_autofill", status="success", detail=f"count={len(nodes)}"))
+    return [item for item in nodes if isinstance(item, dict)]
+
+
+async def _autofill_linear_create_with_llm(
+    *,
+    user_text: str,
+    filled: dict,
+    team_candidates: list[dict],
+) -> dict:
+    teams_compact = [
+        {
+            "id": str(item.get("id") or "").strip(),
+            "key": str(item.get("key") or "").strip(),
+            "name": str(item.get("name") or "").strip(),
+        }
+        for item in team_candidates[:20]
+        if str(item.get("id") or "").strip()
+    ]
+    system_prompt = (
+        "사용자 요청에서 Linear 이슈 생성 입력을 자동 추론하는 JSON 생성기다. "
+        "반드시 JSON object만 반환한다."
+    )
+    user_prompt = (
+        "아래 입력으로 linear_create_issue payload를 보정해라.\n"
+        "- title/team_id는 가능한 한 채운다.\n"
+        "- description은 요청 의도를 기반으로 간결한 한국어로 생성한다.\n"
+        "- team_id는 반드시 제공된 teams 후보의 id 중 하나여야 한다.\n"
+        "- priority는 0~4 정수 또는 null.\n\n"
+        f"user_text={user_text}\n"
+        f"current_payload={json.dumps(filled, ensure_ascii=False)}\n"
+        f"teams={json.dumps(teams_compact, ensure_ascii=False)}\n"
+        '반환 스키마: {"title":string|null,"description":string|null,"team_id":string|null,"priority":number|null}'
+    )
+    parsed = await _request_autofill_json(system_prompt=system_prompt, user_prompt=user_prompt) or {}
+    out = dict(filled)
+    title = str(parsed.get("title") or "").strip()
+    if not title:
+        title = _fallback_linear_title_from_text(user_text)
+    out["title"] = title[:120]
+
+    description = str(parsed.get("description") or "").strip()
+    if description:
+        out["description"] = description[:5000]
+    elif _missing(out.get("description")):
+        out["description"] = f"사용자 요청 기반 자동 생성\n\n{user_text[:1000]}"
+
+    team_id = str(parsed.get("team_id") or out.get("team_id") or "").strip()
+    allowed_ids = {item.get("id") for item in teams_compact}
+    if team_id and team_id in allowed_ids:
+        out["team_id"] = team_id
+    elif teams_compact and _missing(out.get("team_id")):
+        out["team_id"] = str(teams_compact[0].get("id") or "").strip()
+
+    priority = _sanitize_linear_priority(parsed.get("priority"))
+    if priority is not None:
+        out["priority"] = priority
+    return out
+
+
+async def _autofill_linear_update_with_llm(*, user_text: str, filled: dict) -> dict:
+    system_prompt = (
+        "사용자 요청에서 Linear 이슈 업데이트 입력을 자동 추론하는 JSON 생성기다. "
+        "반드시 JSON object만 반환한다."
+    )
+    user_prompt = (
+        "아래 입력으로 linear_update_issue payload를 보정해라.\n"
+        "- issue_id는 이미 확정된 값이 있으면 유지하고, 없으면 null.\n"
+        "- title/description/state_id/priority 중 최소 1개를 채운다.\n"
+        "- priority는 0~4 정수 또는 null.\n\n"
+        f"user_text={user_text}\n"
+        f"current_payload={json.dumps(filled, ensure_ascii=False)}\n"
+        '반환 스키마: {"issue_id":string|null,"title":string|null,"description":string|null,"state_id":string|null,"priority":number|null}'
+    )
+    parsed = await _request_autofill_json(system_prompt=system_prompt, user_prompt=user_prompt) or {}
+    out = dict(filled)
+    for key, max_len in (("title", 120), ("description", 5000), ("state_id", 128)):
+        value = str(parsed.get(key) or "").strip()
+        if value and _missing(out.get(key)):
+            out[key] = value[:max_len]
+    priority = _sanitize_linear_priority(parsed.get("priority"))
+    if priority is not None and out.get("priority") in (None, ""):
+        out["priority"] = priority
+    if not any(out.get(key) not in (None, "") for key in ("title", "description", "state_id", "priority")):
+        out["description"] = f"사용자 요청 기반 자동 업데이트\n\n{user_text[:1000]}"
+    return out
 
 
 async def _summarize_text_with_llm(text: str, user_text: str) -> tuple[str, str]:
@@ -854,6 +1107,14 @@ async def _autofill_task_payload(
         elif team_reference:
             # Do not pass unresolved team alias/key as team_id to API.
             filled.pop("team_id", None)
+        if _missing(filled.get("team_id")) or _missing(filled.get("title")):
+            team_candidates = await _get_linear_team_candidates(user_id=user_id, plan=plan, steps=steps)
+            filled = await _autofill_linear_create_with_llm(
+                user_text=user_text,
+                filled=filled,
+                team_candidates=team_candidates,
+            )
+            steps.append(AgentExecutionStep(name="llm_autofill_linear_create_issue", status="success", detail="applied=1"))
 
     if "linear_update_issue" in tool_name:
         issue_ref = str(filled.get("issue_id") or "").strip()
@@ -878,6 +1139,28 @@ async def _autofill_task_payload(
             elif unresolved_from_reference:
                 # Prevent sending identifier-like value as internal issue id to update API.
                 filled.pop("issue_id", None)
+        if _missing(filled.get("issue_id")):
+            llm_guess = await _request_autofill_json(
+                system_prompt="사용자 요청에서 Linear 이슈 참조를 JSON으로 추출해라. JSON object만 반환한다.",
+                user_prompt=(
+                    f"user_text={user_text}\n"
+                    '반환 스키마: {"issue_ref": string|null}'
+                ),
+            ) or {}
+            guessed_ref = str(llm_guess.get("issue_ref") or "").strip()
+            if guessed_ref:
+                resolved_issue_id = await _resolve_linear_issue_id_from_reference(
+                    user_id=user_id,
+                    plan=plan,
+                    issue_reference=guessed_ref,
+                    steps=steps,
+                    step_name="slot_fill_linear_search_issue_from_llm_ref",
+                )
+                if resolved_issue_id:
+                    filled["issue_id"] = resolved_issue_id
+        if not any(filled.get(key) not in (None, "") for key in ("title", "description", "state_id", "priority")):
+            filled = await _autofill_linear_update_with_llm(user_text=user_text, filled=filled)
+            steps.append(AgentExecutionStep(name="llm_autofill_linear_update_issue", status="success", detail="applied=1"))
 
     if "linear_create_comment" in tool_name:
         issue_ref = str(filled.get("issue_id") or "").strip()
@@ -910,6 +1193,120 @@ async def _autofill_task_payload(
     return filled
 
 
+async def _force_fill_missing_slots(
+    *,
+    user_id: str,
+    plan: AgentPlan,
+    task: AgentTask,
+    payload: dict,
+    missing_slots: list[str],
+    steps: list[AgentExecutionStep],
+    slot_context: dict[str, str],
+) -> dict:
+    tool_name = (task.tool_name or "").strip().lower()
+    user_text = plan.user_text or ""
+    filled = dict(payload or {})
+    missing = [slot for slot in (missing_slots or []) if _missing(filled.get(slot))]
+    if not missing:
+        return filled
+
+    if "linear_create_issue" in tool_name:
+        team_candidates = await _get_linear_team_candidates(user_id=user_id, plan=plan, steps=steps)
+        filled = await _autofill_linear_create_with_llm(
+            user_text=user_text,
+            filled=filled,
+            team_candidates=team_candidates,
+        )
+        if _missing(filled.get("team_id")) and team_candidates:
+            filled["team_id"] = str(team_candidates[0].get("id") or "").strip()
+        if _missing(filled.get("title")):
+            filled["title"] = _fallback_linear_title_from_text(user_text)
+
+    if "linear_update_issue" in tool_name:
+        if _missing(filled.get("issue_id")):
+            guessed_ref = _extract_linear_issue_reference_for_update(user_text) or _extract_linear_issue_reference(user_text) or ""
+            if guessed_ref:
+                resolved_issue_id = await _resolve_linear_issue_id_from_reference(
+                    user_id=user_id,
+                    plan=plan,
+                    issue_reference=guessed_ref,
+                    steps=steps,
+                    step_name="force_fill_linear_search_issue",
+                )
+                if resolved_issue_id:
+                    filled["issue_id"] = resolved_issue_id
+            if _missing(filled.get("issue_id")):
+                try:
+                    listed = await execute_tool(
+                        user_id=user_id,
+                        tool_name=_pick_tool(plan, "linear_list_issues", "linear_list_issues"),
+                        payload={"first": 1},
+                    )
+                    first_issue = _first_linear_issue_id(listed)
+                    if first_issue:
+                        filled["issue_id"] = first_issue
+                        steps.append(AgentExecutionStep(name="force_fill_linear_issue_from_list", status="success", detail="count=1"))
+                except Exception:
+                    pass
+        filled = await _autofill_linear_update_with_llm(user_text=user_text, filled=filled)
+
+    if "notion_update_page" in tool_name and _missing(filled.get("page_id")):
+        page_id = slot_context.get("recent_notion_page_id", "")
+        if not page_id:
+            query = (
+                _extract_target_page_title(user_text)
+                or _extract_page_archive_target(user_text)
+                or _extract_first_quoted_text(user_text)
+                or "최근"
+            )
+            try:
+                searched = await execute_tool(
+                    user_id=user_id,
+                    tool_name=_pick_tool(plan, "notion_search", "notion_search"),
+                    payload={"query": query, "page_size": 1},
+                )
+                page_id = _first_notion_page_id(searched)
+                if page_id:
+                    steps.append(AgentExecutionStep(name="force_fill_notion_page_from_search", status="success", detail=f"query={query}"))
+            except Exception:
+                pass
+        if page_id:
+            filled["page_id"] = page_id
+
+    if "notion_append_block_children" in tool_name and _missing(filled.get("block_id")):
+        block_id = slot_context.get("recent_notion_page_id", "")
+        if not block_id:
+            query = _extract_target_page_title(user_text) or _extract_first_quoted_text(user_text) or "최근"
+            try:
+                searched = await execute_tool(
+                    user_id=user_id,
+                    tool_name=_pick_tool(plan, "notion_search", "notion_search"),
+                    payload={"query": query, "page_size": 1},
+                )
+                block_id = _first_notion_page_id(searched)
+            except Exception:
+                pass
+        if block_id:
+            filled["block_id"] = block_id
+        if _missing(filled.get("children")):
+            _, extracted_content = _extract_append_target_and_content(user_text)
+            fallback_text = extracted_content or user_text
+            filled["children"] = [
+                {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {"rich_text": [{"type": "text", "text": {"content": fallback_text[:1800]}}]},
+                }
+            ]
+
+    if "linear_search_issues" in tool_name and _missing(filled.get("query")):
+        filled["query"] = _extract_linear_search_query(user_text) or "최근"
+    if "notion_search" in tool_name and _missing(filled.get("query")):
+        filled["query"] = _extract_target_page_title(user_text) or _extract_first_quoted_text(user_text) or user_text[:80] or "최근"
+
+    return filled
+
+
 async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExecutionResult | None:
     if not _has_task_orchestration_candidate(plan):
         return None
@@ -938,6 +1335,17 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
                 steps=steps,
                 slot_context=slot_context,
             )
+            if (
+                not bool(getattr(get_settings(), "delete_operations_enabled", False))
+                and _is_delete_tool_call(tool_name, payload)
+            ):
+                return AgentExecutionResult(
+                    success=False,
+                    summary="삭제 요청이 비활성화되어 있습니다.",
+                    user_message="현재 안전 정책으로 삭제는 지원하지 않습니다. 조회/생성/업데이트 요청으로 다시 시도해주세요.",
+                    artifacts={"error_code": "delete_disabled", "slot_action": tool_name},
+                    steps=steps + [AgentExecutionStep(name=task.id, status="error", detail="delete_disabled")],
+                )
             normalized, missing_slots, validation_errors = validate_slots(tool_name, payload)
             payload = normalized
             if validation_errors:
@@ -959,24 +1367,65 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
                     steps=steps + [AgentExecutionStep(name=task.id, status="error", detail=f"validation:{validation_errors[0]}")],
                 )
             if missing_slots:
-                missing_slot = missing_slots[0]
-                return AgentExecutionResult(
-                    success=False,
-                    summary="필수 입력 슬롯이 누락되었습니다.",
-                    user_message=(
-                        f"`{missing_slot}` 값을 먼저 알려주세요.\n"
-                        f"예: {_slot_prompt_example(tool_name, missing_slot)}"
-                    ),
-                    artifacts={
-                        "error_code": "validation_error",
-                        "slot_action": tool_name,
-                        "slot_task_id": task.id,
-                        "missing_slot": missing_slot,
-                        "missing_slots": ",".join(missing_slots),
-                        "slot_payload_json": json.dumps(payload, ensure_ascii=False),
-                    },
-                    steps=steps + [AgentExecutionStep(name=task.id, status="error", detail=f"missing_slot:{missing_slot}")],
-                )
+                if bool(getattr(get_settings(), "auto_fill_no_question_enabled", True)):
+                    payload = await _force_fill_missing_slots(
+                        user_id=user_id,
+                        plan=plan,
+                        task=task,
+                        payload=payload,
+                        missing_slots=missing_slots,
+                        steps=steps,
+                        slot_context=slot_context,
+                    )
+                    normalized2, missing_slots2, validation_errors2 = validate_slots(tool_name, payload)
+                    payload = normalized2
+                    if validation_errors2:
+                        return AgentExecutionResult(
+                            success=False,
+                            summary="자동 입력 보정에 실패했습니다.",
+                            user_message="요청 처리 중 자동 입력 보정에 실패했습니다. 문장을 더 구체적으로 입력해주세요.",
+                            artifacts={
+                                "error_code": "auto_fill_failed",
+                                "slot_action": tool_name,
+                                "slot_task_id": task.id,
+                                "validation_error": validation_errors2[0],
+                                "validated_payload_json": json.dumps(payload, ensure_ascii=False),
+                            },
+                            steps=steps + [AgentExecutionStep(name=task.id, status="error", detail=f"autofill_validation:{validation_errors2[0]}")],
+                        )
+                    if missing_slots2:
+                        return AgentExecutionResult(
+                            success=False,
+                            summary="자동 입력 보정에 실패했습니다.",
+                            user_message="요청 처리 중 자동 입력을 끝까지 확정하지 못했습니다. 문장을 더 구체적으로 입력해주세요.",
+                            artifacts={
+                                "error_code": "auto_fill_failed",
+                                "slot_action": tool_name,
+                                "slot_task_id": task.id,
+                                "missing_slots": ",".join(missing_slots2),
+                                "slot_payload_json": json.dumps(payload, ensure_ascii=False),
+                            },
+                            steps=steps + [AgentExecutionStep(name=task.id, status="error", detail=f"autofill_missing:{missing_slots2[0]}")],
+                        )
+                else:
+                    missing_slot = missing_slots[0]
+                    return AgentExecutionResult(
+                        success=False,
+                        summary="필수 입력 슬롯이 누락되었습니다.",
+                        user_message=(
+                            f"`{missing_slot}` 값을 먼저 알려주세요.\n"
+                            f"예: {_slot_prompt_example(tool_name, missing_slot)}"
+                        ),
+                        artifacts={
+                            "error_code": "validation_error",
+                            "slot_action": tool_name,
+                            "slot_task_id": task.id,
+                            "missing_slot": missing_slot,
+                            "missing_slots": ",".join(missing_slots),
+                            "slot_payload_json": json.dumps(payload, ensure_ascii=False),
+                        },
+                        steps=steps + [AgentExecutionStep(name=task.id, status="error", detail=f"missing_slot:{missing_slot}")],
+                    )
             if "linear_update_issue" in tool_name:
                 has_update_field = any(
                     payload.get(key) not in (None, "")
@@ -2137,6 +2586,17 @@ async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionR
 
 async def execute_agent_plan(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
     try:
+        if (
+            not bool(getattr(get_settings(), "delete_operations_enabled", False))
+            and _is_explicit_delete_request(plan.user_text)
+        ):
+            return AgentExecutionResult(
+                success=False,
+                summary="삭제 요청이 비활성화되어 있습니다.",
+                user_message="현재 안전 정책으로 삭제는 지원하지 않습니다. 조회/생성/업데이트 요청으로 다시 시도해주세요.",
+                artifacts={"error_code": "delete_disabled"},
+                steps=[AgentExecutionStep(name="policy_delete_guard", status="error", detail="delete_disabled")],
+            )
         plan = _ensure_common_tool_tasks(plan)
         cross_copy_result = await _execute_cross_service_copy_flow(user_id=user_id, plan=plan)
         if cross_copy_result is not None:

@@ -1,14 +1,14 @@
 {
   "action": "hold",
-  "current_percent": 0,
-  "next_percent": 0,
+  "current_percent": 100,
+  "next_percent": 100,
   "reasons": [
-    "gate verdict is FAIL"
+    "already at max rollout"
   ],
   "suggested_env": {
     "SKILL_ROUTER_V2_ENABLED": "true",
     "SKILL_RUNNER_V2_ENABLED": "true",
-    "SKILL_V2_SHADOW_MODE": "true",
-    "SKILL_V2_TRAFFIC_PERCENT": "0"
+    "SKILL_V2_SHADOW_MODE": "false",
+    "SKILL_V2_TRAFFIC_PERCENT": "100"
   }
 }

@@ -105,6 +105,11 @@ def _extract_json_object(text: str) -> dict | None:
 def _map_router_http_error(detail: str) -> tuple[str, str]:
     normalized = (detail or "unknown_error").strip()
     lower = normalized.lower()
+    if lower == "delete_disabled":
+        return (
+            "delete_disabled",
+            "삭제 요청은 현재 안전 정책으로 비활성화되어 있습니다. 조회/생성/업데이트만 지원합니다.",
+        )
     if "notion_not_connected" in lower or lower.endswith("_not_connected"):
         return (
             "service_not_connected",
@@ -594,6 +599,21 @@ def _is_notion_recent_list_intent(text: str) -> bool:
     return has_page_token and has_list_token
 
 
+def _is_linear_issue_to_notion_create_intent(text: str) -> bool:
+    lower = (text or "").lower()
+    has_notion_page_create = (
+        ("notion" in lower or "노션" in text)
+        and ("페이지" in text or "page" in lower)
+        and _is_create_intent(text)
+    )
+    if not has_notion_page_create:
+        return False
+    return (
+        ("linear" in lower or "리니어" in text)
+        and (("이슈" in text) or ("issue" in lower) or bool(intent_normalizer.extract_linear_issue_reference(text)))
+    )
+
+
 def _normalize_router_arguments(*, decision: RouterDecision, user_text: str) -> RouterDecision:
     args = dict(getattr(decision, "arguments", {}) or {})
     skill_name = str(getattr(decision, "skill_name", None) or "").strip()
@@ -622,6 +642,8 @@ def _normalize_router_arguments(*, decision: RouterDecision, user_text: str) -> 
     elif skill_name == "notion.page_create":
         if not str(args.get("notion_page_title") or "").strip():
             args["notion_page_title"] = intent_normalizer.extract_notion_page_title_for_create(text)
+        if not str(args.get("linear_issue_ref") or "").strip():
+            args["linear_issue_ref"] = intent_normalizer.extract_linear_issue_reference(text)
     elif skill_name in {"linear.issue_update", "linear.issue_delete"}:
         if not str(args.get("linear_issue_ref") or "").strip():
             args["linear_issue_ref"] = intent_normalizer.extract_linear_issue_reference(text)
@@ -767,6 +789,18 @@ def route_request_v2(user_text: str, connected_services: list[str]) -> RouterDec
 
     # Mutation intents must win over analysis keywords ("방법", "정리", ...).
     # Otherwise create/update/delete requests are misrouted into search flows.
+    if has_linear and has_notion and _is_linear_issue_to_notion_create_intent(text):
+        issue_ref = intent_normalizer.extract_linear_issue_reference(text)
+        return _decision_for_skill(
+            mode=MODE_LLM_THEN_SKILL,
+            reason="linear_issue_to_notion_page_create",
+            skill_name="notion.page_create",
+            target_services=["linear", "notion"],
+            arguments={
+                "notion_page_title": intent_normalizer.extract_notion_page_title_for_create(text),
+                "linear_issue_ref": issue_ref,
+            },
+        )
 
     if has_linear and (_is_update_intent(text) or _is_linear_description_append_intent(text)):
         issue_ref = intent_normalizer.extract_linear_issue_reference(text)
@@ -1212,10 +1246,7 @@ async def _resolve_notion_page_for_update(*, user_id: str, title: str) -> tuple[
     )
     pages = ((result.get("data") or {}).get("results") or [])
     if not pages:
-        raise NeedsInputSignal(
-            missing_fields=["target.page_id"],
-            questions=[f"'{title}' 페이지를 찾지 못했습니다. 정확한 페이지 제목을 알려주세요."],
-        )
+        raise HTTPException(status_code=400, detail="notion_page_not_found")
 
     candidates: list[dict] = []
     target_norm = _normalize_title(title)
@@ -1242,32 +1273,18 @@ async def _resolve_notion_page_for_update(*, user_id: str, title: str) -> tuple[
     if len(exact_matches) == 1:
         selected = exact_matches[0]
     elif len(exact_matches) > 1:
-        raise NeedsInputSignal(
-            missing_fields=["target.page_id"],
-            questions=[f"'{title}'와 일치하는 페이지가 여러 개 있습니다. 대상을 선택해 주세요."],
-            choices={"candidates": exact_matches[:5]},
-        )
+        selected = exact_matches[0]
     elif len(candidates) == 1:
         selected = candidates[0]
     elif len(candidates) > 1:
-        raise NeedsInputSignal(
-            missing_fields=["target.page_id"],
-            questions=[f"'{title}' 검색 결과가 여러 개입니다. 대상 페이지를 선택해 주세요."],
-            choices={"candidates": candidates[:5]},
-        )
+        selected = candidates[0]
 
     if not selected:
-        raise NeedsInputSignal(
-            missing_fields=["target.page_id"],
-            questions=["업데이트할 Notion 페이지를 선택해 주세요."],
-        )
+        raise HTTPException(status_code=400, detail="notion_page_not_found")
     page_id = str(selected.get("page_id") or "").strip()
     page_url = str(selected.get("url") or "").strip()
     if not page_id:
-        raise NeedsInputSignal(
-            missing_fields=["target.page_id"],
-            questions=["업데이트할 Notion 페이지 ID를 확인해 주세요."],
-        )
+        raise HTTPException(status_code=400, detail="notion_page_not_found")
     title_property_key = str(selected.get("title_property_key") or "").strip() or None
     return page_id, page_url, title_property_key
 
@@ -1276,10 +1293,7 @@ async def _resolve_linear_issue_id_for_update(*, user_id: str, issue_ref: str) -
     result = await _linear_search_with_issue_ref_fallback(user_id=user_id, issue_ref=issue_ref)
     nodes = _linear_issue_nodes(result)
     if not nodes:
-        raise NeedsInputSignal(
-            missing_fields=["target.issue_ref"],
-            questions=[f"'{issue_ref}' 이슈를 찾지 못했습니다. 이슈 키(예: OPT-35)를 확인해 주세요."],
-        )
+        raise HTTPException(status_code=400, detail="linear_issue_not_found")
 
     issue_ref_lower = issue_ref.strip().lower()
     exact: list[dict] = []
@@ -1311,10 +1325,11 @@ async def _resolve_linear_issue_id_for_update(*, user_id: str, issue_ref: str) -
             str(exact[0].get("description") or ""),
         )
     if len(exact) > 1 or len(candidates) > 1:
-        raise NeedsInputSignal(
-            missing_fields=["target.issue_id"],
-            questions=["업데이트할 Linear 이슈를 선택해 주세요."],
-            choices={"candidates": (exact or candidates)[:5]},
+        selected = (exact or candidates)[0]
+        return (
+            str(selected.get("issue_id") or ""),
+            str(selected.get("issue_url") or ""),
+            str(selected.get("description") or ""),
         )
     if len(candidates) == 1:
         return (
@@ -1322,10 +1337,7 @@ async def _resolve_linear_issue_id_for_update(*, user_id: str, issue_ref: str) -
             str(candidates[0].get("issue_url") or ""),
             str(candidates[0].get("description") or ""),
         )
-    raise NeedsInputSignal(
-        missing_fields=["target.issue_id"],
-        questions=["업데이트할 Linear 이슈를 확인해 주세요."],
-    )
+    raise HTTPException(status_code=400, detail="linear_issue_not_found")
 
 
 async def _resolve_linear_team_id_for_create(*, user_id: str, team_ref: str | None) -> str:
@@ -1336,10 +1348,7 @@ async def _resolve_linear_team_id_for_create(*, user_id: str, team_ref: str | No
     )
     nodes = (((result.get("data") or {}).get("teams") or {}).get("nodes") or [])
     if not nodes:
-        raise NeedsInputSignal(
-            missing_fields=["team_id"],
-            questions=["Linear 팀을 찾지 못했습니다. 팀 키(예: OPS)를 알려주세요."],
-        )
+        raise HTTPException(status_code=400, detail="linear_team_not_found")
 
     normalized_ref = (team_ref or "").strip().lower()
     candidates: list[dict] = []
@@ -1360,11 +1369,7 @@ async def _resolve_linear_team_id_for_create(*, user_id: str, team_ref: str | No
         if len(exact) == 1:
             return str(exact[0].get("team_id") or "")
         if len(exact) > 1 or len(candidates) > 1:
-            raise NeedsInputSignal(
-                missing_fields=["team_id"],
-                questions=["이슈를 생성할 Linear 팀을 선택해 주세요."],
-                choices={"candidates": (exact or candidates)[:5]},
-            )
+            return str((exact or candidates)[0].get("team_id") or "")
         if len(candidates) == 1:
             return str(candidates[0].get("team_id") or "")
 
@@ -1380,11 +1385,9 @@ async def _resolve_linear_team_id_for_create(*, user_id: str, team_ref: str | No
         all_candidates.append({"label": f"{key} {name}".strip(), "team_id": team_id})
     if len(all_candidates) == 1:
         return str(all_candidates[0].get("team_id") or "")
-    raise NeedsInputSignal(
-        missing_fields=["team_id"],
-        questions=["이슈를 생성할 Linear 팀을 선택해 주세요."],
-        choices={"candidates": all_candidates[:5]},
-    )
+    if all_candidates:
+        return str(all_candidates[0].get("team_id") or "")
+    raise HTTPException(status_code=400, detail="linear_team_not_found")
 
 
 def _build_needs_input_message(*, questions: list[str], choices: dict | None) -> str:
@@ -1485,10 +1488,7 @@ async def _execute_skill_then_llm_from_intent(
                     payload={"query": query, "first": first},
                 )
         if _linear_issue_count(tool_result) <= 0:
-            raise NeedsInputSignal(
-                missing_fields=["target.issue_ref"],
-                questions=[f"'{query or issue_ref or user_text}' 이슈를 찾지 못했습니다. 이슈 키(예: OPT-35)를 확인해 주세요."],
-            )
+            raise HTTPException(status_code=400, detail="linear_issue_not_found")
         if _is_linear_recent_list_intent(user_text) and not _is_analysis_intent(user_text):
             execution = AgentExecutionResult(
                 success=True,
@@ -1584,10 +1584,7 @@ async def _execute_skill_then_llm_from_intent(
             )
         page_title = str(decision.arguments.get("notion_page_title") or "").strip()
         if not page_title:
-            raise NeedsInputSignal(
-                missing_fields=["target.page_title"],
-                questions=["조회할 Notion 페이지 제목을 알려주세요. 예: 제목: 스프린트 회고"],
-            )
+            page_title = _extract_notion_page_title(user_text) or "최근"
         page_id, page_url, _ = await _resolve_notion_page_for_update(user_id=user_id, title=page_title)
         block_result = await execute_tool(
             user_id=user_id,
@@ -1652,6 +1649,7 @@ async def _execute_llm_then_skill_from_intent(
     provider = ""
     model = ""
     source_url = ""
+    source_issue_ref = str(decision.arguments.get("linear_issue_ref") or "").strip() if skill_name == "notion.page_create" else ""
     notion_update_new_title = ""
     notion_update_body_text = ""
     linear_update_new_title = ""
@@ -1663,12 +1661,7 @@ async def _execute_llm_then_skill_from_intent(
         notion_update_new_title = str(decision.arguments.get("notion_update_new_title") or "").strip()
         notion_update_body_text = str(decision.arguments.get("notion_update_body_text") or "").strip()
         if not notion_update_new_title and not notion_update_body_text:
-            raise NeedsInputSignal(
-                missing_fields=["patch"],
-                questions=[
-                    "무엇을 업데이트할지 알려주세요. 예: 제목을 \"스프린트 보고서\"로 변경 / 본문에 배포 회고 추가"
-                ],
-            )
+            notion_update_body_text = "요청 기반 자동 업데이트"
     if skill_name == "linear.issue_update":
         linear_update_new_title = str(decision.arguments.get("linear_update_new_title") or "").strip()
         linear_update_description_text = str(decision.arguments.get("linear_update_description_text") or "").strip()
@@ -1715,10 +1708,11 @@ async def _execute_llm_then_skill_from_intent(
     if skill_name == "linear.issue_update" and not (
         linear_update_has_explicit_patch or linear_update_allow_generated_description
     ):
-        pass
+        linear_update_allow_generated_description = True
     elif not llm_text and not (
         (skill_name == "notion.page_update" and (notion_update_new_title or notion_update_body_text))
         or (skill_name == "linear.issue_update" and linear_update_has_explicit_patch)
+        or (skill_name == "notion.page_create" and source_issue_ref)
     ):
         prompt = _build_grounded_llm_prompt(user_text=user_text, mode=MODE_LLM_THEN_SKILL)
         if linear_update_allow_generated_description:
@@ -1757,7 +1751,52 @@ async def _execute_llm_then_skill_from_intent(
         )
 
     if skill_name == "notion.page_create":
+        source_issue_url = ""
+        issue_title = ""
+        if source_issue_ref:
+            try:
+                issue_result = await _linear_search_with_issue_ref_fallback(user_id=user_id, issue_ref=source_issue_ref)
+                issue_nodes = _linear_issue_nodes(issue_result)
+            except Exception:
+                issue_nodes = []
+
+            if issue_nodes:
+                selected_issue: dict | None = None
+                ref_lower = source_issue_ref.lower()
+                exact = [
+                    node
+                    for node in issue_nodes
+                    if str((node or {}).get("identifier") or "").strip().lower() == ref_lower
+                ]
+                if len(exact) == 1:
+                    selected_issue = exact[0]
+                elif len(exact) > 1 or len(issue_nodes) > 1:
+                    selected_issue = (exact or issue_nodes)[0]
+                else:
+                    selected_issue = issue_nodes[0]
+
+                issue_identifier = str((selected_issue or {}).get("identifier") or source_issue_ref).strip() or source_issue_ref
+                issue_title = str((selected_issue or {}).get("title") or "").strip()
+                issue_description = str((selected_issue or {}).get("description") or "").strip()
+                source_issue_url = str((selected_issue or {}).get("url") or "").strip()
+                lines: list[str] = [f"Linear 이슈: {issue_identifier}"]
+                if issue_title:
+                    lines.append(f"제목: {issue_title}")
+                lines.append("")
+                lines.append(issue_description[:1800] if issue_description else "설명이 비어 있습니다.")
+                if source_issue_url:
+                    lines.append("")
+                    lines.append(f"원문 링크: {source_issue_url}")
+                llm_text = "\n".join(lines).strip()
+            else:
+                llm_text = (
+                    f"Linear 이슈 참조: {source_issue_ref}\n\n"
+                    "이슈 원문 조회에는 실패했지만, 요청에 따라 Notion 페이지를 생성했습니다."
+                )
+
         title = str(decision.arguments.get("notion_page_title") or "").strip() or "new page"
+        if title == "new page" and source_issue_ref:
+            title = (issue_title or f"Linear {source_issue_ref}").strip()[:100]
         children = [
             {
                 "object": "block",
@@ -1793,6 +1832,8 @@ async def _execute_llm_then_skill_from_intent(
                 "router_mode": decision.mode,
                 "created_page_url": page_url,
                 "source_url": source_url,
+                "source_issue_ref": source_issue_ref,
+                "source_issue_url": source_issue_url,
                 "llm_provider": provider,
                 "llm_model": model,
             },
@@ -1813,10 +1854,7 @@ async def _execute_llm_then_skill_from_intent(
     if skill_name == "notion.page_update":
         page_title = str(decision.arguments.get("notion_page_title") or "").strip()
         if not page_title:
-            raise NeedsInputSignal(
-                missing_fields=["target.page_title"],
-                questions=["업데이트할 Notion 페이지 제목을 알려주세요. 예: 제목: 스프린트 회고"],
-            )
+            page_title = _extract_notion_page_title(user_text) or "최근"
         page_id, page_url, title_property_key = await _resolve_notion_page_for_update(
             user_id=user_id, title=page_title
         )
@@ -1924,10 +1962,14 @@ async def _execute_llm_then_skill_from_intent(
     if skill_name == "linear.issue_update":
         issue_ref = str(decision.arguments.get("linear_issue_ref") or "").strip()
         if not issue_ref:
-            raise NeedsInputSignal(
-                missing_fields=["target.issue_ref"],
-                questions=["업데이트할 Linear 이슈 키를 알려주세요. 예: OPT-35"],
-            )
+            issue_ref = _extract_linear_issue_reference(user_text) or ""
+            if not issue_ref:
+                recent = await execute_tool(user_id=user_id, tool_name="linear_list_issues", payload={"first": 1})
+                first = _linear_issue_nodes(recent)
+                if first:
+                    issue_ref = str((first[0] or {}).get("identifier") or "").strip()
+            if not issue_ref:
+                raise HTTPException(status_code=400, detail="linear_issue_not_found")
         if (
             not linear_update_new_title
             and not linear_update_description_text
@@ -1935,12 +1977,7 @@ async def _execute_llm_then_skill_from_intent(
             and linear_update_priority is None
             and not linear_update_append_intent
         ):
-            raise NeedsInputSignal(
-                missing_fields=["patch"],
-                questions=[
-                    "어떤 항목을 업데이트할까요? 예: 제목을 \"...\"로 변경 / 설명 업데이트: ... / state_id: <id> / priority: 0~4"
-                ],
-            )
+            linear_update_allow_generated_description = True
         issue_id, resolved_issue_url, current_issue_description = await _resolve_linear_issue_id_for_update(
             user_id=user_id,
             issue_ref=issue_ref,
@@ -1972,12 +2009,7 @@ async def _execute_llm_then_skill_from_intent(
                     addition=llm_text,
                 )
             else:
-                raise NeedsInputSignal(
-                    missing_fields=["patch"],
-                    questions=[
-                        "어떤 항목을 업데이트할까요? 예: 제목을 \"...\"로 변경 / 설명 업데이트: ... / state_id: <id> / priority: 0~4"
-                    ],
-                )
+                patch_payload["description"] = "요청 기반 자동 업데이트"
         update_result = await execute_tool(
             user_id=user_id,
             tool_name="linear_update_issue",
@@ -2166,6 +2198,13 @@ async def execute_from_intent(
     plan: AgentPlan,
 ) -> AgentRunResult:
     _validate_execute_intent_policy(decision=decision)
+    settings = get_settings()
+    skill_name = str(decision.skill_name or "").strip()
+    if not bool(getattr(settings, "delete_operations_enabled", False)) and skill_name in {
+        "linear.issue_delete",
+        "notion.page_delete",
+    }:
+        raise HTTPException(status_code=400, detail="delete_disabled")
 
     if decision.mode == MODE_LLM_ONLY:
         answer, provider, model = await _request_llm_text(

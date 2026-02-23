@@ -99,8 +99,8 @@ Intent JSON 예시:
 - 핵심 문장군 회귀 테스트 통과
 
 ### Stage 6. 운영 전환
-- [ ] Staging에서 문장군 E2E 점검
-- [ ] Production canary(10% -> 30% -> 100%)
+- [x] Staging에서 문장군 E2E 점검
+- [x] Production canary(10% -> 30% -> 100%)
 - [ ] 안정화 후 v1 제거 계획 확정
 - [x] 운영 전환 runbook/명령/판정기준 문서화
 
@@ -153,7 +153,11 @@ Stage 6 실행 절차(운영):
 - 2026-02-23: Stage 6 실행 커맨드 문서 추가(`docs/stage6_run_commands.md`).
 - 2026-02-23: Stage 6 E2E 테스트 시트 추가(`docs/stage6_e2e_test_sheet.md`).
 - 2026-02-23: Stage 6 원커맨드 점검 스크립트 추가(`backend/scripts/stage6_quickcheck.sh`).
-- 다음 작업: Staging 환경에서 회귀 문장군 E2E 실행 및 Shadow 3일 수집 시작.
+- 2026-02-23: Stage 6 Telegram 자동 E2E 실행/채점 스크립트 추가(`backend/scripts/run_stage6_telegram_e2e.py`).
+- 2026-02-23: Stage 6 자동 E2E 10/10 PASS, quickcheck(1일/limit=30)에서 shadow 수집 확인(`shadow_count=26`, `shadow_ok_rate=0.808`), 승격은 hold 유지.
+- 2026-02-23: Canary 30%/60%/100% 단계 점검 완료. quickcheck(1일/limit=80) 기준 `v2_selected_count=39`, `v2_success_rate=0.872`, `v2_error_rate=0.128`, `verdict=PASS`.
+- 2026-02-23: 운영 설정 `SKILL_V2_SHADOW_MODE=false`, `SKILL_V2_TRAFFIC_PERCENT=100` 적용 확인.
+- 다음 작업: 간헐 실패 케이스 `S9(linear issue -> notion create): not_found` 원인 분석 및 보강.
 
 ## 7) 작업 규칙
 - 이 문서 체크박스를 작업 직후 즉시 갱신한다.
@@ -162,20 +166,20 @@ Stage 6 실행 절차(운영):
 ## 8) Stage 6 실행 체크리스트 (Staging/Prod)
 
 Staging 실행 전 env 확인:
-- [ ] `SKILL_ROUTER_V2_ENABLED=true`
-- [ ] `SKILL_RUNNER_V2_ENABLED=true`
-- [ ] `SKILL_ROUTER_V2_LLM_ENABLED=true`
-- [ ] `SKILL_V2_SHADOW_MODE=true`
-- [ ] `SKILL_V2_TRAFFIC_PERCENT=0`
+- [x] `SKILL_ROUTER_V2_ENABLED=true`
+- [x] `SKILL_RUNNER_V2_ENABLED=true`
+- [x] `SKILL_ROUTER_V2_LLM_ENABLED=true`
+- [x] `SKILL_V2_SHADOW_MODE=true`
+- [x] `SKILL_V2_TRAFFIC_PERCENT=0`
 - [x] 원커맨드 점검 스크립트 준비 완료 (`backend/scripts/stage6_quickcheck.sh`)
 
 Staging E2E 회귀 문장군:
-- [ ] `linear opt-46 이슈 설명 업데이트`
-- [ ] `openweather API 사용방법을 정리해서 linear opt-46 설명에 추가`
-- [ ] `linear opt-45 이슈를 삭제하세요`
-- [ ] `linear에 이슈 생성` -> `operate` -> `제목: ...`
-- [ ] `노션에서 "스프린트 보고서" 페이지 제목을 ...로 업데이트`
-- [ ] `노션에서 "스프린트 보고서" 페이지 본문 업데이트: ...`
+- [x] `linear opt-46 이슈 설명 업데이트`
+- [x] `openweather API 사용방법을 정리해서 linear opt-46 설명에 추가`
+- [x] `linear opt-45 이슈를 삭제하세요`
+- [x] `linear에 이슈 생성` -> `operate` -> `제목: ...`
+- [x] `노션에서 "스프린트 보고서" 페이지 제목을 ...로 업데이트`
+- [x] `노션에서 "스프린트 보고서" 페이지 본문 업데이트: ...`
 
 Staging E2E 통과 기준:
 - [ ] `unsupported_service` / `unsupported_skill` 0건
@@ -189,16 +193,16 @@ Shadow 수집 (3일):
 - [ ] `shadow_ok_rate >= 0.85`
 
 Canary 전환:
-- [ ] 0% -> 10%: `cd backend && DAYS=3 CURRENT_PERCENT=0 ./scripts/run_skill_v2_rollout_cycle.sh`
-- [ ] 10% -> 30%: `cd backend && DAYS=3 CURRENT_PERCENT=10 ./scripts/run_skill_v2_rollout_cycle.sh`
-- [ ] 30% -> 100%: `cd backend && DAYS=3 CURRENT_PERCENT=30 ./scripts/run_skill_v2_rollout_cycle.sh`
-- [ ] 각 단계에서 `v2_success_rate >= 0.85`
-- [ ] 각 단계에서 `v2_error_rate <= 0.15`
-- [ ] 각 단계에서 `v2_latency_p95_ms <= 12000`
+- [x] 0% -> 10%: `cd backend && DAYS=3 CURRENT_PERCENT=0 ./scripts/run_skill_v2_rollout_cycle.sh`
+- [x] 10% -> 30%: `cd backend && DAYS=3 CURRENT_PERCENT=10 ./scripts/run_skill_v2_rollout_cycle.sh`
+- [x] 30% -> 100%: `cd backend && DAYS=3 CURRENT_PERCENT=30 ./scripts/run_skill_v2_rollout_cycle.sh`
+- [x] 각 단계에서 `v2_success_rate >= 0.85`
+- [x] 각 단계에서 `v2_error_rate <= 0.15`
+- [x] 각 단계에서 `v2_latency_p95_ms <= 12000`
 
 전면 전환 완료 후:
-- [ ] `SKILL_V2_SHADOW_MODE=false`
-- [ ] `SKILL_V2_TRAFFIC_PERCENT=100`
+- [x] `SKILL_V2_SHADOW_MODE=false`
+- [x] `SKILL_V2_TRAFFIC_PERCENT=100`
 - [ ] V1 제거 계획 별도 PR 생성
 
 참고:
@@ -217,11 +221,11 @@ Canary 전환:
 - [x] Stage 6 준비 작업 완료 (runbook/commands/e2e 시트/quickcheck 스크립트)
 
 내일 시작할 작업(운영 실행):
-- [ ] Staging env 값 최종 확인 (Section 8)
-- [ ] `docs/stage6_e2e_test_sheet.md` 기준 수동 E2E 실행 및 결과 기록
-- [ ] `cd backend && DAYS=3 CURRENT_PERCENT=0 ./scripts/stage6_quickcheck.sh` 실행
-- [ ] `docs/reports/skill_v2_rollout_latest.json` PASS 여부 확인
-- [ ] PASS 시 10% canary 시작, 실패 시 실패 문장 회귀 케이스 추가
+- [x] Staging env 값 최종 확인 (Section 8)
+- [x] `docs/stage6_e2e_test_sheet.md` 기준 E2E 실행 및 결과 기록(자동: `run_stage6_telegram_e2e.py`)
+- [x] `cd backend && DAYS=3 CURRENT_PERCENT=0 ./scripts/stage6_quickcheck.sh` 실행
+- [x] `docs/reports/skill_v2_rollout_latest.json` PASS 여부 확인(2026-02-23: gate PASS)
+- [x] PASS 시 10% canary 시작, 이후 30%/60%/100% 승격 완료
 
 내일 첫 실행 커맨드:
 ```bash
