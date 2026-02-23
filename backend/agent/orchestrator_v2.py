@@ -102,6 +102,39 @@ def _extract_json_object(text: str) -> dict | None:
     return None
 
 
+def _map_router_http_error(detail: str) -> tuple[str, str]:
+    normalized = (detail or "unknown_error").strip()
+    lower = normalized.lower()
+    if "notion_not_connected" in lower or lower.endswith("_not_connected"):
+        return (
+            "service_not_connected",
+            "요청한 서비스가 연결되어 있지 않습니다. 대시보드에서 연동 후 다시 시도해주세요.",
+        )
+    if "token_missing" in lower or lower.endswith("_token_missing"):
+        return (
+            "token_missing",
+            "연동 토큰 정보를 찾지 못했습니다. 연동을 해제 후 다시 연결해주세요.",
+        )
+    if (
+        "auth_required" in lower
+        or "auth_forbidden" in lower
+        or "authentication_error" in lower
+        or "not authenticated" in lower
+    ):
+        return (
+            "auth_error",
+            "권한이 부족하거나 만료되었습니다. 해당 서비스 연동 권한을 다시 승인해주세요.",
+        )
+    if "rate_limited" in lower:
+        return ("rate_limited", "외부 API 호출 한도를 초과했습니다. 1~2분 후 다시 시도해주세요.")
+    if "validation_" in lower or "missing_path_param" in lower:
+        return ("validation_error", "요청 형식이 올바르지 않습니다. 필수 항목과 값 형식을 다시 확인해주세요.")
+    if "not_found" in lower:
+        return ("not_found", "요청한 대상을 찾지 못했습니다. 제목/ID를 다시 확인해주세요.")
+    # Keep legacy error_code compatibility for non-user-facing cases used by tests and workflows.
+    return (normalized or "execution_error", "요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
+
+
 def _parse_router_payload(payload: dict, connected_services: list[str]) -> RouterDecision | None:
     allowed_keys = {"mode", "reason", "skill_name", "selected_tools", "arguments"}
     if any(key not in allowed_keys for key in payload.keys()):
@@ -2340,17 +2373,16 @@ async def try_run_v2_orchestration(
         )
     except HTTPException as exc:
         detail = str(exc.detail or "unknown_error")
-        detail_hint = detail
-        if len(detail_hint) > 220:
-            detail_hint = detail_hint[:220].rstrip() + "..."
+        error_code, user_message = _map_router_http_error(detail)
         execution = AgentExecutionResult(
             success=False,
-            user_message=(
-                "요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.\n"
-                f"(error: {detail_hint})"
-            ),
+            user_message=user_message,
             summary="V2 오케스트레이션 실행 실패",
-            artifacts={"error_code": detail, "router_mode": decision.mode},
+            artifacts={
+                "error_code": error_code,
+                "error_detail": detail[:500],
+                "router_mode": decision.mode,
+            },
             steps=[AgentExecutionStep(name="router_v2", status="error", detail=detail)],
         )
         return AgentRunResult(

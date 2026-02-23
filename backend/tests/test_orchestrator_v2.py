@@ -1889,3 +1889,30 @@ def test_try_run_v2_orchestration_forces_rule_on_explicit_notion_mutation_intent
     assert result.execution is not None
     assert result.execution.artifacts.get("needs_input") == "true"
     assert any(note == "router_decision_override=force_rule_explicit_mutation_intent" for note in result.plan.notes)
+
+
+def test_try_run_v2_orchestration_maps_auth_required_error(monkeypatch):
+    async def _fake_execute_from_intent(*, user_text: str, user_id: str, decision, plan):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "linear_search_issues:AUTH_REQUIRED|status=401|"
+                "message={\"errors\":[{\"message\":\"Authentication required, not authenticated\"}]}"
+            ),
+        )
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_from_intent", _fake_execute_from_intent)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear opt-46 업데이트",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("error_code") == "auth_error"
+    assert "권한이 부족하거나 만료되었습니다" in result.execution.user_message
