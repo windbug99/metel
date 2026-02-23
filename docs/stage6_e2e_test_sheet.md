@@ -3,12 +3,12 @@
 목적:
 - Staging에서 V2 전환 전/중에 Telegram 실사용 문장을 검증하고 결과를 기록한다.
 
-실행 조건:
+실행 조건(현재 운영 기준):
 - `SKILL_ROUTER_V2_ENABLED=true`
 - `SKILL_RUNNER_V2_ENABLED=true`
 - `SKILL_ROUTER_V2_LLM_ENABLED=true`
-- `SKILL_V2_SHADOW_MODE=true` (초기)
-- `SKILL_V2_TRAFFIC_PERCENT=0` (초기)
+- `SKILL_V2_SHADOW_MODE=false`
+- `SKILL_V2_TRAFFIC_PERCENT=100`
 
 기록 방법:
 - 아래 표의 `실제 결과`, `판정`, `비고`를 채운다.
@@ -36,10 +36,10 @@
 | W1 | linear 이슈 생성 팀: operate 제목: 비밀번호 찾기 오류 | 이슈 생성 성공 + 링크 |  |  |  |
 | W2 | linear opt-46 이슈 제목을 add openweather로 수정하세요 | 제목 수정 성공 + 링크 |  |  |  |
 | W3 | linear opt-46 이슈 설명 업데이트: 패시브 서비스 추가 | 설명 수정 성공 + 링크 |  |  |  |
-| W4 | linear opt-45 이슈를 삭제하세요 | archive 성공 응답 |  |  |  |
+| W4 | linear opt-45 이슈를 삭제하세요 | 정책 차단 응답(`delete_disabled`) |  |  |  |
 | W5 | 노션에서 "스프린트 보고서" 페이지 제목을 "스프린트 프리뷰"로 업데이트해줘 | 제목 변경 성공 + 링크 |  |  |  |
 | W6 | 노션에서 "스프린트 보고서" 페이지 본문 업데이트: 내가 돌아왔다 | 본문 추가 성공 + 링크 |  |  |  |
-| W7 | 노션에서 "스프린트 프리뷰" 페이지 삭제해줘 | 휴지통 이동 성공 + 링크 |  |  |  |
+| W7 | 노션에서 "스프린트 프리뷰" 페이지 삭제해줘 | 정책 차단 응답(`delete_disabled`) |  |  |  |
 
 ## 4) needs_input 재개
 

@@ -2317,16 +2317,6 @@ async def _resolve_linear_team_id_from_reference(
     return ""
 
 
-async def _execute_linear_plan(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
-    return AgentExecutionResult(
-        success=False,
-        summary="legacy_linear_executor_removed",
-        user_message="레거시 Linear 실행기는 제거되었습니다.",
-        artifacts={"error_code": "legacy_executor_removed"},
-        steps=[AgentExecutionStep(name="legacy_linear_executor", status="error", detail="removed")],
-    )
-
-
 async def _execute_spotify_recent_tracks_to_notion(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
     steps: list[AgentExecutionStep] = []
     steps.append(AgentExecutionStep(name="tool_runner_init", status="success", detail="Spotify+Notion Tool Runner 준비 완료"))
@@ -2571,16 +2561,6 @@ async def _read_page_lines_or_summary(
         ),
         artifacts={"source_page_url": selected_page["url"], "source_page_title": selected_page["title"]},
         steps=steps,
-    )
-
-
-async def _execute_notion_plan(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
-    return AgentExecutionResult(
-        success=False,
-        summary="legacy_notion_executor_removed",
-        user_message="레거시 Notion 실행기는 제거되었습니다.",
-        artifacts={"error_code": "legacy_executor_removed"},
-        steps=[AgentExecutionStep(name="legacy_notion_executor", status="error", detail="removed")],
     )
 
 

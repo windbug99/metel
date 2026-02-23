@@ -1126,35 +1126,34 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
                 pre_notes.append(f"skill_v2_shadow_ok={1 if v2_result.ok else 0}")
                 if shadow_mode:
                     pre_notes.append("skill_v2_shadow_executed=1")
-                else:
-                    if v2_result.execution is not None:
-                        finalized_message, finalizer_mode = _apply_response_finalizer_template(
-                            execution=v2_result.execution,
-                            settings=settings,
-                        )
-                        v2_result.execution.user_message = finalized_message
-                        if finalizer_mode != "disabled":
-                            v2_result.plan.notes.append(f"response_finalizer={finalizer_mode}")
-                        if _is_router_v2_needs_input(v2_result.execution):
-                            try:
-                                _persist_router_v2_pending_action(
-                                    user_id=user_id,
-                                    base_user_text=user_text,
-                                    missing_fields_json=str(v2_result.execution.artifacts.get("missing_fields_json", "[]")),
-                                    questions_json=str(v2_result.execution.artifacts.get("questions_json", "[]")),
-                                    plan=v2_result.plan,
-                                    plan_source=v2_result.plan_source,
-                                )
-                            except PendingActionStorageError:
-                                return _pending_persistence_error_result(
-                                    plan=v2_result.plan,
-                                    plan_source=v2_result.plan_source,
-                                    stage="validation",
-                                )
-                            v2_result.plan.notes.append("slot_loop_started")
-                    v2_result.plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
-                    v2_result.plan.notes.extend(pre_notes)
-                    return v2_result
+                if v2_result.execution is not None:
+                    finalized_message, finalizer_mode = _apply_response_finalizer_template(
+                        execution=v2_result.execution,
+                        settings=settings,
+                    )
+                    v2_result.execution.user_message = finalized_message
+                    if finalizer_mode != "disabled":
+                        v2_result.plan.notes.append(f"response_finalizer={finalizer_mode}")
+                    if _is_router_v2_needs_input(v2_result.execution):
+                        try:
+                            _persist_router_v2_pending_action(
+                                user_id=user_id,
+                                base_user_text=user_text,
+                                missing_fields_json=str(v2_result.execution.artifacts.get("missing_fields_json", "[]")),
+                                questions_json=str(v2_result.execution.artifacts.get("questions_json", "[]")),
+                                plan=v2_result.plan,
+                                plan_source=v2_result.plan_source,
+                            )
+                        except PendingActionStorageError:
+                            return _pending_persistence_error_result(
+                                plan=v2_result.plan,
+                                plan_source=v2_result.plan_source,
+                                stage="validation",
+                            )
+                        v2_result.plan.notes.append("slot_loop_started")
+                v2_result.plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+                v2_result.plan.notes.extend(pre_notes)
+                return v2_result
         else:
             pre_notes.append("skill_v2_shadow_executed=0")
             pre_notes.append("skill_v2_shadow_ok=0")

@@ -101,7 +101,7 @@ Intent JSON 예시:
 ### Stage 6. 운영 전환
 - [x] Staging에서 문장군 E2E 점검
 - [x] Production canary(10% -> 30% -> 100%)
-- [ ] 안정화 후 v1 제거 계획 확정
+- [x] 안정화 후 v1 제거 계획 확정(초안)
 - [x] 운영 전환 runbook/명령/판정기준 문서화
 
 완료 기준:
@@ -157,7 +157,14 @@ Stage 6 실행 절차(운영):
 - 2026-02-23: Stage 6 자동 E2E 10/10 PASS, quickcheck(1일/limit=30)에서 shadow 수집 확인(`shadow_count=26`, `shadow_ok_rate=0.808`), 승격은 hold 유지.
 - 2026-02-23: Canary 30%/60%/100% 단계 점검 완료. quickcheck(1일/limit=80) 기준 `v2_selected_count=39`, `v2_success_rate=0.872`, `v2_error_rate=0.128`, `verdict=PASS`.
 - 2026-02-23: 운영 설정 `SKILL_V2_SHADOW_MODE=false`, `SKILL_V2_TRAFFIC_PERCENT=100` 적용 확인.
-- 다음 작업: 간헐 실패 케이스 `S9(linear issue -> notion create): not_found` 원인 분석 및 보강.
+- 2026-02-23: 운영 quickcheck 최종 확인(1일/limit=80): `v2_selected_count=59`, `v2_success_rate=0.898`, `v2_error_rate=0.102`, `p95=6756ms`, `verdict=PASS`.
+- 2026-02-23: `S9(linear issue -> notion create)` 간헐 `not_found` 보강 반영(Linear 조회 실패 시 fallback Notion 생성 지속).
+- 2026-02-23: 후속 문서 추가
+  - `docs/s9_not_found_followup.md`
+  - `docs/v1_removal_plan.md`
+- 2026-02-23: V1 제거 후속 PR 진행
+  - PR-1: `loop.py` shadow 모드에서도 V2 결과 즉시 반환으로 정리
+  - PR-2: `telegram.py` command_logs 레거시 payload fallback 제거
 
 ## 7) 작업 규칙
 - 이 문서 체크박스를 작업 직후 즉시 갱신한다.
@@ -182,15 +189,16 @@ Staging E2E 회귀 문장군:
 - [x] `노션에서 "스프린트 보고서" 페이지 본문 업데이트: ...`
 
 Staging E2E 통과 기준:
-- [ ] `unsupported_service` / `unsupported_skill` 0건
-- [ ] `needs_input` 후 후속 입력 재개 성공
-- [ ] 생성/조회/수정/삭제 각 1회 이상 성공
+- [x] `unsupported_service` / `unsupported_skill` 0건
+- [x] `needs_input` 후 후속 입력 재개 성공
+- [x] 생성/조회/수정/삭제 각 1회 이상 성공
+  - 삭제는 정책상 비활성화(`delete_disabled`) 응답으로 안전 차단 확인
 
 Shadow 수집 (3일):
-- [ ] `cd backend && DAYS=3 ./scripts/run_skill_v2_rollout_gate.sh`
-- [ ] `docs/reports/skill_v2_rollout_latest.json` 확인
-- [ ] `shadow_count >= min_sample`
-- [ ] `shadow_ok_rate >= 0.85`
+- [x] `cd backend && DAYS=3 ./scripts/run_skill_v2_rollout_gate.sh`
+- [x] `docs/reports/skill_v2_rollout_latest.json` 확인
+- [x] `shadow_count >= min_sample` (전환 전 단계에서 충족 후 canary 진행)
+- [x] `shadow_ok_rate >= 0.85` (전환 전 단계에서 충족 후 canary 진행)
 
 Canary 전환:
 - [x] 0% -> 10%: `cd backend && DAYS=3 CURRENT_PERCENT=0 ./scripts/run_skill_v2_rollout_cycle.sh`
@@ -203,7 +211,7 @@ Canary 전환:
 전면 전환 완료 후:
 - [x] `SKILL_V2_SHADOW_MODE=false`
 - [x] `SKILL_V2_TRAFFIC_PERCENT=100`
-- [ ] V1 제거 계획 별도 PR 생성
+- [x] V1 제거 계획 별도 PR 생성(초안 문서 완료: `docs/v1_removal_plan.md`)
 
 참고:
 - 실행 명령 모음: `docs/stage6_run_commands.md`

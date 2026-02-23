@@ -1,26 +1,26 @@
 {
   "window_days": 1,
-  "window_start_utc": "2026-02-22T08:38:15Z",
+  "window_start_utc": "2026-02-22T09:23:02Z",
   "sample_size": 80,
   "min_sample": 30,
-  "v2_selected_count": 39,
-  "v2_success_count": 34,
-  "v2_success_rate": 0.8717948717948718,
-  "v2_error_rate": 0.1282051282051282,
-  "v2_latency_p50_ms": 2946,
-  "v2_latency_p95_ms": 5803,
+  "v2_selected_count": 59,
+  "v2_success_count": 53,
+  "v2_success_rate": 0.8983050847457628,
+  "v2_error_rate": 0.10169491525423724,
+  "v2_latency_p50_ms": 3153,
+  "v2_latency_p95_ms": 6756,
   "shadow_count": 0,
   "shadow_ok_count": 0,
   "shadow_ok_rate": 0.0,
   "shadow_latency_p50_ms": 0,
   "shadow_latency_p95_ms": 0,
   "rollout_reasons": {
-    "rollout_100": 23,
+    "rollout_100": 43,
     "rollout_60": 16,
-    "rollout_30_miss": 33
+    "rollout_30_miss": 13
   },
   "router_sources": {
-    "llm": 39
+    "llm": 59
   },
   "verdict": "PASS",
   "reasons": []

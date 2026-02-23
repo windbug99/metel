@@ -13,7 +13,7 @@ python scripts/check_skill_v2_rollout_prereqs.py --check-dns
 예상 결과:
 - Supabase/환경변수/preflight 체크 통과
 
-## 2) Shadow 모드(0%)로 운영 시작
+## 2) Shadow 모드(0%)로 운영 시작 (과거 단계 기록)
 
 Staging 환경변수:
 - `SKILL_ROUTER_V2_ENABLED=true`
@@ -74,7 +74,7 @@ DAYS=3 CURRENT_PERCENT=30 ./scripts/run_skill_v2_rollout_cycle.sh
 - `v2_error_rate <= 0.15`
 - `v2_latency_p95_ms <= 12000`
 
-## 6) 전면 전환 후
+## 6) 전면 전환 후 (현재 운영 기준)
 
 환경변수:
 - `SKILL_V2_SHADOW_MODE=false`
@@ -82,8 +82,25 @@ DAYS=3 CURRENT_PERCENT=30 ./scripts/run_skill_v2_rollout_cycle.sh
 
 후속:
 - V1 제거는 별도 PR에서 수행
+- 삭제 계열(Linear/Notion)은 정책상 비활성화되어 `delete_disabled`로 응답
 
-## 7) 빠른 점검용 명령
+## 7) 현재 운영 점검(권장)
+
+운영 값:
+- `SKILL_ROUTER_V2_ENABLED=true`
+- `SKILL_RUNNER_V2_ENABLED=true`
+- `SKILL_ROUTER_V2_LLM_ENABLED=true`
+- `SKILL_V2_SHADOW_MODE=false`
+- `SKILL_V2_TRAFFIC_PERCENT=100`
+
+빠른 게이트 확인:
+
+```bash
+cd backend
+DAYS=1 LIMIT=80 CURRENT_PERCENT=100 ./scripts/stage6_quickcheck.sh
+```
+
+## 8) 빠른 점검용 명령
 
 원커맨드 점검(preflight + gate + decision dry-run):
 
@@ -96,7 +113,7 @@ DAYS=3 CURRENT_PERCENT=0 ./scripts/stage6_quickcheck.sh
 - `docs/reports/skill_v2_rollout_latest.json`
 - `docs/reports/skill_v2_rollout_decision_latest.json`
 
-## 8) Telegram E2E 자동 실행 + 자동 채점
+## 9) Telegram E2E 자동 실행 + 자동 채점
 
 로컬/스테이징에서 텔레그램으로 테스트 문장을 자동 발송하고 `command_logs` 기준으로 PASS/FAIL 리포트를 생성:
 

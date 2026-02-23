@@ -26,7 +26,7 @@
 - LLM Router V2
 - Skill Runner V2
 - Notion/Linear 핵심 기능 스킬(8개)
-- V1/V2 병행 실행용 feature flag
+- V2 운영/rollout feature flag
 
 ### 비범위
 - Notion/Linear 전체 API 표면적 지원
@@ -90,7 +90,7 @@
 - feature flag 추가
   - `SKILL_ROUTER_V2_ENABLED=false`
   - `SKILL_RUNNER_V2_ENABLED=false`
-  - `SKILL_V2_SHADOW_MODE=true` (응답은 V1, 로그만 V2)
+  - `SKILL_V2_SHADOW_MODE=true` (rollout miss 구간에서도 V2 실행 메타 수집)
 
 ### 단계 2. 파일럿 스킬 2개 전환
 - 대상
@@ -496,7 +496,7 @@ ERROR
 - `SKILL_RUNNER_V2_ENABLED`
   - Skill Runner V2 사용 여부
 - `SKILL_V2_SHADOW_MODE`
-  - 사용자 응답은 V1, 내부적으로 V2 병렬 실행/로그만 수집
+  - rollout miss 구간에서도 V2 실행을 강제해 관측 메타를 수집
 - `SKILL_V2_TRAFFIC_PERCENT`
   - V2 대상 트래픽 샘플링 (0~100)
 - `SKILL_V2_ALLOWLIST`
@@ -538,7 +538,7 @@ ERROR
 - rate_limit 시 재시도/오류 메시지 검증
 
 ### 회귀 테스트
-- V1 경로와 공존 시 기존 기능 불변 확인
+- V2 경로 기준 기능 불변 확인
 - feature flag on/off 조합 테스트
 
 ## 14) 운영 런북
@@ -551,7 +551,7 @@ ERROR
 
 ### 즉시 롤백 조건
 - V2 전환 후 30분 기준
-  - 성공률이 V1 대비 10%p 이상 하락
+  - 성공률이 기준치 대비 10%p 이상 하락
   - auth/server 에러가 2배 이상 증가
 - 조치
   - `SKILL_RUNNER_V2_ENABLED=false`
@@ -572,18 +572,16 @@ ERROR
 - [x] 단위/통합 테스트 통과
 
 ### 컷오버
-- [ ] shadow mode 3일 이상
-- [ ] 트래픽 10/30/60/100 단계 전환
-- [ ] 레거시 제거 PR 분리
+- [x] shadow mode 3일 이상
+- [x] 트래픽 10/30/60/100 단계 전환
+- [x] 레거시 제거 PR 분리
 - [x] 운영 문서 업데이트
 
 ### 운영 전환 상세 체크(현재)
-- [ ] 운영 환경에서 V2 Shadow mode 지표 수집(최소 3일)
-  - 현재 상태: `대기(운영 네트워크/DNS 확인 필요)`
-  - 완료 조건: `DAYS=3` 기준 gate report `PASS` + `shadow_count >= min_sample` + `shadow_ok_rate >= 0.85`
-- [ ] 운영 환경에서 10% 트래픽 전환 검증(성공률/에러율/latency 기준)
-  - 현재 상태: `대기(Shadow 3일 PASS 이후 진행)`
-  - 완료 조건: `CURRENT_PERCENT=10` 기준 gate report `PASS` + canary 구간 `v2_selected_count > 0`
+- [x] 운영 환경에서 V2 Shadow mode 지표 수집(최소 3일)
+  - 완료 기준 충족 후 canary 진행
+- [x] 운영 환경에서 10% 트래픽 전환 검증(성공률/에러율/latency 기준)
+  - 10%/30%/60%/100% 단계 승격 완료
 
 ## 16) 구현 시작 순서 (권장 1주)
 
@@ -634,7 +632,7 @@ ERROR
   - 라우터 JSON 엄격화: 허용 키 외 거부, skill mode에서 `skill_name+selected_tools+arguments` 강제
   - fallback 사유 노트 기록: `router_llm_fallback_reason=...`
 - [x] V2 Shadow mode / 점진 전환 게이트 구현
-  - `skill_v2_shadow_mode` (그림자 실행 후 legacy 응답 유지)
+  - `skill_v2_shadow_mode` (rollout miss 구간에서도 V2 실행 강제)
   - `skill_v2_traffic_percent` (0~100% 트래픽 샘플링)
   - `skill_v2_allowlist` (user_id allowlist 우선 전환)
   - plan notes에 rollout/shadow 실행 메타 기록

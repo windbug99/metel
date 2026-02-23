@@ -485,35 +485,7 @@ def _record_command_log(
             "llm_model": llm_model,
             "verification_reason": verification_reason,
         }
-        try:
-            supabase.table("command_logs").insert(payload).execute()
-        except Exception as exc:
-            # Backward compatibility: if SQL migration is not applied yet, retry with legacy fields only.
-            text = str(exc).lower()
-            if any(
-                marker in text
-                for marker in (
-                    "column",
-                    "plan_source",
-                    "execution_mode",
-                    "autonomous_fallback_reason",
-                    "llm_provider",
-                    "llm_model",
-                    "verification_reason",
-                )
-            ):
-                legacy_payload = {
-                    "user_id": user_id,
-                    "channel": "telegram",
-                    "chat_id": chat_id,
-                    "command": command,
-                    "status": status,
-                    "error_code": error_code,
-                    "detail": detail,
-                }
-                supabase.table("command_logs").insert(legacy_payload).execute()
-            else:
-                raise
+        supabase.table("command_logs").insert(payload).execute()
     except Exception as exc:
         logger.exception("failed to record command log: %s", exc)
 
