@@ -100,41 +100,41 @@
 ## 배포 체크리스트 (1페이지)
 
 ### 사전 체크 (Pre-Deploy)
-- [ ] `SKILL_RUNNER_V2_ENABLED=false` 유지 확인
-- [ ] Railway 환경변수 확인
-  - [ ] `GOOGLE_CLIENT_ID`
-  - [ ] `GOOGLE_CLIENT_SECRET`
-  - [ ] `GOOGLE_REDIRECT_URI=https://metel-production.up.railway.app/api/oauth/google/callback`
-  - [ ] `GOOGLE_STATE_SECRET`
-- [ ] Google Cloud 설정 확인
-  - [ ] OAuth 테스트 사용자에 운영 테스트 계정 포함
-  - [ ] 승인된 리디렉션 URI가 Railway callback과 정확히 일치
-  - [ ] Google Calendar API 활성화
-- [ ] 대시보드 연결 UI 확인
-  - [ ] Notion / Linear / Google Connect 버튼 노출
-  - [ ] Google 상태 API(`/api/oauth/google/status`) 200 응답
-- [ ] 백엔드 테스트 통과 확인
-  - [ ] `backend/tests/test_agent_executor.py`
-  - [ ] `backend/tests/test_agent_tool_runner.py` 또는 `backend/tests/test_tool_runner.py`
-  - [ ] `backend/tests/test_agent_loop.py`
-- [ ] 마이그레이션/DB 스키마 영향 없음 확인 (`oauth_tokens` 기존 upsert 경로 유지)
+- [x] `SKILL_RUNNER_V2_ENABLED=false` 유지 확인
+- [x] Railway 환경변수 확인
+  - [x] `GOOGLE_CLIENT_ID`
+  - [x] `GOOGLE_CLIENT_SECRET`
+  - [x] `GOOGLE_REDIRECT_URI=https://metel-production.up.railway.app/api/oauth/google/callback`
+  - [x] `GOOGLE_STATE_SECRET`
+- [x] Google Cloud 설정 확인
+  - [x] OAuth 테스트 사용자에 운영 테스트 계정 포함
+  - [x] 승인된 리디렉션 URI가 Railway callback과 정확히 일치
+  - [x] Google Calendar API 활성화
+- [x] 대시보드 연결 UI 확인
+  - [x] Notion / Linear / Google Connect 버튼 노출
+  - [x] Google 상태 API(`/api/oauth/google/status`) 200 응답
+- [x] 백엔드 테스트 통과 확인
+  - [x] `backend/tests/test_agent_executor.py`
+  - [x] `backend/tests/test_agent_tool_runner.py` 또는 `backend/tests/test_tool_runner.py`
+  - [x] `backend/tests/test_agent_loop.py`
+- [x] 마이그레이션/DB 스키마 영향 없음 확인 (`oauth_tokens` 기존 upsert 경로 유지)
 
 ### 배포 직후 체크 (Post-Deploy)
 - [ ] `/api/health` 200 확인
 - [ ] 대시보드에서 Google Connect 수행
   - [ ] callback 후 `google=connected` 리다이렉트 확인
   - [ ] Google 카드 상태 `Connected` 확인
-- [ ] Telegram 단건 조회 스모크 테스트
-  - [ ] 요청: `구글캘린더에서 오늘 회의 일정 조회`
-  - [ ] 로그: `GET /calendar/v3/calendars/primary/events ... 200`
+- [x] Telegram 단건 조회 스모크 테스트
+  - [x] 요청: `구글캘린더에서 오늘 회의 일정 조회`
+  - [x] 로그: `GET /calendar/v3/calendars/primary/events ... 200`
 - [ ] Telegram 연속 파이프라인 스모크 테스트
-  - [ ] 요청: `구글캘린더에서 오늘 회의일정 조회해서 각 회의마다 노션에 회의록 초안 생성하고 각 회의를 리니어 이슈로 등록해줘`
+  - [x] 요청: `구글캘린더에서 오늘 회의일정 조회해서 각 회의마다 노션에 회의록 초안 생성하고 각 회의를 리니어 이슈로 등록해줘`
   - [ ] 로그: `linear_list_teams` -> `notion_create_page` N회 -> `linear_create_issue` N회
-  - [ ] 응답: 처리 건수 + Notion/Linear 링크 목록
-- [ ] 실패 경로 스모크 테스트 (권장)
-  - [ ] Linear 연결 해제 후 동일 요청
-  - [ ] 기대 결과: 전체 실패 + 보상(롤백) 메시지
-  - [ ] Linear 재연결 후 성공 재확인
+  - [x] 응답: 처리 건수 + Notion/Linear 링크 목록
+- [x] 실패 경로 스모크 테스트 (권장)
+  - [x] Linear 연결 해제 후 동일 요청
+  - [x] 기대 결과: 전체 실패 + 보상(롤백) 메시지
+  - [x] Linear 재연결 후 성공 재확인
 - [ ] command_logs 검증
   - [ ] `agent_plan` 성공/실패 코드가 사용자 응답과 일치
   - [ ] `realtime_data_unavailable` 조기 종료가 재발하지 않는지 확인
