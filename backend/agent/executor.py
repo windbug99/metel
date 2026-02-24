@@ -767,6 +767,45 @@ def _extract_linear_issue_url_from_tool_result(result: dict) -> str:
     return ""
 
 
+def _event_link(event: dict) -> str:
+    if not isinstance(event, dict):
+        return ""
+    direct_link = str(event.get("htmlLink") or event.get("hangoutLink") or "").strip()
+    if direct_link:
+        return direct_link
+    conference_data = event.get("conferenceData") or {}
+    if not isinstance(conference_data, dict):
+        return ""
+    entry_points = conference_data.get("entryPoints") or []
+    if not isinstance(entry_points, list):
+        return ""
+    for entry in entry_points:
+        if not isinstance(entry, dict):
+            continue
+        uri = str(entry.get("uri") or "").strip()
+        if uri:
+            return uri
+    return ""
+
+
+def _extract_google_calendar_event_previews_from_tool_result(result: dict, max_items: int = 5) -> list[str]:
+    data = result.get("data") or {}
+    if not isinstance(data, dict):
+        return []
+    items = data.get("items") or []
+    if not isinstance(items, list) or not items:
+        return []
+
+    previews: list[str] = []
+    for idx, event in enumerate(items[: max(1, max_items)], start=1):
+        if not isinstance(event, dict):
+            continue
+        title = _event_summary(event)
+        link = _event_link(event) or "-"
+        previews.append(f"{idx}. {title}\n   링크: {link}")
+    return previews
+
+
 def _extract_upstream_message(detail: str) -> str:
     match = re.search(r"\|message=([^|]+)", detail or "")
     if not match:
@@ -1538,6 +1577,13 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
         if output.get("kind") != "tool":
             continue
         tool_result = output.get("tool_result") or {}
+        tool_name = str(output.get("tool_name") or "")
+        if "google_calendar_list_events" in tool_name and "google_calendar_events_preview" not in artifacts:
+            event_previews = _extract_google_calendar_event_previews_from_tool_result(tool_result, max_items=5)
+            if event_previews:
+                artifacts["google_calendar_events_preview"] = json.dumps(event_previews, ensure_ascii=False)
+                artifacts["google_calendar_event_count"] = str(len(event_previews))
+                final_user_message = f"{final_user_message}\n- 오늘 일정\n" + "\n".join(event_previews)
         page_url = _extract_page_url_from_tool_result(tool_result)
         if page_url:
             artifacts["created_page_url"] = page_url

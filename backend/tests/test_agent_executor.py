@@ -318,6 +318,51 @@ def test_build_task_tool_payload_autofills_google_calendar_list_events_defaults(
     assert payload["time_max"].endswith("Z")
 
 
+def test_execute_agent_plan_google_calendar_list_events_includes_title_and_link(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, payload)
+        if tool_name == "google_calendar_list_events":
+            return {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {"summary": "Sprint Planning", "htmlLink": "https://calendar.google.com/event?eid=1"},
+                        {"summary": "Daily Standup", "hangoutLink": "https://meet.google.com/abc-defg-hij"},
+                    ]
+                },
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="구글캘린더에서 오늘 일정 조회",
+        requirements=[AgentRequirement(summary="오늘 일정 조회")],
+        target_services=["google"],
+        selected_tools=["google_calendar_list_events"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_google_events",
+                title="오늘 캘린더 이벤트 조회",
+                task_type="TOOL",
+                service="google",
+                tool_name="google_calendar_list_events",
+                payload={},
+                depends_on=[],
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert "Sprint Planning" in result.user_message
+    assert "https://calendar.google.com/event?eid=1" in result.user_message
+    assert "Daily Standup" in result.user_message
+    assert "https://meet.google.com/abc-defg-hij" in result.user_message
+
+
 def test_task_orchestration_autofills_notion_append_with_search(monkeypatch):
     calls = []
 
