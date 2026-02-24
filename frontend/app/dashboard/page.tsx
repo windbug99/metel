@@ -30,6 +30,15 @@ type LinearStatus = {
   } | null;
 } | null;
 
+type GoogleStatus = {
+  connected: boolean;
+  integration?: {
+    workspace_name: string | null;
+    workspace_id: string | null;
+    updated_at: string | null;
+  } | null;
+} | null;
+
 type TelegramStatus = {
   connected: boolean;
   telegram_chat_id?: number | null;
@@ -83,6 +92,10 @@ export default function DashboardPage() {
   const [linearStatusError, setLinearStatusError] = useState<string | null>(null);
   const [linearConnecting, setLinearConnecting] = useState(false);
   const [linearDisconnecting, setLinearDisconnecting] = useState(false);
+  const [googleStatus, setGoogleStatus] = useState<GoogleStatus>(null);
+  const [googleStatusError, setGoogleStatusError] = useState<string | null>(null);
+  const [googleConnecting, setGoogleConnecting] = useState(false);
+  const [googleDisconnecting, setGoogleDisconnecting] = useState(false);
   const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>(null);
   const [telegramStatusError, setTelegramStatusError] = useState<string | null>(null);
   const [telegramDisconnecting, setTelegramDisconnecting] = useState(false);
@@ -159,6 +172,32 @@ export default function DashboardPage() {
         }
       } catch {
         setLinearStatusError("Network error while fetching Linear status.");
+      }
+    },
+    [apiBaseUrl, getAuthHeaders]
+  );
+
+  const fetchGoogleStatus = useCallback(
+    async () => {
+      if (!apiBaseUrl) {
+        return;
+      }
+
+      try {
+        const headers = await getAuthHeaders();
+        const response = await fetch(
+          `${apiBaseUrl}/api/oauth/google/status`,
+          { headers }
+        );
+        if (response.ok) {
+          const data: GoogleStatus = await response.json();
+          setGoogleStatus(data);
+          setGoogleStatusError(null);
+        } else {
+          setGoogleStatusError("Failed to fetch Google status.");
+        }
+      } catch {
+        setGoogleStatusError("Network error while fetching Google status.");
       }
     },
     [apiBaseUrl, getAuthHeaders]
@@ -318,8 +357,14 @@ export default function DashboardPage() {
     const url = new URL(window.location.href);
     if (url.searchParams.has("notion")) {
       url.searchParams.delete("notion");
-      window.history.replaceState({}, "", url.toString());
     }
+    if (url.searchParams.has("linear")) {
+      url.searchParams.delete("linear");
+    }
+    if (url.searchParams.has("google")) {
+      url.searchParams.delete("google");
+    }
+    window.history.replaceState({}, "", url.toString());
   }, []);
 
   useEffect(() => {
@@ -369,6 +414,7 @@ export default function DashboardPage() {
 
         await fetchNotionStatus();
         await fetchLinearStatus();
+        await fetchGoogleStatus();
         await fetchTelegramStatus();
         await fetchCommandLogs();
 
@@ -389,7 +435,7 @@ export default function DashboardPage() {
     return () => {
       mounted = false;
     };
-  }, [router, fetchNotionStatus, fetchLinearStatus, fetchTelegramStatus, fetchCommandLogs]);
+  }, [router, fetchNotionStatus, fetchLinearStatus, fetchGoogleStatus, fetchTelegramStatus, fetchCommandLogs]);
 
   const handleDisconnectNotion = async () => {
     if (!apiBaseUrl || !profile?.id || disconnecting) {
@@ -485,6 +531,56 @@ export default function DashboardPage() {
       setLinearStatusError("Network error while starting Linear connection.");
     } finally {
       setLinearConnecting(false);
+    }
+  };
+
+  const handleDisconnectGoogle = async () => {
+    if (!apiBaseUrl || !profile?.id || googleDisconnecting) {
+      return;
+    }
+
+    setGoogleDisconnecting(true);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(
+        `${apiBaseUrl}/api/oauth/google/disconnect`,
+        { method: "DELETE", headers }
+      );
+      if (!response.ok) {
+        setGoogleStatusError("Failed to disconnect Google.");
+        return;
+      }
+      setGoogleStatus({ connected: false, integration: null });
+      setGoogleStatusError(null);
+    } catch {
+      setGoogleStatusError("Network error while disconnecting Google.");
+    } finally {
+      setGoogleDisconnecting(false);
+    }
+  };
+
+  const handleConnectGoogle = async () => {
+    if (!apiBaseUrl || !profile?.id || googleConnecting) {
+      return;
+    }
+
+    setGoogleConnecting(true);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/oauth/google/start`, {
+        method: "POST",
+        headers,
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.auth_url) {
+        setGoogleStatusError("Failed to start Google connection.");
+        return;
+      }
+      window.location.href = payload.auth_url;
+    } catch {
+      setGoogleStatusError("Network error while starting Google connection.");
+    } finally {
+      setGoogleConnecting(false);
     }
   };
 
@@ -797,6 +893,35 @@ export default function DashboardPage() {
             </button>
           </article>
 
+          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center justify-between">
+              <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
+                <ServiceLogo src="/logos/google.svg" alt="Google" />
+                Google Calendar
+              </p>
+              <p className="text-xs text-gray-600">{googleStatus?.connected ? "Connected" : "Not connected"}</p>
+            </div>
+            <p className="mt-2 text-sm text-gray-700">
+              Workspace: {googleStatus?.integration?.workspace_name ?? "-"}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                if (googleStatus?.connected) {
+                  void handleDisconnectGoogle();
+                  return;
+                }
+                void handleConnectGoogle();
+              }}
+              disabled={!apiBaseUrl || !profile?.id || googleConnecting || googleDisconnecting}
+              className="mt-3 inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+            >
+              {googleStatus?.connected
+                ? (googleDisconnecting ? "Disconnecting..." : "Disconnect")
+                : (googleConnecting ? "Connecting..." : "Connect")}
+            </button>
+          </article>
+
           <article className="rounded-xl border border-gray-200 bg-gray-50 p-4 opacity-60">
             <div className="flex items-center justify-between">
               <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
@@ -819,6 +944,7 @@ export default function DashboardPage() {
         </div>
         {notionStatusError ? <p className="mt-3 text-sm text-amber-700">{notionStatusError}</p> : null}
         {linearStatusError ? <p className="mt-3 text-sm text-amber-700">{linearStatusError}</p> : null}
+        {googleStatusError ? <p className="mt-3 text-sm text-amber-700">{googleStatusError}</p> : null}
         {!apiBaseUrl || !profile?.id ? (
           <p className="mt-3 text-sm text-amber-700">
             Set NEXT_PUBLIC_API_BASE_URL to enable service connection.
