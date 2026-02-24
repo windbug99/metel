@@ -29,6 +29,10 @@ OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 GEMINI_GENERATE_CONTENT_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
 
+def _is_gemini_provider(provider: str) -> bool:
+    return provider in {"gemini", "google"}
+
+
 @dataclass(frozen=True)
 class CopyRequest:
     source_service: str
@@ -313,7 +317,7 @@ async def _request_summary_with_provider(
             return None
         data = resp.json()
         return ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "").strip() or None
-    if provider == "gemini":
+    if _is_gemini_provider(provider):
         if not google_api_key:
             return None
         url = GEMINI_GENERATE_CONTENT_URL.format(model=model, api_key=google_api_key)
@@ -385,7 +389,7 @@ async def _request_json_with_provider(
             return _extract_json_object(str(content or ""))
         except Exception:
             return None
-    if provider == "gemini":
+    if _is_gemini_provider(provider):
         if not google_api_key:
             return None
         url = GEMINI_GENERATE_CONTENT_URL.format(model=model, api_key=google_api_key)

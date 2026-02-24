@@ -7,6 +7,8 @@ This folder contains the LLM agent runtime contract for metel.
 - `tool_specs/schema.json`: validation schema for service tool specs
 - `tool_specs/notion.json`: Notion executable tool spec
 - `tool_specs/spotify.json`: Spotify executable tool spec
+- `pipeline_dsl_schema.json`: pipeline DAG DSL v1 schema (planning contract)
+- `pipeline_error_codes.py`: pipeline-level error code enum and retryability policy
 
 ## Planned Runtime Modules
 

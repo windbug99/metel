@@ -17,6 +17,10 @@ OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 GEMINI_GENERATE_CONTENT_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
 
+def _is_gemini_provider(provider: str) -> bool:
+    return provider in {"gemini", "google"}
+
+
 def _default_workflow_steps(selected_tools: list[str]) -> list[str]:
     steps = [
         "요청문 분석 및 작업 요구사항 도출",
@@ -474,7 +478,7 @@ async def try_build_agent_plan_with_llm(
         if provider == "openai" and not settings.openai_api_key:
             errors.append("openai_api_key_missing")
             continue
-        if provider == "gemini" and not settings.google_api_key:
+        if _is_gemini_provider(provider) and not settings.google_api_key:
             errors.append("google_api_key_missing")
             continue
 
@@ -580,7 +584,7 @@ async def _request_plan_with_provider(
         except Exception as exc:  # pragma: no cover
             return None, f"error:{exc.__class__.__name__}"
 
-    if provider == "gemini":
+    if _is_gemini_provider(provider):
         url = GEMINI_GENERATE_CONTENT_URL.format(model=model, api_key=google_api_key)
         request_payload = {
             "contents": [{"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}],

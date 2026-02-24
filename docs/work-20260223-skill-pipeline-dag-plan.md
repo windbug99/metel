@@ -1,0 +1,365 @@
+# Skill Pipeline DAG 에이전트화 작업 계획 (2026-02-23)
+
+## 1) 배경과 목표
+- 목표: 연속적인 SKILL 사용 요청을 안정적으로 처리하는 에이전트 런타임 구축
+- 대표 시나리오:
+  - "구글캘린더에서 오늘 회의일정 조회"
+  - "각 회의마다 노션에 회의록 초안 생성"
+  - "각 회의를 리니어 이슈로 등록"
+- 핵심 원칙:
+  - LLM은 `계획 컴파일러`와 `중간 데이터 변환기` 역할만 수행
+  - 실행은 deterministic orchestrator가 담당
+
+## 2) 현재 metel 구조 요약
+- 이미 보유한 강점
+  - Task 기반 계획 구조(`TOOL|LLM`, `depends_on`, `output_schema`)
+  - 계획 계약 검증(`plan_contract`) 및 실패 시 fail-closed
+  - deterministic task 실행 경로와 autonomous loop 동시 보유
+  - skill contract 레이어(`name/version/input_schema/output_schema/runtime_tools`)
+- 현재 한계
+  - 일반화된 Pipeline DSL(`nodes/edges/when`) 부재
+  - `when` 조건식/분기 실행 미지원
+  - `$ref`(예: `$n1.items[0].id`) 기반 아티팩트 참조 해석기 부재
+  - idempotency 정책 필드는 있으나 실행 강제 약함
+  - 노드 공통 retry 정책표/오류코드별 표준 재시도 정책 부재
+  - 다건 처리 fan-out/fan-in 패턴 부재
+
+## 3) 제안 아키텍처
+## 3.1 실행 모델
+- A+B 하이브리드
+  - A: LLM 컴파일 단계에서 작은 DAG(Pipeline DSL) 생성
+  - B: 실행 단계는 deterministic DAG executor
+- LLM 역할 제한
+  - Planner/Compiler LLM: 사용자 요청 -> DSL
+  - Transform LLM: 텍스트/결과 -> 구조화 JSON
+
+## 3.2 Pipeline DSL (초기 스코프)
+- 엔티티
+  - `nodes`: skill 또는 llm transform invocation
+  - `edges`: 노드 출력 -> 다음 노드 입력 매핑
+  - `when`: 안전한 조건식(JSONPath + 비교 연산)
+  - `limits`: max_nodes, timeout, retry, budget
+- 제약
+  - 최대 노드 수 기본 6 (for_each 반복 실행은 동일 노드의 item-level 반복으로 처리)
+  - write skill allowlist 기반 제어
+  - 임의 코드 실행 금지
+
+## 3.3 실행기 (DAG Orchestrator)
+- 핵심 책임
+  - DAG 유효성/순환 검증
+  - 위상정렬 실행
+  - artifacts 저장 및 참조 해석
+  - 노드 단위 timeout/retry/cancel
+  - trace/log 표준화
+
+## 4) 다건 자동화(핵심 시나리오) 설계
+- 필요 기능
+  - `for_each` fan-out: calendar events 배열 아이템별 하위 노드 반복
+  - fan-in 집계: 전체 성공/실패 집계 및 요약
+- 권장 처리 정책
+  - all-or-nothing: 일부 실패 허용하지 않음
+  - 외부 서비스 트랜잭션 한계를 고려해 Saga 보상 수행 후 실패 반환
+    - 예: Notion 생성 성공 후 Linear 생성 실패 시 Notion 페이지 아카이브 보상 시도
+  - 재실행은 전체 동기화 기준으로 수행
+- idempotency key 기본안
+  - 서비스별 기준을 우선하되 metel 공통 키를 함께 사용
+  - `hash(user_id + calendar_event_id + action_type + target_workspace)`
+- 실행 순서/동시성 기본값
+  - 초기 모드: fan-out 순차 처리
+  - 안정화 이후 제한 병렬 전환 가능
+  - 병렬 전환 시 동시성 제한: `global=10`, `google=5`, `notion=3`, `linear=3`
+
+## 5) 신뢰성/안전 장치
+- Budget 2층 구조
+  - pipeline budget: 총 시간, 총 tool_calls, 총 llm_calls
+  - node budget: timeout/retry
+- 검증 전략
+  - write 노드 뒤 100% 강한 검증
+  - 외부 API eventual consistency 대응을 위한 짧은 백오프 재조회 포함
+  - 최종 fan-in 검증:
+    - 입력 회의 수 == 생성 Notion 문서 수 == 생성 Linear 이슈 수(허용 오차 0)
+- LLM 파라미터 자동 보정(필수)
+  - required slot은 사용자 추가 입력 없이 LLM autofill로 100% 채우는 것을 기본 정책으로 함
+  - autofill 실패(스키마 불일치/필수 슬롯 미충족) 시 즉시 전체 실패 처리
+  - 사용자에게 실패 사유와 재시도 가이드를 반환
+  - 실패 사유 문장은 LLM이 명확하게 작성하되, 근거 오류코드는 executor가 제공
+- 중복 방지
+  - 동일 payload mutation 반복 호출 차단
+  - idempotency key 없는 write 실행 금지(점진 도입)
+
+## 5.1 실패 응답 계약 (all-or-nothing)
+- 한 문장 요청에서 단 1개 item/step이라도 실패하면 전체 실패
+- 사용자 피드백 표준 필드
+  - `failed_item_ref`: 실패한 회의/대상 식별자(예: calendar_event_id)
+  - `failed_step`: 실패한 스킬/노드명(예: `linear.issue_create`)
+  - `error_code`: 분류 가능한 오류코드
+  - `reason`: 사용자 친화적 실패 설명
+  - `retry_hint`: 재시도/조치 가이드
+  - `compensation_status`: 보상 처리 결과(`completed|failed|manual_required`)
+- 내부 기록 필드(로그/관측)
+  - `pipeline_run_id`, `node_id`, `attempt`, `upstream_status`, `upstream_message`
+
+## 6) 단계별 구현 계획
+## Phase 1 (MVP: 1~2주)
+- Pipeline DSL v0 추가
+  - nodes/depends_on/when(기본 비교식)/limits
+- DSL validator 추가
+  - 스키마 검증, skill 존재성, 서비스 권한/allowlist 검증
+- executor 확장
+  - 현재 task orchestration 경로 재사용 + DSL 노드 실행 어댑터
+- Transform LLM JSON schema 강제
+  - 실패 시 1~2회 보정 재시도 후에도 required slot 미충족이면 전체 실패
+
+### 완료 기준
+- 단건 3~5 step 파이프라인(예: read->llm->write) 안정 실행
+- 계약 위반 플랜 fail-closed
+
+## Phase 2 (핵심 확장: 1~2주)
+- fan-out/fan-in(`for_each`) 추가
+- all-or-nothing 실행 + 보상 트랜잭션(Saga) 추가
+- write 노드 idempotency 강제
+
+### 완료 기준
+- "오늘 회의 N건 -> 노션 N건 -> 리니어 N건" 시나리오 E2E 통과
+- 재실행 시 중복 생성 0건
+
+## Phase 3 (운영 안정화: 1주+)
+- 오류코드별 retry policy 테이블화
+- 상세 observability(event_id 단위 trace)
+- 자동 롤백/보상 전략(선택)
+
+### 완료 기준
+- 실패 원인 자동 분류 가능
+- 운영 리포트에서 재시도 효율/중복 방지 효과 확인 가능
+
+## 7) 데이터/로그 스키마 보강
+- execution artifacts
+  - `pipeline_run_id`, `node_id`, `node_type`, `status`, `attempt`, `duration_ms`
+  - `idempotency_key`, `external_ref`(calendar_event_id 등)
+- 요약 지표
+  - `fanout_total`, `fanout_success`, `fanout_failed`, `verification_reason`
+- 영속 매핑 테이블(신규)
+  - `pipeline_links(user_id, event_id, notion_page_id, linear_issue_id, run_id, status, updated_at)`
+  - 목적: 전체 동기화/재실행/보상 처리 시 참조 무결성 유지
+
+## 8) 테스트 전략
+- 단위 테스트
+  - DSL validator(허용/차단 케이스)
+  - when 파서/평가기
+  - ref resolver
+  - idempotency 정책
+- 통합 테스트
+  - read->transform->write 체인
+  - for_each fan-out + 단일 item 실패 시 전체 실패(all-or-nothing) 검증
+  - LLM autofill 100% 충족 검증(required slot 미충족 시 즉시 실패)
+  - 실패 피드백 계약 필드(`failed_item_ref`, `failed_step`, `reason`, `retry_hint`) 검증
+- 회귀 테스트
+  - 기존 planner/executor/autonomous 경로 비회귀 확인
+
+## 9) 리스크와 대응
+- 리스크: LLM 출력 편차로 플랜 불안정
+  - 대응: DSL 강제 + validator fail-closed + rule synthesis fallback
+- 리스크: 다건 처리에서 중복 생성
+  - 대응: idempotency key 강제 + duplicate mutation block
+- 리스크: 비용/지연 증가
+  - 대응: 노드/파이프라인 budget, 검증 노드 선택적 적용
+
+## 10) Decision Log (확정)
+1. 실패 정책
+- 일부 실패 허용하지 않음(all-or-nothing)
+- 구현 방식: 실패 시 보상 수행 후 전체 실패 반환 + 사용자 실패 피드백 제공
+- 실패 피드백 문장은 LLM이 명확하게 작성
+
+2. 멱등성
+- 기본적으로 각 서비스 기준을 따름
+- 단, metel 공통 idempotency key를 추가해 교차 서비스 중복 생성 방지
+- 멱등키 충돌 시 기존 결과 재사용(`idempotent success`)
+
+3. 재실행
+- 전체 동기화 방식으로 수행
+- 실행 시작 시점 스냅샷 기준으로 동기화 범위 고정
+
+4. 생성/업데이트 정책
+- 사용자 의도 우선
+  - 생성 요청은 생성
+  - 업데이트 요청은 업데이트
+- 모드 자동 전환 금지
+
+5. 매핑 저장
+- 현재 구조에 영속 매핑 테이블을 추가
+- 권장: `pipeline_links` 테이블 도입(이벤트-노션-리니어 연결)
+
+6. 타임존
+- 대시보드에 타임존 설정 기능 추가
+- 초기 기본값은 사용자 브라우저 타임존(IANA) 자동 설정
+- 런타임 계산은 `users.timezone` 기준 사용
+
+7. `when` 문법 범위
+- 최소 문법만 허용
+  - 형식: `left op right`
+  - `left`: `$node.path`
+  - `op`: `== != > >= < <= in`
+  - `right`: string/number/bool/null/array literal
+- 함수 호출/임의 코드/정규식 실행 금지
+
+8. LLM Transform 실패 처리
+- required slot 자동 보정 100% 목표
+- 스키마 불일치 시 최대 2회 재시도
+- 재시도 후 required slot 미충족이면 전체 실패 + 사용자 피드백 반환
+
+9. 검증 정책
+- 100% 검증 적용
+- write 이후 즉시 검증 + 백오프 재조회
+
+10. 예산 제한
+- "무제한" 대신 운영 안전 최소 한도 적용
+  - `max_nodes=6`
+  - `max_fanout=50`
+  - `max_tool_calls=200`
+  - `pipeline_timeout_sec=300`
+
+11. 동시성 제어
+- 초기 릴리즈는 fan-out 순차 처리
+- 안정화 이후 제한 병렬 전환 시 세마포어 적용
+  - `global=10`, `google=5`, `notion=3`, `linear=3`
+
+12. 권한/보안
+- write skill allowlist
+- 서비스별 OAuth scope 검사
+- 사용자별 리소스 접근 경계 강제
+- 감사 로그(생성/수정/삭제) 기록
+- 민감정보 마스킹 로그 기본 적용
+
+13. 시나리오 우선순위
+- 현재 문서의 대표 시나리오를 우선 구현 대상으로 유지
+- 제외 시나리오는 현 단계에서 별도 정의하지 않음
+
+14. 릴리즈/게이트
+- 권장 방식 수용(점진 rollout + 품질 게이트 기반)
+
+15. 테스트 완료 기준
+- 현재 수준의 기준 유지
+- 단, 본 문서의 all-or-nothing/fan-out/autofill/실패 피드백 계약 검증은 최소 필수 세트로 포함
+
+## 11) 구현 확정 요약 (추가 질문 반영)
+1. 실패 시 보상 정책
+- `보상 수행 후 실패 반환`으로 확정
+2. 멱등키 충돌 정책
+- `기존 결과 재사용(idempotent success)`으로 확정
+3. 초기 fan-out 모드
+- `순차`로 확정
+
+## 12) 즉시 실행 항목 (다음 작업)
+1. DSL 스키마 초안 작성(JSONSchema)
+2. `when` 미니문법(연산자/허용 함수) 확정
+3. ref 문법(`$node.path`)과 resolver 구현
+4. executor에 DSL adapter 계층 추가
+5. Google Calendar -> Notion -> Linear 데모 파이프라인 fixture 추가
+
+## 13) 구현 스펙 (DSL)
+### 13.1 Pipeline DSL v1 (최소 스키마)
+```json
+{
+  "pipeline_id": "string",
+  "version": "1.0",
+  "limits": {
+    "max_nodes": 6,
+    "max_fanout": 50,
+    "max_tool_calls": 200,
+    "pipeline_timeout_sec": 300
+  },
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "skill|llm_transform|for_each|verify",
+      "name": "google_calendar.list_today",
+      "depends_on": [],
+      "input": {},
+      "when": "$ctx.enabled == true",
+      "retry": {"max_attempts": 1, "backoff_ms": 300},
+      "timeout_sec": 20
+    }
+  ]
+}
+```
+
+### 13.2 Node 타입 계약
+| type | 목적 | 필수 필드 | 출력 계약 |
+|---|---|---|---|
+| `skill` | 외부 도구 실행 | `name`, `input` | skill `output_schema` 준수 |
+| `llm_transform` | 슬롯/본문 구조화 | `input`, `output_schema` | JSON schema 100% 준수 |
+| `for_each` | 배열 item 반복 | `source_ref`, `item_node_ids` | `item_results[]`, `item_count` |
+| `verify` | 정합성/개수 검증 | `rules[]` | `pass`, `reason` |
+
+### 13.3 Ref 문법
+- 형식: `$<node_id>.<path>`
+- 예시:
+  - `$n1.events`
+  - `$n2.result.issue_title`
+  - `$item.calendar_event_id` (`for_each` 내부 전용)
+- 미해결 ref는 즉시 실패(`DSL_REF_NOT_FOUND`)
+
+### 13.4 `when` 미니문법
+- 허용 형식: `left op right`
+- `left`: `$node.path` 또는 `$item.path` 또는 `$ctx.path`
+- `op`: `==`, `!=`, `>`, `>=`, `<`, `<=`, `in`
+- `right`: string/number/bool/null/array literal
+- 금지: 함수 호출, 정규식 실행, 임의 코드
+
+## 14) 실행 상태전이 스펙
+### 14.1 Pipeline 상태
+| 현재 상태 | 이벤트 | 다음 상태 | 비고 |
+|---|---|---|---|
+| `pending` | 실행 시작 | `running` | run_id 발급 |
+| `running` | 모든 노드 성공 | `succeeded` | verify 통과 필수 |
+| `running` | 노드 실패 | `compensating` | all-or-nothing 정책 |
+| `compensating` | 보상 완료 | `failed` | 사용자 실패 피드백 전송 |
+| `compensating` | 보상 실패 | `manual_required` | 수동조치 필요 표시 |
+
+### 14.2 Item 상태(`for_each`)
+| 상태 | 의미 |
+|---|---|
+| `item_pending` | 실행 대기 |
+| `item_running` | 실행 중 |
+| `item_succeeded` | item 성공 |
+| `item_failed` | item 실패(즉시 pipeline 보상 진입) |
+
+## 15) 오류코드 및 재시도 정책
+| 코드 | 발생 조건 | 재시도 | 사용자 피드백 |
+|---|---|---|---|
+| `DSL_VALIDATION_FAILED` | DSL 계약 위반 | 없음 | 요청 형식 오류 안내 |
+| `DSL_REF_NOT_FOUND` | ref 해석 실패 | 없음 | 내부 참조 실패 안내 |
+| `LLM_AUTOFILL_FAILED` | required slot 미충족 | 2회 | 누락 항목/재요청 가이드 |
+| `TOOL_AUTH_ERROR` | OAuth/권한 오류 | 없음 | 서비스 재연동 안내 |
+| `TOOL_RATE_LIMITED` | 429/쿼터 초과 | 1~2회 | 잠시 후 재시도 안내 |
+| `TOOL_TIMEOUT` | 노드 timeout | 1회 | 일시적 지연 안내 |
+| `VERIFY_COUNT_MISMATCH` | fan-in 정합성 실패 | 없음 | 일부 처리 누락 안내 |
+| `COMPENSATION_FAILED` | 보상 실패 | 없음 | 수동 확인 필요 안내 |
+| `PIPELINE_TIMEOUT` | 전체 timeout 초과 | 없음 | 요청 축소/재시도 안내 |
+
+### 15.1 재시도 기본 규칙
+- 기본: `skill` 노드만 재시도
+- `llm_transform`은 schema 불일치 시에만 최대 2회 재시도
+- `verify` 실패는 재시도하지 않고 즉시 실패
+- `for_each`는 순차 처리, item 하나 실패 시 다음 item 실행 중단
+
+## 16) 대표 파이프라인 템플릿
+### 16.1 Google Calendar -> Notion -> Linear
+1. `n1`: `google_calendar.list_today`
+2. `n2`: `for_each` on `$n1.events`
+3. `n2_1`: `llm_transform` (회의록 초안/이슈 payload 생성)
+4. `n2_2`: `notion.page_create`
+5. `n2_3`: `linear.issue_create`
+6. `n3`: `verify` (입력 회의 수 == notion 생성 수 == linear 생성 수)
+
+### 16.2 실패 피드백 예시 payload
+```json
+{
+  "failed_item_ref": "cal_evt_20260224_0900",
+  "failed_step": "linear.issue_create",
+  "error_code": "TOOL_AUTH_ERROR",
+  "reason": "리니어 인증이 만료되어 이슈를 생성할 수 없습니다.",
+  "retry_hint": "리니어 연동을 다시 연결한 뒤 동일 요청을 재시도하세요.",
+  "compensation_status": "completed"
+}
+```

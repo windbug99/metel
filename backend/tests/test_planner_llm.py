@@ -133,6 +133,37 @@ def test_try_build_agent_plan_with_llm_fallback_to_gemini(monkeypatch):
     assert "llm_provider=gemini" in plan.notes
 
 
+def test_try_build_agent_plan_with_llm_fallback_to_google_alias(monkeypatch):
+    calls = []
+
+    async def _fake_request(**kwargs):
+        calls.append(kwargs["provider"])
+        if kwargs["provider"] == "openai":
+            return None, "http_429"
+        return _sample_payload(), None
+
+    monkeypatch.setattr(
+        "agent.planner_llm.get_settings",
+        lambda: _settings(
+            llm_planner_fallback_provider="google",
+            llm_planner_fallback_model="gemini-2.5-flash-lite",
+        ),
+    )
+    monkeypatch.setattr("agent.planner_llm._request_plan_with_provider", _fake_request)
+    monkeypatch.setattr("agent.planner_llm._request_structured_parse_with_provider", _fake_request)
+
+    plan, err = asyncio.run(
+        try_build_agent_plan_with_llm(
+            user_text="노션 최근 페이지 조회",
+            connected_services=["notion"],
+        )
+    )
+    assert err is None
+    assert plan is not None
+    assert calls == ["openai", "google", "openai", "google"]
+    assert "llm_provider=google" in plan.notes
+
+
 def test_try_build_agent_plan_with_llm_rehydrates_missing_llm_task(monkeypatch):
     async def _fake_request(**kwargs):
         _ = kwargs

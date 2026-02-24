@@ -170,6 +170,41 @@ def test_summarize_text_with_llm_retries_once_on_invalid_output(monkeypatch):
     assert mode.endswith(":retry1")
 
 
+def test_summarize_text_with_llm_fallback_to_google_alias(monkeypatch):
+    calls: list[str] = []
+
+    async def _fake_request_summary_with_provider(
+        *,
+        provider: str,
+        model: str,
+        text: str,
+        line_count: int | None,
+        openai_api_key: str | None,
+        google_api_key: str | None,
+    ):
+        _ = (model, text, line_count, openai_api_key, google_api_key)
+        calls.append(provider)
+        if provider == "openai":
+            return None
+        return "구글 폴백 요약 결과입니다."
+
+    class _Settings:
+        llm_planner_provider = "openai"
+        llm_planner_model = "gpt-4o-mini"
+        llm_planner_fallback_provider = "google"
+        llm_planner_fallback_model = "gemini-2.5-flash-lite"
+        openai_api_key = "k1"
+        google_api_key = "k2"
+
+    monkeypatch.setattr("agent.executor.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.executor._request_summary_with_provider", _fake_request_summary_with_provider)
+
+    summary, mode = asyncio.run(_summarize_text_with_llm("원문", "핵심 요약"))
+    assert summary == "구글 폴백 요약 결과입니다."
+    assert mode == "llm:google:gemini-2.5-flash-lite"
+    assert calls == ["openai", "openai", "google"]
+
+
 def test_extract_page_archive_target():
     title = _extract_page_archive_target("노션에서 Metel test page 페이지 삭제해줘")
     assert title == "Metel test page"

@@ -28,6 +28,10 @@ OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 GEMINI_GENERATE_CONTENT_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
 
+def _is_gemini_provider(provider: str) -> bool:
+    return provider in {"gemini", "google"}
+
+
 def _extract_json_object(text: str) -> dict[str, Any] | None:
     candidate = text.strip()
     try:
@@ -379,7 +383,7 @@ async def _request_autonomous_action(
                 await asyncio.sleep(0.35 * (attempt + 1))
         return None, last_err or "request_failed"
 
-    if provider == "gemini":
+    if _is_gemini_provider(provider):
         if not google_api_key:
             return None, "google_api_key_missing"
         url = GEMINI_GENERATE_CONTENT_URL.format(model=model, api_key=google_api_key)
