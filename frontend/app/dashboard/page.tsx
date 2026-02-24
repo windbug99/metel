@@ -682,7 +682,7 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <main className="relative min-h-screen overflow-hidden bg-[#0a0a0b] text-[#f5f5f5]">
+      <main className="relative min-h-screen overflow-hidden bg-[#050506] text-[#f5f5f5]">
         <div className="pointer-events-none absolute inset-0 opacity-70">
           <div className="absolute inset-0 bg-[linear-gradient(to_right,#1a1a1c_1px,transparent_1px),linear-gradient(to_bottom,#1a1a1c_1px,transparent_1px)] bg-[size:56px_56px]" />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,#1d2430_0px,transparent_380px),radial-gradient(circle_at_84%_8%,#2a1f2a_0px,transparent_340px),radial-gradient(circle_at_50%_82%,#122025_0px,transparent_420px)]" />
@@ -695,7 +695,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#0a0a0b] text-[#f5f5f5]">
+    <main className="relative min-h-screen overflow-hidden bg-[#050506] text-[#f5f5f5]">
       <div className="pointer-events-none absolute inset-0 opacity-70">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#1a1a1c_1px,transparent_1px),linear-gradient(to_bottom,#1a1a1c_1px,transparent_1px)] bg-[size:56px_56px]" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,#1d2430_0px,transparent_380px),radial-gradient(circle_at_84%_8%,#2a1f2a_0px,transparent_340px),radial-gradient(circle_at_50%_82%,#122025_0px,transparent_420px)]" />

@@ -3,7 +3,7 @@ import AuthPanel from "../components/auth-panel";
 export default function Home() {
   const githubUrl = "https://github.com/windbug99/metel";
   const signInButtonClassName =
-    "rounded-md border border-[#8ac2ff] bg-[#8ec5ff] px-5 py-2.5 text-sm font-semibold text-[#0b1320] shadow-[0_0_0_1px_rgba(142,197,255,0.25),0_8px_26px_rgba(88,145,212,0.35)] transition hover:bg-[#a0d0ff] hover:shadow-[0_0_0_1px_rgba(160,208,255,0.35),0_10px_30px_rgba(88,145,212,0.42)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9ed0ff] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0a0b]";
+    "rounded-md border border-[#d7dbe4] bg-[#F7F8FA] px-5 py-2.5 text-sm font-semibold text-[#0b1320] shadow-[0_0_0_1px_rgba(247,248,250,0.35),0_8px_26px_rgba(18,24,34,0.35)] transition hover:bg-[#e9ecf1] hover:shadow-[0_0_0_1px_rgba(233,236,241,0.45),0_10px_30px_rgba(18,24,34,0.42)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F7F8FA] focus-visible:ring-offset-2 focus-visible:ring-offset-[#050506]";
   const githubButtonClassName =
     "rounded-md border border-[#303038] bg-[#121217] px-5 py-2.5 text-sm font-medium text-[#f0f0f0] transition hover:border-[#4a4a56] hover:bg-[#16161d]";
   const services = [
@@ -20,7 +20,7 @@ export default function Home() {
   ];
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#0a0a0b] text-[#f5f5f5]">
+    <main className="relative min-h-screen overflow-hidden bg-[#050506] text-[#f5f5f5]">
       <div className="pointer-events-none absolute inset-0 opacity-70">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#1a1a1c_1px,transparent_1px),linear-gradient(to_bottom,#1a1a1c_1px,transparent_1px)] bg-[size:56px_56px]" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,#1d2430_0px,transparent_380px),radial-gradient(circle_at_84%_8%,#2a1f2a_0px,transparent_340px),radial-gradient(circle_at_50%_82%,#122025_0px,transparent_420px)]" />
@@ -33,7 +33,7 @@ export default function Home() {
             <AuthPanel
               variant="button"
               signInLabel="Sign in"
-              signInButtonClassName="rounded-md border border-[#8ac2ff] bg-[#8ec5ff] px-3 py-1.5 text-sm font-semibold text-[#0b1320] transition hover:bg-[#a0d0ff]"
+              signInButtonClassName="rounded-md border border-[#d7dbe4] bg-[#F7F8FA] px-3 py-1.5 text-sm font-semibold text-[#0b1320] transition hover:bg-[#e9ecf1]"
             />
             <a
               href={githubUrl}
