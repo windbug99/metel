@@ -1,14 +1,14 @@
 # Homepage UI Redesign Plan (2026-02-24)
 
 ## 목적
-- `frontend/app/page.tsx`를 `droidclaw.ai` 스타일의 라이트 테마 랜딩으로 개편한다.
+- `frontend/app/page.tsx`를 `droidclaw.ai` 스타일의 다크 테마 랜딩으로 개편한다.
 - metel의 포지셔닝을 "단순 챗봇"이 아닌 **신뢰 가능한 운영 실행 엔진**으로 명확히 전달한다.
 - 현재 제공 범위(개인 설치 미제공, 연동 서비스 제한)를 정확하게 반영한다.
 
 ## 고정 요구사항
 - 버튼: `Sign in`, `GitHub`만 노출
 - 폰트: `Geist` 사용
-- 테마: Light theme
+- 테마: Dark theme
 - `Use case` 섹션: 실제 예시 요청문 기반 콘텐츠
 - `현재 연동 가능 서비스 목록` 섹션 포함
 - `Setup` 섹션 제거 (개인 설치 버전 미제공)
@@ -104,6 +104,11 @@
 
 ## 진행 상태 (2026-02-24)
 - [x] `frontend/app/page.tsx` 랜딩 구조 전면 개편
+- [x] 다크 테마 전환 및 섹션 헤더 글로우 효과 적용
+- [x] GitHub 링크를 `https://github.com/windbug99/metel`로 고정
+- [x] CTA 위계 재조정 (Sign in primary / GitHub secondary)
+- [x] 본문 폭 추가 축소 (`max-w-3xl`) 및 반응형 타이포 미세 조정
+- [x] 서비스 카드 아이콘 컨테이너 스타일 강화
 - [x] 실배포 전 미세 조정 1차 반영 (문구 톤/섹션 여백/모바일 타이포)
 - [x] 실배포 전 미세 조정 2차 반영 (긴 한글 요청문 줄바꿈/모바일 헤드라인 보정)
 - [x] Use case 예시 요청문 영문화
@@ -121,7 +126,7 @@
 
 ## 검증 체크리스트
 - [x] 홈페이지에 `Sign in`, `GitHub` 버튼만 노출
-- [x] 라이트 테마 유지
+- [x] 다크 테마 적용
 - [x] Geist 폰트 적용 확인
 - [x] Setup 섹션 미노출 확인
 - [x] Use case 요청문 3개 이상 노출
