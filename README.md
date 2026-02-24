@@ -7,63 +7,114 @@
 [![Deploy Frontend](https://img.shields.io/badge/deploy-Vercel-000000?logo=vercel&logoColor=white)](#)
 [![Status](https://img.shields.io/badge/status-prototype-orange)](#)
 
-AI-native operations assistant prototype.  
-Users connect services once on the web dashboard, then request tasks in Telegram.  
-`metel` plans, executes, verifies, and returns results with execution traces.
+metel is an execution-first AI operations prototype.  
+It is designed to turn one natural-language request into multi-step, cross-service actions with verification and logs.
+
+Core position:
+- Not just "chat with tools"
+- An operational execution layer with guardrails
 
 ## Live Product
 
 - Frontend: `https://metel-frontend.vercel.app`
 - Backend: `https://metel-production.up.railway.app`
 
-## What Works Now
+## Why metel
 
-- Notion OAuth connect/disconnect/status
-- Linear OAuth connect/disconnect/status
-- Telegram connect/disconnect/status + deep link flow
-- Natural language task execution on Notion:
-  - search/list pages
-  - create/update/archive (with safety handling)
-  - append content blocks
-  - summarize selected page contents
-- Agent telemetry in `command_logs`:
-  - `plan_source`, `execution_mode`, `autonomous_fallback_reason`
-  - `verification_reason`, `llm_provider`, `llm_model`
-- Autonomous runtime guardrails:
-  - turn/tool/replan/timeout budgets
-  - completion verification gate
-  - duplicate mutation call block
-  - progressive no-fallback option
+Most automation surfaces are strong at notifications and simple trigger-action flows.  
+metel focuses on reliable execution for multi-step requests:
 
-## Core Flow
+- planner + autonomous executor loop
+- verification/fallback telemetry
+- mutation safety controls (budget, duplicate block, validation)
+- structured run logs for traceability
+
+## How It Works
 
 ```text
-Telegram User Request
-  -> LLM Planner
-  -> Autonomous Executor Loop (tool_call / verify / replan)
-  -> Notion Tool Runner (API)
-  -> Execution Summary + Logs
-  -> Telegram Response
+User request (Telegram)
+  -> Planner (LLM + constrained tool specs)
+  -> Autonomous executor loop
+     - tool_call
+     - verify
+     - replan (if needed)
+  -> Tool runners (Notion / Linear / Google Calendar / ...)
+  -> Execution summary + structured command logs
+  -> User response (Telegram)
 ```
 
-## Demo Requests (Copy/Paste)
+Operationally, metel records:
+- `plan_source` (`llm` / `rule`)
+- `execution_mode` (`autonomous` / `rule`)
+- `autonomous_fallback_reason`
+- `verification_reason`
+- `llm_provider`, `llm_model`
 
-Use these in Telegram after connecting Notion:
+## What Works Now
 
-1. `Notion에서 최근 생성된 페이지 3개를 요약해서 "Daily Briefing Test" 페이지로 만들어줘`
-2. `Notion에서 "더 코어 3", "사이먼 블로그" 페이지의 핵심 주제 3문장으로 정리해서 각각 페이지에 추가해줘`
-3. `Notion에서 "Daily Briefing Test" 페이지에 "Action Item: API test done" 추가해줘`
-4. `Notion에서 "Daily Briefing Test" 페이지를 삭제해줘`
+Service connection (OAuth / status / disconnect):
+- Notion
+- Linear
+- Google Calendar
+- Telegram bot connection flow (deep link + status)
 
-## Known Limits (Current Prototype)
+Execution capabilities (implemented):
+- Notion search/list/create/update/archive + append content
+- Linear search/list/create/update flows
+- Google Calendar event listing (`google_calendar_list_events`)
+- Multi-step request handling with autonomous loop + guardrails
+- Execution logs UI in dashboard (`command_logs`)
 
-- Some Notion pages at workspace root may not support archive/delete via API depending on page type and ownership.
-- Complex cross-domain tasks (e.g. external URL crawling + summarize + write) are partially implemented and still being hardened.
-- Autonomous mode still requires fallback-rate reduction for full production reliability.
+## Reliability Model (Current)
+
+Guardrails currently in runtime:
+- turn/tool/replan/timeout budgets
+- verification gate before completion
+- duplicate mutation-call blocking
+- rule fallback controls via env flags
+
+Quality gates in repo:
+- core regression script
+- autonomous gate script
+- tool spec validation script
+
+This repository prioritizes execution reliability before adding many new integrations.
+
+## Example Requests
+
+- `구글캘린더에서 오늘 회의 일정 조회`
+- `구글캘린더에서 오늘 회의일정 조회해서 각 회의마다 노션에 회의록 초안 생성하고 각 회의를 리니어 이슈로 등록해줘`
+- `linear 최근 이슈 5개 검색해줘`
+- `notion 페이지를 생성하고 오늘 작업 요약을 추가해줘`
+
+## Current Limits
+
+- Prototype quality, not production SLA.
+- Some external API constraints still apply by provider policy and token state.
+- Autonomous success/fallback ratio is still being tuned to reduce rule dependency.
+- Complex high-variance tasks may require tighter tool/slot guidance.
+
+## Direction (Execution-First Roadmap)
+
+Near term:
+- reduce fallback dependency and raise autonomous success rate
+- harden SKILL_THEN_SKILL style multi-step execution
+- improve failure transparency (reason clarity + user-facing guidance)
+- strengthen all-or-nothing behavior for critical chained writes
+
+Service expansion priority (planned direction, not all implemented):
+1. Gmail / Google Workspace
+2. Calendar depth
+3. Slack as team interface
+4. RSS monitoring
+5. GitHub-oriented operational workflows
+
+Principle:
+- prioritize trust and deterministic behavior over integration count
 
 ## Quick Start (Local)
 
-### 1) Backend
+### Backend
 
 ```bash
 cd backend
@@ -74,29 +125,27 @@ cp .env.example .env
 uvicorn main:app --reload --port 8000
 ```
 
-### 2) Frontend
+### Frontend
 
 ```bash
 cd frontend
-npm install
+pnpm install
 cp .env.example .env.local
-npm run dev
+pnpm dev
 ```
 
-### 3) Check
+### Health check
 
 - Frontend: `http://localhost:3000`
-- Backend health: `http://localhost:8000/api/health`
+- Backend: `http://localhost:8000/api/health`
 
 ## Environment Variables
 
-Set required keys from:
-
+Use:
 - `backend/.env.example`
 - `frontend/.env.example`
 
-Important agent flags:
-
+Key agent/runtime flags:
 - `LLM_PLANNER_ENABLED`
 - `LLM_PLANNER_PROVIDER`
 - `LLM_PLANNER_MODEL`
@@ -106,6 +155,7 @@ Important agent flags:
 - `LLM_AUTONOMOUS_RULE_FALLBACK_ENABLED`
 - `LLM_AUTONOMOUS_RULE_FALLBACK_MUTATION_ENABLED`
 - `LLM_AUTONOMOUS_PROGRESSIVE_NO_FALLBACK_ENABLED`
+- `SKILL_RUNNER_V2_ENABLED`
 - `TOOL_SPECS_VALIDATE_ON_STARTUP`
 
 ## Testing
@@ -116,16 +166,13 @@ source .venv/bin/activate
 python -m pytest -q
 ```
 
-Core regression gate (recommended):
+Recommended regression gates:
 
 ```bash
 cd backend
 ./scripts/run_core_regression.sh
+./scripts/run_autonomous_gate.sh
 ```
-
-Note:
-- `tests/test_agent_executor_e2e.py` is kept as a legacy suite and skipped by default.
-- Current primary quality gate is the common-orchestration regression set above.
 
 Tool spec validation:
 
@@ -135,56 +182,21 @@ source .venv/bin/activate
 python scripts/check_tool_specs.py --json
 ```
 
-Autonomous quality gate:
-
-```bash
-cd backend
-./scripts/run_autonomous_gate.sh
-```
-
-Auto-apply policy recommendations (dry-run by default):
-
-```bash
-cd backend
-python scripts/apply_agent_policy_recommendations.py \
-  --from-json ../docs/reports/agent_quality_latest.json
-
-# apply
-python scripts/apply_agent_policy_recommendations.py \
-  --from-json ../docs/reports/agent_quality_latest.json \
-  --apply
-```
-
 ## Repository Structure
 
 ```text
-frontend/                  Next.js dashboard
+frontend/                  Next.js landing + dashboard
 backend/                   FastAPI + agent runtime
 backend/agent/             planner / autonomous / registry / tool_runner
 backend/agent/tool_specs/  service tool specs (json)
 backend/tests/             unit + integration tests
-docs/                      plan, architecture, setup, SQL migrations
+docs/                      plans, release notes, architecture notes
 docs/sql/                  schema migration scripts
 ```
 
-## Execution-Focused Roadmap
+## Related Docs
 
-- [x] End-to-end Notion + Telegram prototype
-- [x] LLM planner + autonomous execution loop
-- [x] command-level telemetry and verification reasons
-- [ ] Reduce rule fallback dependency (raise autonomous success rate)
-- [ ] Expand Notion endpoint coverage + improve planner tool selection
-- [ ] Cross-service workflow execution (Notion + external sources)
-- [ ] Workflow mining -> reusable skill candidates
-- [ ] Production hardening (rate limit, retries, alerting, runbook)
-
-## Docs
-
-- `docs/work_plan.md` - implementation priorities and current progress
-- `docs/service_plan.md` - product direction and architecture
-- `docs/openclaw_analysis.md` - positioning and comparative analysis
-- `docs/setup_guild.md` - setup guide
-
----
-
-Promethium internal prototype.
+- `docs/work_plan.md`
+- `docs/work-20260223-skill-pipeline-dag-plan.md`
+- `docs/release-20260224-google-calendar-pipeline.md`
+- `docs/service_plan.md`
