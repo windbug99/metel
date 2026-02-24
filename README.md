@@ -32,15 +32,25 @@ metel focuses on reliable execution for multi-step requests:
 ## How It Works
 
 ```text
-User request (Telegram)
-  -> Planner (LLM + constrained tool specs)
-  -> Autonomous executor loop
-     - tool_call
-     - verify
-     - replan (if needed)
-  -> Tool runners (Notion / Linear / Google Calendar / ...)
-  -> Execution summary + structured command logs
-  -> User response (Telegram)
+[User Request]
+   |
+   v
+[Telegram Ingress]
+   |
+   v
+[Planner (LLM + constrained tool specs)]
+   |
+   v
+[Autonomous Executor Loop]
+   |-- tool_call --> [Tool Runner: Notion / Linear / Google Calendar]
+   |-- verify -----> [Verification Gate]
+   |-- replan? ----> [Planner] (if needed)
+   |
+   v
+[Execution Summary + command_logs telemetry]
+   |
+   v
+[Telegram Response]
 ```
 
 Operationally, metel records:
@@ -82,6 +92,9 @@ This repository prioritizes execution reliability before adding many new integra
 
 ## Example Requests
 
+- `Fetch today's meetings from Google Calendar.`
+- `Fetch today's meetings from Google Calendar, create a Notion meeting-note draft for each meeting, and create a Linear issue for each one.`
+- `Find the latest 5 Linear issues and summarize them in a Notion page.`
 - `구글캘린더에서 오늘 회의 일정 조회`
 - `구글캘린더에서 오늘 회의일정 조회해서 각 회의마다 노션에 회의록 초안 생성하고 각 회의를 리니어 이슈로 등록해줘`
 - `linear 최근 이슈 5개 검색해줘`
