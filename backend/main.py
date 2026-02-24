@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.routes.linear import router as linear_router
 from app.routes.notion import router as notion_router
 from app.routes.spotify import router as spotify_router
+from app.routes.google import router as google_router
 from app.routes.telegram import router as telegram_router
 
 settings = get_settings()
@@ -130,4 +131,5 @@ async def health_check():
 app.include_router(notion_router)
 app.include_router(linear_router)
 app.include_router(spotify_router)
+app.include_router(google_router)
 app.include_router(telegram_router)

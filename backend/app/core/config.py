@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     linear_client_secret: str | None = None
     linear_redirect_uri: str | None = None
     linear_state_secret: str | None = None
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_redirect_uri: str | None = None
+    google_state_secret: str | None = None
 
     telegram_bot_token: str | None = None
     telegram_link_secret: str | None = None
