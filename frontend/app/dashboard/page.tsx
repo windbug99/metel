@@ -682,66 +682,77 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <main className="mx-auto max-w-5xl px-6 py-16">
-        <p className="text-sm text-gray-600">Loading dashboard...</p>
+      <main className="relative min-h-screen overflow-hidden bg-[#0a0a0b] text-[#f5f5f5]">
+        <div className="pointer-events-none absolute inset-0 opacity-70">
+          <div className="absolute inset-0 bg-[linear-gradient(to_right,#1a1a1c_1px,transparent_1px),linear-gradient(to_bottom,#1a1a1c_1px,transparent_1px)] bg-[size:56px_56px]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,#1d2430_0px,transparent_380px),radial-gradient(circle_at_84%_8%,#2a1f2a_0px,transparent_340px),radial-gradient(circle_at_50%_82%,#122025_0px,transparent_420px)]" />
+        </div>
+        <div className="relative mx-auto max-w-[1080px] px-6 py-16">
+          <p className="text-sm text-[#a5adbc]">Loading dashboard...</p>
+        </div>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-14">
-      <header className="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm">
-        <p className="font-mono text-xs uppercase tracking-wider text-gray-500">metel</p>
-        <h1 className="mt-2 text-4xl font-semibold tracking-tight text-black">Dashboard</h1>
-        <p className="mt-2 text-sm text-gray-600">
+    <main className="relative min-h-screen overflow-hidden bg-[#0a0a0b] text-[#f5f5f5]">
+      <div className="pointer-events-none absolute inset-0 opacity-70">
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#1a1a1c_1px,transparent_1px),linear-gradient(to_bottom,#1a1a1c_1px,transparent_1px)] bg-[size:56px_56px]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,#1d2430_0px,transparent_380px),radial-gradient(circle_at_84%_8%,#2a1f2a_0px,transparent_340px),radial-gradient(circle_at_50%_82%,#122025_0px,transparent_420px)]" />
+      </div>
+      <div className="relative mx-auto max-w-[1080px] px-6 py-14">
+      <header className="rounded-2xl border border-[#2a2a33] bg-[#111116] p-7 shadow-sm">
+        <p className="font-mono text-xs uppercase tracking-wider text-[#8d96a8]">metel</p>
+        <h1 className="mt-2 text-4xl font-semibold tracking-tight text-[#f7f8fa]">Dashboard</h1>
+        <p className="mt-2 text-sm text-[#a5adbc]">
           Control messenger links, service integrations, and autonomous agent logs.
         </p>
       </header>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+      <section className="mt-6 rounded-2xl border border-[#2a2a33] bg-[#111116] p-6 shadow-sm">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold text-black">User</h2>
+          <h2 className="text-lg font-semibold text-[#f7f8fa]">User</h2>
           <button
             type="button"
             onClick={() => {
               void handleLogout();
             }}
             disabled={loggingOut}
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+            className="rounded-md border border-[#353540] px-3 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
           >
             {loggingOut ? "Logging out..." : "Logout"}
           </button>
         </div>
         <div className="mt-4 grid gap-4 sm:grid-cols-3">
           <div>
-            <p className="text-xs text-gray-500">Email</p>
-            <p className="mt-1 text-sm text-gray-900">{profile?.email ?? "-"}</p>
+            <p className="text-xs text-[#8d96a8]">Email</p>
+            <p className="mt-1 text-sm text-[#edf0f5]">{profile?.email ?? "-"}</p>
           </div>
           <div>
-            <p className="text-xs text-gray-500">User ID</p>
-            <p className="mt-1 break-all text-sm text-gray-900">{profile?.id ?? "-"}</p>
+            <p className="text-xs text-[#8d96a8]">User ID</p>
+            <p className="mt-1 break-all text-sm text-[#edf0f5]">{profile?.id ?? "-"}</p>
           </div>
           <div>
-            <p className="text-xs text-gray-500">Created</p>
-            <p className="mt-1 text-sm text-gray-900">
+            <p className="text-xs text-[#8d96a8]">Created</p>
+            <p className="mt-1 text-sm text-[#edf0f5]">
               {profile?.created_at ? new Date(profile.created_at).toLocaleString() : "-"}
             </p>
           </div>
         </div>
       </section>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-black">Messenger Connection</h2>
+      <section className="mt-6 rounded-2xl border border-[#2a2a33] bg-[#111116] p-6 shadow-sm">
+        <h2 className="text-lg font-semibold text-[#f7f8fa]">Messenger Connection</h2>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <article className="rounded-xl border border-[#2a2a33] bg-[#15151b] p-4">
             <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
+              <p className="flex items-center gap-2 text-base font-semibold text-[#edf0f5]">
                 <ServiceLogo src="/logos/telegram.svg" alt="Telegram" />
                 Telegram
               </p>
-              <p className="text-xs text-gray-600">{telegramStatus?.connected ? "Connected" : "Not connected"}</p>
+              <p className="text-xs text-[#a5adbc]">{telegramStatus?.connected ? "Connected" : "Not connected"}</p>
             </div>
-            <p className="mt-2 text-sm text-gray-700">
+            <p className="mt-2 text-sm text-[#bcc2cf]">
               Account: {telegramStatus?.telegram_username ? `@${telegramStatus.telegram_username}` : "-"}
             </p>
             <button
@@ -754,7 +765,7 @@ export default function DashboardPage() {
                 void handleConnectTelegram();
               }}
               disabled={!apiBaseUrl || !profile?.id || telegramConnecting || telegramDisconnecting}
-              className="mt-3 inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+              className="mt-3 inline-block rounded-md border border-[#353540] bg-[#111116] px-4 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
             >
               {telegramStatus?.connected
                 ? (telegramDisconnecting ? "Disconnecting..." : "Disconnect")
@@ -762,37 +773,37 @@ export default function DashboardPage() {
             </button>
           </article>
 
-          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4 opacity-60">
+          <article className="rounded-xl border border-[#2a2a33] bg-[#15151b] p-4 opacity-60">
             <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
+              <p className="flex items-center gap-2 text-base font-semibold text-[#edf0f5]">
                 <ServiceLogo src="/logos/slack.svg" alt="Slack" />
                 Slack
               </p>
-              <p className="text-xs text-gray-600">Disabled</p>
+              <p className="text-xs text-[#a5adbc]">Disabled</p>
             </div>
-            <p className="mt-2 text-sm text-gray-700">Slack connection is not enabled in this prototype.</p>
+            <p className="mt-2 text-sm text-[#bcc2cf]">Slack connection is not enabled in this prototype.</p>
             <button
               type="button"
               disabled
-              className="mt-3 inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+              className="mt-3 inline-block rounded-md border border-[#353540] bg-[#111116] px-4 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
             >
               Connect
             </button>
           </article>
         </div>
-        {telegramStatusError ? <p className="mt-3 text-sm text-amber-700">{telegramStatusError}</p> : null}
+        {telegramStatusError ? <p className="mt-3 text-sm text-amber-300">{telegramStatusError}</p> : null}
         {!apiBaseUrl || !profile?.id ? (
-          <p className="mt-3 text-sm text-amber-700">
+          <p className="mt-3 text-sm text-amber-300">
             Set NEXT_PUBLIC_API_BASE_URL to enable messenger connection.
           </p>
         ) : null}
         {telegramConnectInfo && !telegramStatus?.connected ? (
-          <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
-            <p className="text-sm text-gray-700">
+          <div className="mt-4 rounded-lg border border-[#2a2a33] bg-[#15151b] p-4">
+            <p className="text-sm text-[#bcc2cf]">
               If Start does not respond in Telegram, copy and send this command manually to{" "}
               {telegramConnectInfo.botUsername ? `@${telegramConnectInfo.botUsername}` : "your bot"}.
             </p>
-            <p className="font-mono mt-2 break-all rounded border border-gray-200 bg-white p-2 text-xs text-gray-700">
+            <p className="font-mono mt-2 break-all rounded border border-[#2a2a33] bg-[#111116] p-2 text-xs text-[#bcc2cf]">
               {telegramConnectInfo.startCommand || "(no start command)"}
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -803,7 +814,7 @@ export default function DashboardPage() {
                     void copyText(telegramConnectInfo.startCommand);
                   }
                 }}
-                className="inline-block rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900"
+                className="inline-block rounded-md border border-[#353540] px-3 py-2 text-sm font-medium text-[#edf0f5]"
               >
                 Copy Start Command
               </button>
@@ -819,33 +830,33 @@ export default function DashboardPage() {
                   }
                   window.open(telegramConnectInfo.deepLink, "_blank", "noopener,noreferrer");
                 }}
-                className="inline-block rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900"
+                className="inline-block rounded-md border border-[#353540] px-3 py-2 text-sm font-medium text-[#edf0f5]"
               >
                 Open Telegram Again
               </button>
             </div>
-            <p className="mt-2 text-xs text-gray-600">
+            <p className="mt-2 text-xs text-[#a5adbc]">
               {telegramPolling ? "Auto-checking connection status..." : "Auto-check stopped. Re-run connect if needed."}
             </p>
-            <p className="mt-1 text-xs text-gray-500">
+            <p className="mt-1 text-xs text-[#8d96a8]">
               Expires in about {Math.max(1, Math.floor(telegramConnectInfo.expiresInSeconds / 60))} min
             </p>
           </div>
         ) : null}
       </section>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-black">Service Connection</h2>
+      <section className="mt-6 rounded-2xl border border-[#2a2a33] bg-[#111116] p-6 shadow-sm">
+        <h2 className="text-lg font-semibold text-[#f7f8fa]">Service Connection</h2>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <article className="rounded-xl border border-[#2a2a33] bg-[#15151b] p-4">
             <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
+              <p className="flex items-center gap-2 text-base font-semibold text-[#edf0f5]">
                 <ServiceLogo src="/logos/notion.svg" alt="Notion" />
                 Notion
               </p>
-              <p className="text-xs text-gray-600">{notionStatus?.connected ? "Connected" : "Not connected"}</p>
+              <p className="text-xs text-[#a5adbc]">{notionStatus?.connected ? "Connected" : "Not connected"}</p>
             </div>
-            <p className="mt-2 text-sm text-gray-700">
+            <p className="mt-2 text-sm text-[#bcc2cf]">
               Workspace: {notionStatus?.integration?.workspace_name ?? "-"}
             </p>
             <button
@@ -858,21 +869,21 @@ export default function DashboardPage() {
                 void handleConnectNotion();
               }}
               disabled={!apiBaseUrl || !profile?.id || disconnecting}
-              className="mt-3 inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+              className="mt-3 inline-block rounded-md border border-[#353540] bg-[#111116] px-4 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
             >
               {notionStatus?.connected ? (disconnecting ? "Disconnecting..." : "Disconnect") : "Connect"}
             </button>
           </article>
 
-          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <article className="rounded-xl border border-[#2a2a33] bg-[#15151b] p-4">
             <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
+              <p className="flex items-center gap-2 text-base font-semibold text-[#edf0f5]">
                 <ServiceLogo src="/logos/linear.svg" alt="Linear" />
                 Linear
               </p>
-              <p className="text-xs text-gray-600">{linearStatus?.connected ? "Connected" : "Not connected"}</p>
+              <p className="text-xs text-[#a5adbc]">{linearStatus?.connected ? "Connected" : "Not connected"}</p>
             </div>
-            <p className="mt-2 text-sm text-gray-700">
+            <p className="mt-2 text-sm text-[#bcc2cf]">
               User: {linearStatus?.integration?.workspace_name ?? "-"}
             </p>
             <button
@@ -885,7 +896,7 @@ export default function DashboardPage() {
                 void handleConnectLinear();
               }}
               disabled={!apiBaseUrl || !profile?.id || linearConnecting || linearDisconnecting}
-              className="mt-3 inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+              className="mt-3 inline-block rounded-md border border-[#353540] bg-[#111116] px-4 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
             >
               {linearStatus?.connected
                 ? (linearDisconnecting ? "Disconnecting..." : "Disconnect")
@@ -893,15 +904,15 @@ export default function DashboardPage() {
             </button>
           </article>
 
-          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <article className="rounded-xl border border-[#2a2a33] bg-[#15151b] p-4">
             <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
+              <p className="flex items-center gap-2 text-base font-semibold text-[#edf0f5]">
                 <ServiceLogo src="/logos/google.svg" alt="Google" />
                 Google Calendar
               </p>
-              <p className="text-xs text-gray-600">{googleStatus?.connected ? "Connected" : "Not connected"}</p>
+              <p className="text-xs text-[#a5adbc]">{googleStatus?.connected ? "Connected" : "Not connected"}</p>
             </div>
-            <p className="mt-2 text-sm text-gray-700">
+            <p className="mt-2 text-sm text-[#bcc2cf]">
               Workspace: {googleStatus?.integration?.workspace_name ?? "-"}
             </p>
             <button
@@ -914,7 +925,7 @@ export default function DashboardPage() {
                 void handleConnectGoogle();
               }}
               disabled={!apiBaseUrl || !profile?.id || googleConnecting || googleDisconnecting}
-              className="mt-3 inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+              className="mt-3 inline-block rounded-md border border-[#353540] bg-[#111116] px-4 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
             >
               {googleStatus?.connected
                 ? (googleDisconnecting ? "Disconnecting..." : "Disconnect")
@@ -922,46 +933,46 @@ export default function DashboardPage() {
             </button>
           </article>
 
-          <article className="rounded-xl border border-gray-200 bg-gray-50 p-4 opacity-60">
+          <article className="rounded-xl border border-[#2a2a33] bg-[#15151b] p-4 opacity-60">
             <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 text-base font-semibold text-gray-900">
+              <p className="flex items-center gap-2 text-base font-semibold text-[#edf0f5]">
                 <ServiceLogo src="/logos/spotify.svg" alt="Spotify" />
                 Spotify
               </p>
-              <p className="text-xs text-gray-600">Disabled</p>
+              <p className="text-xs text-[#a5adbc]">Disabled</p>
             </div>
-            <p className="mt-2 text-sm text-gray-700">
+            <p className="mt-2 text-sm text-[#bcc2cf]">
               Spotify integration is disabled due to current API limit.
             </p>
             <button
               type="button"
               disabled
-              className="mt-3 inline-block rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+              className="mt-3 inline-block rounded-md border border-[#353540] bg-[#111116] px-4 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
             >
               Connect
             </button>
           </article>
         </div>
-        {notionStatusError ? <p className="mt-3 text-sm text-amber-700">{notionStatusError}</p> : null}
-        {linearStatusError ? <p className="mt-3 text-sm text-amber-700">{linearStatusError}</p> : null}
-        {googleStatusError ? <p className="mt-3 text-sm text-amber-700">{googleStatusError}</p> : null}
+        {notionStatusError ? <p className="mt-3 text-sm text-amber-300">{notionStatusError}</p> : null}
+        {linearStatusError ? <p className="mt-3 text-sm text-amber-300">{linearStatusError}</p> : null}
+        {googleStatusError ? <p className="mt-3 text-sm text-amber-300">{googleStatusError}</p> : null}
         {!apiBaseUrl || !profile?.id ? (
-          <p className="mt-3 text-sm text-amber-700">
+          <p className="mt-3 text-sm text-amber-300">
             Set NEXT_PUBLIC_API_BASE_URL to enable service connection.
           </p>
         ) : null}
       </section>
 
-      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+      <section className="mt-6 rounded-2xl border border-[#2a2a33] bg-[#111116] p-6 shadow-sm">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold text-black">Execution Logs (latest 20)</h2>
+          <h2 className="text-lg font-semibold text-[#f7f8fa]">Execution Logs (latest 20)</h2>
           <div className="flex flex-wrap items-center gap-2">
             <select
               value={commandLogStatusFilter}
               onChange={(event) => {
                 setCommandLogStatusFilter(event.target.value as "all" | "success" | "error");
               }}
-              className="rounded-md border border-gray-300 px-2 py-2 text-sm text-gray-900"
+              className="rounded-md border border-[#353540] bg-[#111116] px-2 py-2 text-sm text-[#edf0f5]"
             >
               <option value="all">Status: All</option>
               <option value="success">Status: Success</option>
@@ -972,7 +983,7 @@ export default function DashboardPage() {
               onChange={(event) => {
                 setCommandLogCommandFilter(event.target.value);
               }}
-              className="rounded-md border border-gray-300 px-2 py-2 text-sm text-gray-900"
+              className="rounded-md border border-[#353540] bg-[#111116] px-2 py-2 text-sm text-[#edf0f5]"
             >
               <option value="all">Command: All</option>
               {commandFilterOptions.map((commandName) => (
@@ -987,137 +998,138 @@ export default function DashboardPage() {
                 void fetchCommandLogs();
               }}
               disabled={commandLogsLoading}
-              className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
+              className="rounded-md border border-[#353540] bg-[#111116] px-3 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
             >
               {commandLogsLoading ? "Refreshing..." : "Refresh"}
             </button>
           </div>
         </div>
         <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
-            <p className="text-xs text-gray-600">Agent Logs</p>
-            <p className="mt-1 text-sm font-semibold text-gray-900">{agentTelemetry.total}</p>
+          <div className="rounded-md border border-[#2a2a33] bg-[#15151b] p-3">
+            <p className="text-xs text-[#a5adbc]">Agent Logs</p>
+            <p className="mt-1 text-sm font-semibold text-[#edf0f5]">{agentTelemetry.total}</p>
           </div>
-          <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
-            <p className="text-xs text-gray-600">Execution Mode</p>
-            <p className="mt-1 text-sm font-semibold text-gray-900">
+          <div className="rounded-md border border-[#2a2a33] bg-[#15151b] p-3">
+            <p className="text-xs text-[#a5adbc]">Execution Mode</p>
+            <p className="mt-1 text-sm font-semibold text-[#edf0f5]">
               auto {agentTelemetry.autonomous} / rule {agentTelemetry.rule}
             </p>
           </div>
-          <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
-            <p className="text-xs text-gray-600">Plan Source</p>
-            <p className="mt-1 text-sm font-semibold text-gray-900">
+          <div className="rounded-md border border-[#2a2a33] bg-[#15151b] p-3">
+            <p className="text-xs text-[#a5adbc]">Plan Source</p>
+            <p className="mt-1 text-sm font-semibold text-[#edf0f5]">
               llm {agentTelemetry.llmPlan} / rule {agentTelemetry.rulePlan}
             </p>
           </div>
-          <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
-            <p className="text-xs text-gray-600">Success / Error</p>
-            <p className="mt-1 text-sm font-semibold text-gray-900">
+          <div className="rounded-md border border-[#2a2a33] bg-[#15151b] p-3">
+            <p className="text-xs text-[#a5adbc]">Success / Error</p>
+            <p className="mt-1 text-sm font-semibold text-[#edf0f5]">
               {agentTelemetry.success} / {agentTelemetry.error}
             </p>
           </div>
         </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
-            <p className="text-xs text-gray-600">Autonomous Success Rate (target 80%+)</p>
-            <p className="mt-1 text-sm font-semibold text-gray-900">
+          <div className="rounded-md border border-[#2a2a33] bg-[#15151b] p-3">
+            <p className="text-xs text-[#a5adbc]">Autonomous Success Rate (target 80%+)</p>
+            <p className="mt-1 text-sm font-semibold text-[#edf0f5]">
               {(agentTelemetry.autonomousSuccessRate * 100).toFixed(1)}%
               {" "}
               <span
                 className={
                   agentTelemetry.autonomousSuccessRate >= 0.8
                     ? "text-emerald-700"
-                    : "text-amber-700"
+                    : "text-amber-300"
                 }
               >
                 {agentTelemetry.autonomousSuccessRate >= 0.8 ? "PASS" : "CHECK"}
               </span>
             </p>
-            <p className="mt-1 text-xs text-gray-600">
+            <p className="mt-1 text-xs text-[#a5adbc]">
               autonomous success {agentTelemetry.autonomousSuccess} / {agentTelemetry.autonomous}
             </p>
           </div>
-          <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
-            <p className="text-xs text-gray-600">Fallback Rate (target 20% or less)</p>
-            <p className="mt-1 text-sm font-semibold text-gray-900">
+          <div className="rounded-md border border-[#2a2a33] bg-[#15151b] p-3">
+            <p className="text-xs text-[#a5adbc]">Fallback Rate (target 20% or less)</p>
+            <p className="mt-1 text-sm font-semibold text-[#edf0f5]">
               {(agentTelemetry.fallbackRate * 100).toFixed(1)}%
               {" "}
               <span
                 className={
                   agentTelemetry.fallbackRate <= 0.2
                     ? "text-emerald-700"
-                    : "text-amber-700"
+                    : "text-amber-300"
                 }
               >
                 {agentTelemetry.fallbackRate <= 0.2 ? "PASS" : "CHECK"}
               </span>
             </p>
-            <p className="mt-1 text-xs text-gray-600">
+            <p className="mt-1 text-xs text-[#a5adbc]">
               fallback {agentTelemetry.fallbackCount} / {agentTelemetry.total}
             </p>
           </div>
         </div>
         {agentTelemetry.fallbackCount > 0 ? (
-          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3">
-            <p className="text-xs font-medium text-amber-800">
+          <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+            <p className="text-xs font-medium text-amber-300">
               autonomous fallback count: {agentTelemetry.fallbackCount}
             </p>
-            <p className="mt-1 text-xs text-amber-800">
+            <p className="mt-1 break-all text-xs text-amber-300">
               top reasons:{" "}
               {agentTelemetry.topFallbackReasons.map(([reason, count]) => `${reason}(${count})`).join(", ")}
             </p>
           </div>
         ) : null}
         {agentTelemetry.verificationCount > 0 ? (
-          <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 p-3">
-            <p className="text-xs font-medium text-rose-800">
+          <div className="mt-3 rounded-md border border-rose-500/40 bg-rose-500/10 p-3">
+            <p className="text-xs font-medium text-rose-300">
               verification reason records: {agentTelemetry.verificationCount}
             </p>
-            <p className="mt-1 text-xs text-rose-800">
+            <p className="mt-1 break-all text-xs text-rose-300">
               top reasons:{" "}
               {agentTelemetry.topVerificationReasons.map(([reason, count]) => `${reason}(${count})`).join(", ")}
             </p>
           </div>
         ) : null}
-        {commandLogsError ? <p className="mt-3 text-sm text-amber-700">{commandLogsError}</p> : null}
-        <p className="mt-3 text-xs text-gray-600">
+        {commandLogsError ? <p className="mt-3 text-sm text-amber-300">{commandLogsError}</p> : null}
+        <p className="mt-3 text-xs text-[#a5adbc]">
           Showing: {filteredCommandLogs.length} / {commandLogs.length}
         </p>
         {filteredCommandLogs.length > 0 ? (
           <ul className="mt-4 space-y-2">
             {filteredCommandLogs.map((log) => (
-              <li key={log.id} className="rounded-md border border-gray-200 p-3">
-                <p className="text-sm font-medium text-gray-900">
+              <li key={log.id} className="overflow-hidden rounded-md border border-[#2a2a33] bg-[#15151b] p-3">
+                <p className="text-sm font-medium text-[#edf0f5]">
                   {log.command} · {log.status}
                 </p>
-                <p className="mt-1 text-xs text-gray-600">
+                <p className="mt-1 text-xs text-[#a5adbc]">
                   {new Date(log.created_at).toLocaleString()} · {log.channel}
                 </p>
                 {(log.plan_source || log.execution_mode) ? (
-                  <p className="mt-1 text-xs text-gray-600">
+                  <p className="mt-1 break-all text-xs text-[#a5adbc]">
                     mode: {log.plan_source || "-"} / {log.execution_mode || "-"}
                     {log.autonomous_fallback_reason ? ` · fallback=${log.autonomous_fallback_reason}` : ""}
                     {log.verification_reason ? ` · verify=${log.verification_reason}` : ""}
                   </p>
                 ) : null}
                 {(log.llm_provider || log.llm_model) ? (
-                  <p className="mt-1 text-xs text-gray-600">
+                  <p className="mt-1 break-all text-xs text-[#a5adbc]">
                     llm: {log.llm_provider || "-"} / {log.llm_model || "-"}
                   </p>
                 ) : null}
                 {log.error_code ? (
-                  <p className="mt-1 text-xs text-amber-700">error_code: {log.error_code}</p>
+                  <p className="mt-1 break-all text-xs text-amber-300">error_code: {log.error_code}</p>
                 ) : null}
                 {log.detail ? (
-                  <p className="mt-1 text-xs text-gray-600">detail: {log.detail}</p>
+                  <p className="mt-1 whitespace-pre-wrap break-all text-xs text-[#a5adbc]">detail: {log.detail}</p>
                 ) : null}
               </li>
             ))}
           </ul>
         ) : (
-          <p className="mt-3 text-sm text-gray-600">No logs match the current filters.</p>
+          <p className="mt-3 text-sm text-[#a5adbc]">No logs match the current filters.</p>
         )}
       </section>
+      </div>
     </main>
   );
 }
