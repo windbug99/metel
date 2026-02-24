@@ -7,6 +7,7 @@ def test_registry_loads_services_and_tools():
     assert "notion" in services
     assert "linear" in services
     assert "spotify" in services
+    assert "google" in services
 
     tool = registry.get_tool("notion_search")
     assert tool.service == "notion"
@@ -14,6 +15,9 @@ def test_registry_loads_services_and_tools():
     comment_tool = registry.get_tool("notion_retrieve_comment")
     assert comment_tool.service == "notion"
     assert comment_tool.method == "GET"
+    google_tool = registry.get_tool("google_calendar_list_events")
+    assert google_tool.service == "google"
+    assert google_tool.method == "GET"
 
 
 def test_registry_filters_by_connected_services():

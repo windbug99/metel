@@ -142,6 +142,18 @@ def test_build_agent_plan_includes_notion_data_source_task_for_summary_creation(
     assert query_task.payload["data_source_id"] == "12345678-1234-1234-1234-1234567890ab"
 
 
+def test_build_agent_plan_prefers_google_calendar_list_events_for_schedule_lookup():
+    plan = build_agent_plan(
+        "구글캘린더에서 오늘 회의 일정 조회",
+        connected_services=["google"],
+    )
+    assert plan.target_services == ["google"]
+    assert plan.selected_tools
+    assert plan.selected_tools[0] == "google_calendar_list_events"
+    assert plan.tasks
+    assert plan.tasks[0].tool_name == "google_calendar_list_events"
+
+
 def test_execute_agent_plan_runs_notion_data_source_llm_notion_bridge(monkeypatch):
     calls = []
 

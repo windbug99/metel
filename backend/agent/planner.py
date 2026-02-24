@@ -73,6 +73,8 @@ def _select_tools(user_text: str, tools: list[ToolDefinition], max_tools: int = 
         return []
 
     query_tokens = _tokenize(user_text)
+    normalized = (user_text or "").lower()
+    is_calendar_lookup = any(token in normalized for token in ("캘린더", "일정", "회의", "calendar", "schedule", "meeting"))
     scored: list[tuple[str, int]] = []
     for tool in user_tools:
         corpus = f"{tool.tool_name} {tool.description}"
@@ -92,6 +94,14 @@ def _select_tools(user_text: str, tools: list[ToolDefinition], max_tools: int = 
             overlap += 1
         if is_delete_intent(user_text) and "update" in tool.tool_name:
             overlap += 2
+        if is_calendar_lookup and tool.service == "google":
+            name = tool.tool_name.lower()
+            if "list_events" in name:
+                overlap += 3
+            elif "list_calendars" in name:
+                overlap += 1
+            elif "get_event" in name:
+                overlap -= 1
 
         scored.append((tool.tool_name, overlap))
 
@@ -147,6 +157,14 @@ def _pick_primary_tool_for_intent(user_text: str, selected_tools: list[str]) -> 
     tools = [str(item or "").strip() for item in selected_tools if str(item or "").strip()]
     if not tools:
         return None
+
+    normalized = (user_text or "").lower()
+
+    # Calendar read intent should prioritize event listing over calendar metadata.
+    if any(token in normalized for token in ("캘린더", "일정", "회의", "calendar", "schedule", "meeting")):
+        for tool in tools:
+            if "google_calendar_list_events" in tool.lower():
+                return tool
 
     def _first_match(*tokens: str) -> str | None:
         for tool in tools:

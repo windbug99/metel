@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from html import unescape
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 
 import httpx
@@ -867,6 +867,16 @@ def _build_task_tool_payload(
             "data_source_id": data_source_id,
             "page_size": max(1, min(20, page_size)),
         }
+
+    if "google_calendar_list_events" in tool_name:
+        time_min, time_max = _today_utc_range()
+        payload.setdefault("calendar_id", "primary")
+        payload.setdefault("time_min", time_min)
+        payload.setdefault("time_max", time_max)
+        payload.setdefault("single_events", True)
+        payload.setdefault("order_by", "startTime")
+        payload.setdefault("max_results", 100)
+        return payload
 
     return payload
 
@@ -2106,6 +2116,60 @@ def _extract_copy_request(plan: AgentPlan) -> CopyRequest | None:
     )
 
 
+def _is_google_calendar_to_notion_linear_request(plan: AgentPlan) -> bool:
+    text = (plan.user_text or "").strip().lower()
+    if not text:
+        return False
+    has_google_calendar = any(token in text for token in ("구글캘린더", "구글 캘린더", "google calendar", "calendar"))
+    has_notion = any(token in text for token in ("노션", "notion"))
+    has_linear = any(token in text for token in ("리니어", "linear"))
+    has_schedule_lookup = any(token in text for token in ("일정", "조회", "회의", "today", "오늘"))
+    has_notion_create = any(token in text for token in ("회의록", "초안", "생성", "create", "페이지"))
+    has_linear_create = any(token in text for token in ("이슈", "등록", "생성", "issue"))
+    return has_google_calendar and has_notion and has_linear and has_schedule_lookup and has_notion_create and has_linear_create
+
+
+def _event_start_text(event: dict) -> str:
+    start = (event.get("start") or {}) if isinstance(event, dict) else {}
+    if not isinstance(start, dict):
+        return "-"
+    return str(start.get("dateTime") or start.get("date") or "-").strip() or "-"
+
+
+def _event_end_text(event: dict) -> str:
+    end = (event.get("end") or {}) if isinstance(event, dict) else {}
+    if not isinstance(end, dict):
+        return "-"
+    return str(end.get("dateTime") or end.get("date") or "-").strip() or "-"
+
+
+def _event_attendees_text(event: dict) -> str:
+    attendees = event.get("attendees") or []
+    if not isinstance(attendees, list) or not attendees:
+        return "-"
+    emails = [str(item.get("email") or "").strip() for item in attendees if isinstance(item, dict) and item.get("email")]
+    if not emails:
+        return "-"
+    return ", ".join(emails[:10])
+
+
+def _event_summary(event: dict) -> str:
+    summary = str(event.get("summary") or "").strip()
+    if summary:
+        return summary[:120]
+    return "제목 없음 회의"
+
+
+def _today_utc_range() -> tuple[str, str]:
+    now_utc = datetime.now(timezone.utc)
+    day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+    return (
+        day_start.isoformat().replace("+00:00", "Z"),
+        day_end.isoformat().replace("+00:00", "Z"),
+    )
+
+
 async def _copy_read_from_notion(
     *,
     user_id: str,
@@ -2214,6 +2278,240 @@ async def _execute_cross_service_copy_flow(user_id: str, plan: AgentPlan) -> Age
         artifacts={"updated_issue_id": issue.get("id") or "", "updated_issue_url": issue.get("url") or ""},
         steps=steps,
     )
+
+
+async def _execute_google_calendar_to_notion_linear_flow(
+    *,
+    user_id: str,
+    plan: AgentPlan,
+) -> AgentExecutionResult | None:
+    if not _is_google_calendar_to_notion_linear_request(plan):
+        return None
+
+    steps: list[AgentExecutionStep] = [
+        AgentExecutionStep(name="calendar_pipeline_init", status="success", detail="google->notion->linear"),
+    ]
+    created_notion_page_ids: list[str] = []
+    created_linear_issue_ids: list[str] = []
+
+    async def _compensate_created_resources() -> list[str]:
+        compensation_errors: list[str] = []
+        for issue_id in reversed(created_linear_issue_ids):
+            try:
+                await execute_tool(
+                    user_id=user_id,
+                    tool_name=_pick_service_tool(plan, "linear", "update_issue", "linear_update_issue"),
+                    payload={"issue_id": issue_id, "archived": True},
+                )
+                steps.append(AgentExecutionStep(name="compensate_linear_archive", status="success", detail=issue_id))
+            except Exception as exc:  # pragma: no cover - defensive
+                compensation_errors.append(f"linear:{issue_id}:{exc}")
+                steps.append(AgentExecutionStep(name="compensate_linear_archive", status="error", detail=issue_id))
+
+        for page_id in reversed(created_notion_page_ids):
+            try:
+                await execute_tool(
+                    user_id=user_id,
+                    tool_name=_pick_service_tool(plan, "notion", "update_page", "notion_update_page"),
+                    payload={"page_id": page_id, "archived": True},
+                )
+                steps.append(AgentExecutionStep(name="compensate_notion_archive", status="success", detail=page_id))
+            except Exception as exc:  # pragma: no cover - defensive
+                compensation_errors.append(f"notion:{page_id}:{exc}")
+                steps.append(AgentExecutionStep(name="compensate_notion_archive", status="error", detail=page_id))
+        return compensation_errors
+
+    try:
+        time_min, time_max = _today_utc_range()
+        calendar_result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_service_tool(plan, "google", "list_events", "google_calendar_list_events"),
+            payload={
+                "calendar_id": "primary",
+                "time_min": time_min,
+                "time_max": time_max,
+                "single_events": True,
+                "order_by": "startTime",
+                "max_results": 50,
+            },
+        )
+        events = (calendar_result.get("data") or {}).get("items") or []
+        if not isinstance(events, list):
+            events = []
+        steps.append(AgentExecutionStep(name="google_calendar_list_events", status="success", detail=f"count={len(events)}"))
+        if not events:
+            return AgentExecutionResult(
+                success=False,
+                summary="오늘 회의 일정을 찾지 못했습니다.",
+                user_message="오늘 조회된 Google Calendar 일정이 없습니다.",
+                artifacts={"error_code": "not_found"},
+                steps=steps + [AgentExecutionStep(name="calendar_pipeline", status="error", detail="empty_events")],
+            )
+
+        teams_result = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_service_tool(plan, "linear", "list_teams", "linear_list_teams"),
+            payload={"first": 20},
+        )
+        team_nodes = (((teams_result.get("data") or {}).get("teams") or {}).get("nodes") or [])
+        steps.append(AgentExecutionStep(name="linear_list_teams", status="success", detail=f"count={len(team_nodes)}"))
+        if not isinstance(team_nodes, list) or not team_nodes:
+            return AgentExecutionResult(
+                success=False,
+                summary="Linear 팀 정보를 찾지 못했습니다.",
+                user_message="Linear 팀 조회에 실패하여 이슈를 생성할 수 없습니다.",
+                artifacts={"error_code": "not_found"},
+                steps=steps + [AgentExecutionStep(name="calendar_pipeline", status="error", detail="no_linear_team")],
+            )
+        default_team_id = str((team_nodes[0] or {}).get("id") or "").strip()
+        if not default_team_id:
+            return AgentExecutionResult(
+                success=False,
+                summary="Linear 팀 ID를 찾지 못했습니다.",
+                user_message="Linear 팀 조회 결과가 비정상입니다. 팀 설정을 확인해주세요.",
+                artifacts={"error_code": "validation_error"},
+                steps=steps + [AgentExecutionStep(name="calendar_pipeline", status="error", detail="invalid_linear_team")],
+            )
+
+        created_pairs: list[tuple[str, str]] = []
+        for index, event in enumerate(events[:10], start=1):
+            if not isinstance(event, dict):
+                continue
+            title = _event_summary(event)
+            start_text = _event_start_text(event)
+            end_text = _event_end_text(event)
+            attendees_text = _event_attendees_text(event)
+            description = str(event.get("description") or "").strip()
+
+            notion_children = [
+                f"회의명: {title}",
+                f"시작: {start_text}",
+                f"종료: {end_text}",
+                f"참석자: {attendees_text}",
+                "",
+                "회의 목적:",
+                "- ",
+                "논의 내용:",
+                "- ",
+                "결정 사항:",
+                "- ",
+                "액션 아이템:",
+                "- [ ] ",
+                "",
+                f"원본 설명: {description[:1200] if description else '-'}",
+            ]
+            notion_create = await execute_tool(
+                user_id=user_id,
+                tool_name=_pick_service_tool(plan, "notion", "create_page", "notion_create_page"),
+                payload={
+                    "parent": _notion_create_parent_payload(),
+                    "properties": {
+                        "title": {
+                            "title": [{"type": "text", "text": {"content": f"회의록 초안 - {title}"[:100]}}]
+                        }
+                    },
+                    "children": [
+                        {
+                            "object": "block",
+                            "type": "paragraph",
+                            "paragraph": {"rich_text": [{"type": "text", "text": {"content": line[:1800]}}]},
+                        }
+                        for line in notion_children
+                        if line.strip()
+                    ][:80],
+                },
+            )
+            notion_data = notion_create.get("data") or {}
+            notion_page_id = str(notion_data.get("id") or "").strip()
+            notion_page_url = str(notion_data.get("url") or "").strip()
+            if not notion_page_id:
+                raise HTTPException(status_code=400, detail="notion_create_page:TOOL_FAILED|message=missing_page_id")
+            created_notion_page_ids.append(notion_page_id)
+            steps.append(AgentExecutionStep(name="notion_create_page", status="success", detail=f"event_index={index}"))
+
+            linear_description_lines = [
+                f"Google Calendar 회의에서 자동 생성된 이슈입니다.",
+                f"- 회의명: {title}",
+                f"- 시작: {start_text}",
+                f"- 종료: {end_text}",
+                f"- 참석자: {attendees_text}",
+                f"- 노션 회의록 초안: {notion_page_url or '-'}",
+            ]
+            if description:
+                linear_description_lines.append("")
+                linear_description_lines.append("원본 설명:")
+                linear_description_lines.append(description[:3000])
+            linear_create = await execute_tool(
+                user_id=user_id,
+                tool_name=_pick_service_tool(plan, "linear", "create_issue", "linear_create_issue"),
+                payload={
+                    "team_id": default_team_id,
+                    "title": f"[회의] {title}"[:200],
+                    "description": "\n".join(linear_description_lines)[:7800],
+                },
+            )
+            issue = ((linear_create.get("data") or {}).get("issueCreate") or {}).get("issue") or {}
+            issue_id = str(issue.get("id") or "").strip()
+            issue_url = str(issue.get("url") or "").strip()
+            if not issue_id:
+                raise HTTPException(status_code=400, detail="linear_create_issue:TOOL_FAILED|message=missing_issue_id")
+            created_linear_issue_ids.append(issue_id)
+            created_pairs.append((notion_page_url, issue_url))
+            steps.append(AgentExecutionStep(name="linear_create_issue", status="success", detail=f"event_index={index}"))
+
+        if not created_linear_issue_ids:
+            return AgentExecutionResult(
+                success=False,
+                summary="회의 일정 처리 결과가 없습니다.",
+                user_message="회의 일정을 처리하지 못했습니다. 일정 데이터 형식을 확인해주세요.",
+                artifacts={"error_code": "not_found"},
+                steps=steps + [AgentExecutionStep(name="calendar_pipeline", status="error", detail="no_created_items")],
+            )
+
+        preview_lines = []
+        for idx, (notion_url, issue_url) in enumerate(created_pairs[:5], start=1):
+            preview_lines.append(f"{idx}. Notion: {notion_url or '-'} | Linear: {issue_url or '-'}")
+        return AgentExecutionResult(
+            success=True,
+            summary="Google Calendar 회의 일정을 Notion/Linear로 동기화했습니다.",
+            user_message=(
+                "오늘 회의 일정 기준으로 각 회의에 대해 Notion 회의록 초안과 Linear 이슈를 생성했습니다.\n"
+                f"- 처리된 회의 수: {len(created_linear_issue_ids)}\n"
+                + ("\n".join(preview_lines) if preview_lines else "")
+            ),
+            artifacts={
+                "processed_count": str(len(created_linear_issue_ids)),
+                "created_notion_page_ids_json": json.dumps(created_notion_page_ids, ensure_ascii=False),
+                "created_linear_issue_ids_json": json.dumps(created_linear_issue_ids, ensure_ascii=False),
+            },
+            steps=steps,
+        )
+    except Exception as exc:
+        compensation_errors = await _compensate_created_resources()
+        detail = str(exc)
+        artifacts = {
+            "error_code": "calendar_pipeline_failed",
+            "error_detail": detail[:300],
+            "created_notion_page_count": str(len(created_notion_page_ids)),
+            "created_linear_issue_count": str(len(created_linear_issue_ids)),
+        }
+        if compensation_errors:
+            artifacts["compensation_error_json"] = json.dumps(compensation_errors, ensure_ascii=False)
+        return AgentExecutionResult(
+            success=False,
+            summary="회의 일정 동기화 파이프라인 실행에 실패했습니다.",
+            user_message=(
+                "회의 일정 동기화 중 오류가 발생해 보상(롤백)을 수행했습니다.\n"
+                f"- 실패 원인: {detail[:200]}\n"
+                + (
+                    "- 일부 보상에 실패했습니다. 운영 로그를 확인해주세요."
+                    if compensation_errors
+                    else "- 생성된 항목 보상은 완료되었습니다."
+                )
+            ),
+            artifacts=artifacts,
+            steps=steps + [AgentExecutionStep(name="calendar_pipeline", status="error", detail=detail[:200])],
+        )
 
 
 async def _resolve_linear_update_description_from_notion(
@@ -2582,6 +2880,9 @@ async def execute_agent_plan(user_id: str, plan: AgentPlan) -> AgentExecutionRes
                 steps=[AgentExecutionStep(name="policy_delete_guard", status="error", detail="delete_disabled")],
             )
         plan = _ensure_common_tool_tasks(plan)
+        calendar_pipeline_result = await _execute_google_calendar_to_notion_linear_flow(user_id=user_id, plan=plan)
+        if calendar_pipeline_result is not None:
+            return calendar_pipeline_result
         cross_copy_result = await _execute_cross_service_copy_flow(user_id=user_id, plan=plan)
         if cross_copy_result is not None:
             return cross_copy_result

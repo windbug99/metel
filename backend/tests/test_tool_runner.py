@@ -3,6 +3,7 @@ from fastapi import HTTPException
 from agent.registry import ToolDefinition
 from agent.tool_runner import _build_path, _extract_path_params, _strip_path_params, execute_tool
 from agent.tool_runner import _linear_query_and_variables
+from agent.tool_runner import _GOOGLE_QUERY_KEY_MAP
 from agent.tool_runner import _validate_payload_by_schema
 import asyncio
 from types import SimpleNamespace
@@ -165,6 +166,91 @@ def test_execute_tool_generic_adapter_maps_http_error(monkeypatch):
         assert exc.detail == "mockdocs_list_items:AUTH_ERROR"
     else:
         assert False, "expected HTTPException"
+
+
+def test_execute_tool_google_maps_snake_case_query_params(monkeypatch):
+    tool = ToolDefinition(
+        service="google",
+        base_url="https://www.googleapis.com/calendar/v3",
+        tool_name="google_calendar_list_events",
+        description="list events",
+        method="GET",
+        path="/calendars/{calendar_id}/events",
+        adapter_function="google_calendar_list_events",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "calendar_id": {"type": "string"},
+                "time_min": {"type": "string"},
+                "time_max": {"type": "string"},
+                "single_events": {"type": "boolean"},
+                "order_by": {"type": "string"},
+                "max_results": {"type": "integer"},
+            },
+            "required": ["calendar_id"],
+        },
+        required_scopes=("https://www.googleapis.com/auth/calendar.readonly",),
+        idempotency_key_policy="none",
+        error_map={},
+    )
+
+    class _Registry:
+        def get_tool(self, tool_name: str):
+            assert tool_name == "google_calendar_list_events"
+            return tool
+
+    class _FakeResponse:
+        status_code = 200
+        text = '{"items":[]}'
+
+        def json(self):
+            return {"items": []}
+
+    captured = {"url": "", "params": None}
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, headers=None, params=None):
+            captured["url"] = url
+            captured["params"] = params
+            assert headers.get("Authorization") == "Bearer google-token"
+            return _FakeResponse()
+
+        async def request(self, method, url, headers=None, json=None):
+            raise AssertionError("unexpected request call")
+
+        async def delete(self, url, headers=None):
+            raise AssertionError("unexpected delete call")
+
+    monkeypatch.setattr("agent.tool_runner.load_registry", lambda: _Registry())
+    monkeypatch.setattr("agent.tool_runner._load_oauth_access_token", lambda user_id, provider: "google-token")
+    monkeypatch.setattr("agent.tool_runner.httpx.AsyncClient", lambda *args, **kwargs: _FakeClient())
+
+    payload = {
+        "calendar_id": "primary",
+        "time_min": "2026-02-24T00:00:00Z",
+        "time_max": "2026-02-25T00:00:00Z",
+        "single_events": True,
+        "order_by": "startTime",
+        "max_results": 100,
+    }
+    result = asyncio.run(execute_tool("user-1", "google_calendar_list_events", payload))
+
+    assert result["ok"] is True
+    assert captured["url"].endswith("/calendars/primary/events")
+    assert captured["params"]["timeMin"] == payload["time_min"]
+    assert captured["params"]["timeMax"] == payload["time_max"]
+    assert captured["params"]["singleEvents"] is True
+    assert captured["params"]["orderBy"] == "startTime"
+    assert captured["params"]["maxResults"] == 100
+    for snake in ("time_min", "time_max", "single_events", "order_by", "max_results"):
+        assert snake not in captured["params"]
+    assert _GOOGLE_QUERY_KEY_MAP["time_min"] == "timeMin"
 
 
 def test_linear_query_and_variables_list_teams():

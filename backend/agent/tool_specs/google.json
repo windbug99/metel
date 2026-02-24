@@ -1,0 +1,101 @@
+{
+  "service": "google",
+  "version": "v1",
+  "base_url": "https://www.googleapis.com/calendar/v3",
+  "auth": {
+    "type": "oauth2",
+    "required_scopes": ["https://www.googleapis.com/auth/calendar.readonly"]
+  },
+  "limits": {
+    "timeout_ms": 20000,
+    "max_calls_per_run": 20
+  },
+  "tools": [
+    {
+      "tool_name": "google_calendar_list_calendars",
+      "description": "List calendars available to the authenticated user",
+      "method": "GET",
+      "path": "/users/me/calendarList",
+      "adapter_function": "google_calendar_list_calendars",
+      "required_scopes": ["https://www.googleapis.com/auth/calendar.readonly"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "max_results": { "type": "integer", "minimum": 1, "maximum": 250 },
+          "min_access_role": {
+            "type": "string",
+            "enum": ["freeBusyReader", "reader", "writer", "owner"]
+          },
+          "show_deleted": { "type": "boolean" },
+          "show_hidden": { "type": "boolean" },
+          "page_token": { "type": "string" }
+        },
+        "required": []
+      },
+      "error_map": {
+        "400": "BAD_REQUEST",
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "404": "NOT_FOUND",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "google_calendar_list_events",
+      "description": "List events in a calendar for a time range",
+      "method": "GET",
+      "path": "/calendars/{calendar_id}/events",
+      "adapter_function": "google_calendar_list_events",
+      "required_scopes": ["https://www.googleapis.com/auth/calendar.readonly"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "calendar_id": { "type": "string" },
+          "time_min": { "type": "string" },
+          "time_max": { "type": "string" },
+          "time_zone": { "type": "string" },
+          "single_events": { "type": "boolean" },
+          "order_by": { "type": "string", "enum": ["startTime", "updated"] },
+          "max_results": { "type": "integer", "minimum": 1, "maximum": 2500 },
+          "q": { "type": "string" },
+          "page_token": { "type": "string" }
+        },
+        "required": ["calendar_id"]
+      },
+      "error_map": {
+        "400": "BAD_REQUEST",
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "404": "NOT_FOUND",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
+      "tool_name": "google_calendar_get_event",
+      "description": "Get details for a specific event in a calendar",
+      "method": "GET",
+      "path": "/calendars/{calendar_id}/events/{event_id}",
+      "adapter_function": "google_calendar_get_event",
+      "required_scopes": ["https://www.googleapis.com/auth/calendar.readonly"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "calendar_id": { "type": "string" },
+          "event_id": { "type": "string" },
+          "time_zone": { "type": "string" }
+        },
+        "required": ["calendar_id", "event_id"]
+      },
+      "error_map": {
+        "400": "BAD_REQUEST",
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "404": "NOT_FOUND",
+        "429": "RATE_LIMITED"
+      }
+    }
+  ]
+}

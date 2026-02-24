@@ -17,6 +17,19 @@ from app.security.token_vault import TokenVault
 
 logger = logging.getLogger("metel-backend.tool_runner")
 
+_GOOGLE_QUERY_KEY_MAP = {
+    "time_min": "timeMin",
+    "time_max": "timeMax",
+    "time_zone": "timeZone",
+    "single_events": "singleEvents",
+    "order_by": "orderBy",
+    "max_results": "maxResults",
+    "min_access_role": "minAccessRole",
+    "show_deleted": "showDeleted",
+    "show_hidden": "showHidden",
+    "page_token": "pageToken",
+}
+
 
 def _load_oauth_access_token(user_id: str, provider: str) -> str:
     settings = get_settings()
@@ -584,6 +597,11 @@ def _build_default_headers_for_service(user_id: str, tool: ToolDefinition) -> di
 async def _execute_generic_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
     path = _build_path(tool.path, payload)
     body_or_query = _strip_path_params(tool.path, payload)
+    if tool.service == "google":
+        body_or_query = {
+            _GOOGLE_QUERY_KEY_MAP.get(key, key): value
+            for key, value in body_or_query.items()
+        }
     url = f"{tool.base_url}{path}"
     headers = _build_default_headers_for_service(user_id=user_id, tool=tool)
     method = tool.method.upper()
