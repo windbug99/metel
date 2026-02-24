@@ -11,10 +11,16 @@ type UserState = {
 type AuthPanelProps = {
   className?: string;
   signInButtonClassName?: string;
+  signInLabel?: string;
   variant?: "panel" | "button";
 };
 
-export default function AuthPanel({ className, signInButtonClassName, variant = "panel" }: AuthPanelProps) {
+export default function AuthPanel({
+  className,
+  signInButtonClassName,
+  signInLabel = "Sign in with Google",
+  variant = "panel"
+}: AuthPanelProps) {
   const router = useRouter();
   const [user, setUser] = useState<UserState>(null);
   const [loading, setLoading] = useState(true);
@@ -110,7 +116,7 @@ export default function AuthPanel({ className, signInButtonClassName, variant = 
           onClick={signInWithGoogle}
           className={defaultSignInButtonClassName}
         >
-          Sign in with Google
+          {signInLabel}
         </button>
       </div>
     );
@@ -126,7 +132,7 @@ export default function AuthPanel({ className, signInButtonClassName, variant = 
             onClick={signInWithGoogle}
             className={defaultSignInButtonClassName}
           >
-            Sign in with Google
+            {signInLabel}
           </button>
         </div>
       </section>
@@ -161,7 +167,7 @@ export default function AuthPanel({ className, signInButtonClassName, variant = 
             onClick={signInWithGoogle}
             className={defaultSignInButtonClassName}
           >
-            Sign in with Google
+            {signInLabel}
           </button>
         </div>
       )}
