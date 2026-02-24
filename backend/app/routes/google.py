@@ -110,7 +110,8 @@ async def google_oauth_status(request: Request):
         .maybe_single()
         .execute()
     )
-    return {"connected": bool(result.data), "integration": result.data}
+    data = result.data if result is not None else None
+    return {"connected": bool(data), "integration": data}
 
 
 @router.delete("/disconnect")
@@ -126,4 +127,3 @@ async def google_oauth_disconnect(request: Request):
         .execute()
     )
     return {"ok": True, "connected": False}
-

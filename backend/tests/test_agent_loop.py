@@ -794,6 +794,66 @@ def test_run_agent_analysis_prefers_v2_router_when_enabled(monkeypatch):
     assert result.execution.user_message == "v2-ok"
 
 
+def test_run_agent_analysis_falls_back_to_legacy_when_v2_realtime_unavailable(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        skill_router_v2_enabled = True
+        skill_runner_v2_enabled = True
+        llm_response_finalizer_enabled = False
+
+    llm_plan = _sample_plan()
+
+    async def _fake_v2(**kwargs):
+        plan = AgentPlan(
+            user_text=kwargs["user_text"],
+            requirements=[AgentRequirement(summary="v2")],
+            target_services=["google", "notion", "linear"],
+            selected_tools=[],
+            workflow_steps=["1"],
+            notes=[],
+        )
+        execution = AgentExecutionResult(
+            success=False,
+            user_message="실시간 조회 불가.",
+            summary="실시간 조회 불가로 외부 서비스 반영 생략",
+            artifacts={"error_code": "realtime_data_unavailable"},
+        )
+        return AgentRunResult(
+            ok=False,
+            stage="execution",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="router_v2",
+        )
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        _ = user_id
+        assert plan is llm_plan
+        return AgentExecutionResult(success=True, user_message="legacy-ok", summary="legacy-done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_run_v2_orchestration", _fake_v2)
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(
+        run_agent_analysis(
+            "구글캘린더에서 오늘 회의일정 조회해서 각 회의마다 노션에 회의록 초안 생성하고 각 회의를 리니어 이슈로 등록",
+            ["google", "notion", "linear"],
+            "user-v2-fallback",
+        )
+    )
+    assert result.ok is True
+    assert result.execution is not None
+    assert result.execution.user_message == "legacy-ok"
+    assert result.plan_source == "llm"
+    assert "router_v2_fallback=realtime_data_unavailable" in result.plan.notes
+
+
 def test_run_agent_analysis_returns_v2_result_in_shadow_mode(monkeypatch):
     class _Settings:
         llm_autonomous_enabled = False
