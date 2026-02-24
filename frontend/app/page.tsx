@@ -2,11 +2,17 @@ import AuthPanel from "../components/auth-panel";
 
 export default function Home() {
   const githubUrl = process.env.NEXT_PUBLIC_GITHUB_URL || "https://github.com";
-  const services = ["Notion", "Linear", "Google Calendar", "Telegram", "Spotify (Limited)"];
+  const services = [
+    { name: "Notion", icon: "/logos/notion.svg", status: "Connected" },
+    { name: "Linear", icon: "/logos/linear.svg", status: "Connected" },
+    { name: "Google Calendar", icon: "/logos/google.svg", status: "Connected" },
+    { name: "Telegram", icon: "/logos/telegram.svg", status: "Connected" },
+    { name: "Spotify", icon: "/logos/spotify.svg", status: "Limited" }
+  ];
   const useCases = [
-    "구글캘린더에서 오늘 회의일정 조회해서 각 회의마다 노션에 회의록 초안 생성하고 각 회의를 리니어 이슈로 등록해줘",
-    "리니어의 기획 관련 이슈를 찾아 3문장으로 요약해서 노션 페이지로 만들어줘",
-    "노션 페이지 내용을 기준으로 리니어 이슈 설명을 업데이트해줘"
+    "Fetch today's meetings from Google Calendar, create a Notion meeting note draft for each meeting, and register each one as a Linear issue.",
+    "Find planning-related Linear issues, summarize them in three sentences, and create a new Notion page.",
+    "Update a Linear issue description based on content from a Notion page."
   ];
 
   return (
@@ -16,7 +22,7 @@ export default function Home() {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,#f2f2f2_0px,transparent_420px),radial-gradient(circle_at_85%_15%,#f5f5f5_0px,transparent_360px)]" />
       </div>
 
-      <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 py-6 sm:px-8 lg:px-10">
+      <div className="relative mx-auto flex min-h-screen w-full max-w-5xl flex-col px-5 py-6 sm:px-8">
         <header className="flex items-center justify-between gap-3 border-b border-[#e6e6e6] py-4">
           <p className="font-mono text-xs uppercase tracking-[0.22em] text-[#666]">metel</p>
           <a
@@ -30,7 +36,7 @@ export default function Home() {
         </header>
 
         <section className="py-14 sm:py-18 lg:py-20">
-          <div className="max-w-4xl">
+          <div className="mx-auto w-full max-w-4xl">
             <p className="font-mono text-xs uppercase tracking-[0.3em] text-[#6b6b6b]">Operational Execution Layer</p>
             <h1 className="mt-5 text-[2.12rem] font-semibold leading-[1.03] tracking-tight text-[#0c0c0c] sm:text-6xl lg:text-7xl">
               From Prompt to
@@ -60,6 +66,7 @@ export default function Home() {
         </section>
 
         <section className="border-t border-[#e6e6e6] py-10 sm:py-12">
+          <div className="mx-auto w-full max-w-4xl">
           <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-[#666]">Why metel</p>
           <div className="mt-4 grid gap-3.5 md:grid-cols-3">
             <article className="rounded-xl border border-[#e3e3e3] bg-white p-5">
@@ -81,9 +88,11 @@ export default function Home() {
               </p>
             </article>
           </div>
+          </div>
         </section>
 
         <section className="border-t border-[#e6e6e6] py-10 sm:py-12">
+          <div className="mx-auto w-full max-w-4xl">
           <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-[#666]">Use Cases</p>
           <div className="mt-4 space-y-3">
             {useCases.map((useCase, index) => (
@@ -93,24 +102,34 @@ export default function Home() {
               </article>
             ))}
           </div>
+          </div>
         </section>
 
         <section className="border-t border-[#e6e6e6] py-10 sm:py-12">
+          <div className="mx-auto w-full max-w-4xl">
           <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-[#666]">Connected Services</p>
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {services.map((service) => (
-              <span key={service} className="rounded-full border border-[#d9d9d9] bg-white px-3 py-1 text-xs text-[#303030]">
-                {service}
-              </span>
+              <article key={service.name} className="flex items-center justify-between rounded-xl border border-[#e3e3e3] bg-white p-3.5">
+                <div className="flex items-center gap-2.5">
+                  <img src={service.icon} alt={service.name} width={18} height={18} className="h-[18px] w-[18px] object-contain" />
+                  <p className="text-sm font-medium text-[#171717]">{service.name}</p>
+                </div>
+                <span className="rounded-full border border-[#d9d9d9] bg-[#fafafa] px-2 py-0.5 text-[11px] text-[#555]">
+                  {service.status}
+                </span>
+              </article>
             ))}
           </div>
           <p className="mt-3 text-xs text-[#666]">
             Setup section is intentionally omitted. metel does not provide a personal self-host install flow yet.
           </p>
+          </div>
         </section>
 
         <section className="border-t border-[#e6e6e6] py-10 sm:py-12">
-          <div className="max-w-3xl rounded-2xl border border-[#dddddd] bg-white p-6">
+          <div className="mx-auto w-full max-w-4xl">
+          <div className="max-w-4xl rounded-2xl border border-[#dddddd] bg-white p-6">
             <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-[#666]">Security & Reliability</p>
             <h2 className="mt-3 text-2xl font-semibold tracking-tight text-[#101010]">LLM Security Is an Execution Problem</h2>
             <ul className="mt-4 space-y-2 text-sm leading-relaxed text-[#3f3f3f]">
@@ -119,6 +138,7 @@ export default function Home() {
               <li>- Rollback-aware failure handling for multi-step workflows</li>
               <li>- Structured traces for post-run verification and audit</li>
             </ul>
+          </div>
           </div>
         </section>
 
