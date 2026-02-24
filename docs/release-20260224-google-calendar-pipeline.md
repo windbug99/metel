@@ -120,27 +120,28 @@
 - [x] 마이그레이션/DB 스키마 영향 없음 확인 (`oauth_tokens` 기존 upsert 경로 유지)
 
 ### 배포 직후 체크 (Post-Deploy)
-- [ ] `/api/health` 200 확인
-- [ ] 대시보드에서 Google Connect 수행
-  - [ ] callback 후 `google=connected` 리다이렉트 확인
-  - [ ] Google 카드 상태 `Connected` 확인
+- [x] `/api/health` 200 확인
+- [x] 대시보드에서 Google Connect 수행
+  - [x] callback 후 `google=connected` 리다이렉트 확인
+  - [x] Google 카드 상태 `Connected` 확인
 - [x] Telegram 단건 조회 스모크 테스트
   - [x] 요청: `구글캘린더에서 오늘 회의 일정 조회`
   - [x] 로그: `GET /calendar/v3/calendars/primary/events ... 200`
-- [ ] Telegram 연속 파이프라인 스모크 테스트
+- [x] Telegram 연속 파이프라인 스모크 테스트
   - [x] 요청: `구글캘린더에서 오늘 회의일정 조회해서 각 회의마다 노션에 회의록 초안 생성하고 각 회의를 리니어 이슈로 등록해줘`
-  - [ ] 로그: `linear_list_teams` -> `notion_create_page` N회 -> `linear_create_issue` N회
+  - [x] 로그(HTTP): `GET .../calendar/v3/calendars/primary/events 200` -> `POST api.linear.app/graphql 200`(팀 조회 포함) -> `POST api.notion.com/v1/pages 200` N회 -> `POST api.linear.app/graphql 200` N회
   - [x] 응답: 처리 건수 + Notion/Linear 링크 목록
 - [x] 실패 경로 스모크 테스트 (권장)
   - [x] Linear 연결 해제 후 동일 요청
   - [x] 기대 결과: 전체 실패 + 보상(롤백) 메시지
   - [x] Linear 재연결 후 성공 재확인
-- [ ] command_logs 검증
-  - [ ] `agent_plan` 성공/실패 코드가 사용자 응답과 일치
-  - [ ] `realtime_data_unavailable` 조기 종료가 재발하지 않는지 확인
+- [x] command_logs 검증
+  - [x] `agent_plan`의 `status/error_code`가 사용자 응답 결과(성공/실패)와 일치
+  - [x] 배포 시각 이후 `realtime_data_unavailable`가 재발하지 않는지 확인
+  - [x] 조회 컬럼은 현재 스키마 기준 사용 (`id, created_at, command, status, error_code, detail, plan_source, execution_mode, autonomous_fallback_reason, verification_reason`)
 
 ### 롤백 기준
 - [ ] 아래 중 하나 발생 시 즉시 롤백 또는 기능 플래그 차단
-  - [ ] 정상 연결 상태인데도 `realtime_data_unavailable` 반복 발생
+  - [ ] 정상 연결 상태인데도 배포 시각 이후 `realtime_data_unavailable` 반복 발생
   - [ ] Notion/Linear 다건 생성 중 부분 생성 누락 + 보상 실패
   - [ ] OAuth status API 5xx 반복
