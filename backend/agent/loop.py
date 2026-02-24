@@ -1127,12 +1127,19 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
                 if shadow_mode:
                     pre_notes.append("skill_v2_shadow_executed=1")
                 v2_error_code = ""
+                v2_text = ""
                 if v2_result.execution is not None:
                     v2_error_code = str(v2_result.execution.artifacts.get("error_code") or "").strip()
+                    v2_text = " ".join(
+                        [
+                            str(v2_result.execution.summary or ""),
+                            str(v2_result.execution.user_message or ""),
+                        ]
+                    ).strip().lower()
                 # Reliability fallback:
                 # router_v2 can return realtime_data_unavailable for requests that are
                 # still executable via deterministic planner/executor with connected tools.
-                if v2_error_code == "realtime_data_unavailable":
+                if v2_error_code == "realtime_data_unavailable" or "실시간 조회 불가" in v2_text:
                     pre_notes.append("router_v2_fallback=realtime_data_unavailable")
                 else:
                     if v2_result.execution is not None:
