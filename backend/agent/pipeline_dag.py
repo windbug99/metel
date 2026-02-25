@@ -57,6 +57,24 @@ def _parse_literal(raw: str) -> Any:
             return text
 
 
+def _resolve_pipeline_error_code(raw_code: str | None, detail: str | None = None, error: str | None = None) -> PipelineErrorCode:
+    raw = str(raw_code or "").strip()
+    if raw:
+        try:
+            return PipelineErrorCode(raw)
+        except ValueError:
+            pass
+
+    haystack = " ".join([str(raw_code or ""), str(detail or ""), str(error or "")]).strip().lower()
+    if any(token in haystack for token in ("auth_required", "tool_auth_error", "auth_error", "unauthorized", "forbidden")):
+        return PipelineErrorCode.TOOL_AUTH_ERROR
+    if any(token in haystack for token in ("rate_limited", "too_many_requests", "429")):
+        return PipelineErrorCode.TOOL_RATE_LIMITED
+    if "dsl_ref_not_found" in haystack:
+        return PipelineErrorCode.DSL_REF_NOT_FOUND
+    return PipelineErrorCode.TOOL_TIMEOUT
+
+
 def _parse_ref(ref: str) -> tuple[str, str]:
     match = _REF_PATTERN.match((ref or "").strip())
     if not match:
@@ -435,11 +453,10 @@ async def execute_pipeline_dag(
                     result = await execute_skill(user_id, node["name"], node_input)
                     duration_ms = max(0, int((time.monotonic() - started) * 1000))
                     if not result.get("ok", False):
-                        code = str(result.get("error_code") or "TOOL_TIMEOUT")
-                        resolved_code = (
-                            PipelineErrorCode(code)
-                            if code in {item.value for item in PipelineErrorCode}
-                            else PipelineErrorCode.TOOL_TIMEOUT
+                        resolved_code = _resolve_pipeline_error_code(
+                            str(result.get("error_code") or "").strip(),
+                            str(result.get("detail") or "").strip(),
+                            str(result.get("error") or "").strip(),
                         )
                         node_runs.append(
                             {

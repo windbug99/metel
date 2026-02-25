@@ -38,6 +38,7 @@
 - [x] 스모크 실패 원인 수정: `notion.page_create(title/body)` -> `notion_create_page(parent/properties/children)` payload 매핑
 - [x] 스모크 실패 원인 수정: `linear.issue_create.team_ref` -> `team_id` 자동 해석(`linear_list_teams`)
 - [x] 배포 후 반복 검증 자동화 스크립트 추가 (`backend/scripts/run_dag_smoke_cycle.sh`)
+- [x] 반복 검증 자동화 고도화: webhook 자동 주입 + 최신 로그 기준 스모크 판정 (`send_telegram_webhook_text.py`, `check_dag_smoke_result.py`, `run_dag_smoke_cycle.sh`)
 
 ## 0.1) 배포 전 필수 체크리스트 (DAG)
 - [x] DB 마이그레이션 적용
@@ -71,14 +72,24 @@
   - `check_supabase_connectivity.py`: `dns=OK`, `http status=200`, `verdict=PASS`
 - OAuth `granted_scopes` 백필 적용 완료
   - `scanned=5`, `candidates=3`, `updated=3`
+- 배포 후 스모크 사이클 성공 1회 확인
+  - `run_dag_smoke_cycle.sh`: `verdict=PASS`
+  - `pipeline_run_id=prun_95805728037347ee`, `succeeded_pipeline_links=1`
+- 스모크 자동화 보강 완료
+  - `check_dag_smoke_result.py --since-iso` 추가로 과거 성공 로그 재사용 방지
+  - `run_dag_smoke_cycle.sh`에 `AUTO_INJECT_WEBHOOK=1` 모드 추가(웹훅 텍스트 자동 주입)
 - 현재 남은 블로커
   - `run_autonomous_gate.sh`: `verdict=FAIL`
-    - `autonomous_success_rate_below_target`
-    - `fallback_rate_above_target`
-    - `autonomous_attempt_rate_below_target`
-    - `autonomous_success_over_attempt_below_target`
-  - `run_dag_quality_gate.sh`: 운영 기준(`MIN_SAMPLE=20`) 게이트는 샘플 수 축적 필요
-  - 스모크 검증은 완료 (`pipeline_run_id=prun_95805728037347ee`, `succeeded_pipeline_links=1`, `verdict=PASS`)
+    - sample size `30/20`
+    - `autonomous_success_rate=0.0%` (target `>=80%`)
+    - `fallback_rate=63.3%` (target `<=20%`)
+    - `autonomous_success_over_attempt=0.0%` (target `>=70%`)
+    - top errors: `TOOL_TIMEOUT`, `calendar_pipeline_failed`, `auth_error`, `DSL_REF_NOT_FOUND`, `COMPENSATION_FAILED`
+  - `run_dag_quality_gate.sh`: `verdict=FAIL`
+    - sample size `14/20` (insufficient sample)
+    - `DSL_REF_NOT_FOUND rate=14.3%` (target `<=5%`)
+    - `COMPENSATION_FAILED rate=7.1%` (target `<=2%`)
+  - 운영 품질 게이트(체크리스트 2번)는 아직 미통과
 
 ## 1) 배경과 목표
 - 목표: 연속적인 SKILL 사용 요청을 안정적으로 처리하는 에이전트 런타임 구축

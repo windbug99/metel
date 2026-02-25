@@ -36,3 +36,5 @@ Human-readable API guides are references for planning, not direct execution cont
   - `cd backend && . .venv/bin/activate && ./scripts/run_dag_quality_gate.sh`
 - DAG smoke/gate cycle loop (retries until pass or attempts exhausted):
   - `cd backend && . .venv/bin/activate && ATTEMPTS=8 SLEEP_SEC=15 ./scripts/run_dag_smoke_cycle.sh`
+- DAG smoke/gate cycle loop with auto webhook injection (no manual Telegram send):
+  - `cd backend && . .venv/bin/activate && AUTO_INJECT_WEBHOOK=1 WEBHOOK_URL=https://<backend>/api/telegram/webhook CHAT_ID=<telegram_chat_id> ATTEMPTS=8 SLEEP_SEC=15 ./scripts/run_dag_smoke_cycle.sh`

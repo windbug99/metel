@@ -377,3 +377,34 @@ def test_execute_pipeline_dag_marks_compensation_failed():
     assert exc.value.code == PipelineErrorCode.COMPENSATION_FAILED
     assert exc.value.compensation_status == "failed"
     assert exc.value.pipeline_run_id
+
+
+def test_execute_pipeline_dag_maps_auth_required_to_tool_auth_error():
+    async def _fake_skill(user_id: str, skill_name: str, payload: dict) -> dict:
+        _ = (user_id, skill_name, payload)
+        return {
+            "ok": False,
+            "error_code": "AUTH_REQUIRED",
+            "detail": "google_calendar_list_events:AUTH_REQUIRED",
+        }
+
+    async def _fake_transform(user_id: str, payload: dict, output_schema: dict) -> dict:
+        _ = (user_id, payload, output_schema)
+        return {}
+
+    pipeline = _base_pipeline()
+    pipeline["nodes"] = [
+        {"id": "n1", "type": "skill", "name": "google.list_today", "depends_on": [], "input": {}, "timeout_sec": 20},
+    ]
+
+    with pytest.raises(PipelineExecutionError) as exc:
+        asyncio.run(
+            execute_pipeline_dag(
+                user_id="u1",
+                pipeline=pipeline,
+                ctx={},
+                execute_skill=_fake_skill,
+                execute_llm_transform=_fake_transform,
+            )
+        )
+    assert exc.value.code == PipelineErrorCode.TOOL_AUTH_ERROR

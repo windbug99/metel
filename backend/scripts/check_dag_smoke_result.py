@@ -90,6 +90,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Check DAG staging smoke verification points")
     parser.add_argument("--limit", type=int, default=100, help="Recent command_logs rows to inspect")
     parser.add_argument(
+        "--since-iso",
+        type=str,
+        default="",
+        help="Only inspect command_logs rows created after this UTC ISO timestamp.",
+    )
+    parser.add_argument(
         "--dag-quality-json",
         type=str,
         default=str(ROOT.parent / "docs" / "reports" / "dag_quality_latest.json"),
@@ -102,16 +108,16 @@ def main() -> int:
     table = (settings.pipeline_links_table or "pipeline_links").strip() or "pipeline_links"
 
     try:
-        logs = (
+        query = (
             supabase.table("command_logs")
             .select("detail,created_at,status,error_code,plan_source,execution_mode")
             .eq("command", "agent_plan")
             .order("created_at", desc=True)
-            .limit(max(1, int(args.limit)))
-            .execute()
-            .data
-            or []
         )
+        since_iso = str(args.since_iso or "").strip()
+        if since_iso:
+            query = query.gt("created_at", since_iso)
+        logs = query.limit(max(1, int(args.limit))).execute().data or []
     except Exception as exc:
         _print_data_source_error(settings, exc)
         return 1
@@ -149,6 +155,8 @@ def main() -> int:
     )
 
     print("[dag-smoke-check]")
+    if since_iso:
+        print(f"- since_iso: {since_iso}")
     print(f"- dag_row_found: {'yes' if dag_row is not None else 'no'}")
     print(f"- pipeline_run_id: {pipeline_run_id or 'missing'}")
     print(f"- succeeded_pipeline_links: {succeeded_links_count}")
