@@ -99,6 +99,21 @@
 - 현재 남은 블로커
   - 없음 (DAG/Autonomous/Smoke 운영 게이트 PASS 확인)
 
+## 0.2) 운영 런북 (fallback <= 10% 유지)
+- 일일 점검
+  - `cd backend && . .venv/bin/activate && ./scripts/run_autonomous_slo_guard.sh`
+  - `cd backend && . .venv/bin/activate && ./scripts/run_dag_quality_gate.sh`
+- 샘플 보정(자율 트래픽 부족/품질 저하 시)
+  - `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/seed_autonomous_traffic.py --webhook-url https://<backend>/api/telegram/webhook --chat-id <chat_id> --target-count 20 --sleep-sec 8`
+- 즉시 대응 조건
+  - `run_autonomous_slo_guard.sh` FAIL
+  - `fallback_rate > 10%`
+  - top fallback reason이 `replan_limit`로 연속 2회 이상 유지
+- 대응 우선순위
+  - Railway env 확인: `LLM_AUTONOMOUS_REPLAN_LIMIT=2`, `LLM_AUTONOMOUS_MAX_TURNS=8`, `LLM_AUTONOMOUS_MAX_TOOL_CALLS=12`, `LLM_AUTONOMOUS_TIMEOUT_SEC=60`
+  - 인증 오류 확인: `auth_error`, `service_not_connected`가 top error에 나타나면 OAuth 재연결/토큰 점검
+  - mutation 요청 비중 과다 시 read-only 샘플로 윈도우(최근 30건) 안정화
+
 ## 1) 배경과 목표
 - 목표: 연속적인 SKILL 사용 요청을 안정적으로 처리하는 에이전트 런타임 구축
 - 대표 시나리오:

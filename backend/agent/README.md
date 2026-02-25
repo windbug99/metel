@@ -32,6 +32,8 @@ Human-readable API guides are references for planning, not direct execution cont
   - `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/check_supabase_connectivity.py --timeout-sec 5`
 - Agent quality gate (includes preflight):
   - `cd backend && . .venv/bin/activate && ./scripts/run_autonomous_gate.sh`
+- Autonomous SLO guard (`fallback<=10%`) for steady-state ops:
+  - `cd backend && . .venv/bin/activate && ./scripts/run_autonomous_slo_guard.sh`
 - DAG quality gate (includes preflight):
   - `cd backend && . .venv/bin/activate && ./scripts/run_dag_quality_gate.sh`
 - DAG smoke/gate cycle loop (retries until pass or attempts exhausted):
