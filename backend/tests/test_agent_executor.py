@@ -1062,3 +1062,76 @@ def test_execute_agent_plan_google_calendar_to_notion_linear_rollback_on_failure
     assert result.artifacts.get("error_code") == "calendar_pipeline_failed"
     assert [name for name, _ in calls].count("linear_update_issue") == 1
     assert [name for name, _ in calls].count("notion_update_page") == 2
+
+
+def test_execute_agent_plan_google_calendar_to_linear_issue_meeting_only(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, payload))
+        if tool_name == "google_calendar_list_events":
+            return {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {"summary": "테니스 강좌", "description": "", "start": {"dateTime": "2026-02-25T01:00:00Z"}, "end": {"dateTime": "2026-02-25T02:00:00Z"}},
+                        {"summary": "Metel MCP 접목 기획 회의", "description": "", "start": {"dateTime": "2026-02-25T03:00:00Z"}, "end": {"dateTime": "2026-02-25T03:30:00Z"}},
+                    ]
+                },
+            }
+        if tool_name == "linear_list_teams":
+            return {"ok": True, "data": {"teams": {"nodes": [{"id": "team-1", "name": "Operate"}]}}}
+        if tool_name == "linear_create_issue":
+            return {"ok": True, "data": {"issueCreate": {"issue": {"id": "issue-1", "url": "https://linear.app/issue/1"}}}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="구글캘린더에서 오늘 일정 중 회의 일정만 리니어에 이슈로 생성하세요",
+        requirements=[AgentRequirement(summary="calendar_linear_issue_pipeline")],
+        target_services=["google", "linear"],
+        selected_tools=["google_calendar_list_events", "linear_create_issue", "linear_list_teams"],
+        workflow_steps=[],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert [name for name, _ in calls].count("linear_create_issue") == 1
+    linear_payload = next(payload for name, payload in calls if name == "linear_create_issue")
+    assert "회의" in str(linear_payload.get("title") or "")
+    assert "테니스 강좌" not in str(linear_payload.get("title") or "")
+
+
+def test_execute_agent_plan_google_calendar_to_linear_issue_meeting_only_no_matches(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, payload)
+        if tool_name == "google_calendar_list_events":
+            return {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {"summary": "테니스 강좌", "description": "", "start": {"dateTime": "2026-02-25T01:00:00Z"}, "end": {"dateTime": "2026-02-25T02:00:00Z"}},
+                    ]
+                },
+            }
+        if tool_name == "linear_list_teams":
+            return {"ok": True, "data": {"teams": {"nodes": [{"id": "team-1", "name": "Operate"}]}}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="구글캘린더에서 오늘 일정 중 회의 일정만 리니어에 이슈로 생성하세요",
+        requirements=[AgentRequirement(summary="calendar_linear_issue_pipeline")],
+        target_services=["google", "linear"],
+        selected_tools=["google_calendar_list_events", "linear_create_issue", "linear_list_teams"],
+        workflow_steps=[],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "not_found"

@@ -120,6 +120,21 @@ def _is_calendar_pipeline_intent(user_text: str, connected_services: list[str]) 
     return is_create_intent(text) or is_update_intent(text)
 
 
+def _is_calendar_linear_issue_intent(user_text: str, connected_services: list[str]) -> bool:
+    connected = {item.strip().lower() for item in connected_services if item and item.strip()}
+    if not {"google", "linear"}.issubset(connected):
+        return False
+    text = user_text or ""
+    lower = text.lower()
+    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "회의", "일정"))
+    if not has_calendar:
+        return False
+    has_linear = _mentions_service(text, "linear")
+    has_notion = _mentions_service(text, "notion")
+    has_issue_create = any(token in text or token in lower for token in ("이슈", "등록", "생성", "issue", "create"))
+    return has_linear and (not has_notion) and has_issue_create and is_create_intent(text)
+
+
 def _build_calendar_pipeline_plan(user_text: str) -> AgentPlan:
     pipeline = build_google_calendar_to_notion_linear_pipeline(user_text=user_text)
     return AgentPlan(
@@ -142,6 +157,22 @@ def _build_calendar_pipeline_plan(user_text: str) -> AgentPlan:
             )
         ],
         notes=["planner=loop", "router_mode=PIPELINE_DAG", "plan_source=dag_template"],
+    )
+
+
+def _build_calendar_linear_issue_plan(user_text: str) -> AgentPlan:
+    return AgentPlan(
+        user_text=user_text,
+        requirements=[AgentRequirement(summary="calendar_linear_issue_pipeline")],
+        target_services=["google", "linear"],
+        selected_tools=["google_calendar_list_events", "linear_create_issue", "linear_list_teams"],
+        workflow_steps=[
+            "1. Google Calendar 오늘 일정 조회",
+            "2. 회의 키워드 필터 적용",
+            "3. 각 회의를 Linear 이슈로 생성",
+        ],
+        tasks=[],
+        notes=["planner=loop", "router_mode=RULE_PIPELINE", "plan_source=calendar_linear_template"],
     )
 
 
@@ -1172,6 +1203,23 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             result_summary=execution.summary,
             execution=execution,
             plan_source="dag_template",
+        )
+
+    if _is_calendar_linear_issue_intent(user_text, connected_services):
+        linear_plan = _build_calendar_linear_issue_plan(user_text)
+        execution = await execute_agent_plan(user_id=user_id, plan=linear_plan)
+        finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
+        execution.user_message = finalized_message
+        if finalizer_mode != "disabled":
+            linear_plan.notes.append(f"response_finalizer={finalizer_mode}")
+        linear_plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+        return AgentRunResult(
+            ok=execution.success,
+            stage="execution",
+            plan=linear_plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="calendar_linear_template",
         )
 
     pre_notes: list[str] = []
