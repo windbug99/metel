@@ -463,6 +463,12 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
             artifacts=dag_result.get("artifacts") or {},
         )
         links_saved = persist_pipeline_links(links=pipeline_links)
+        notion_urls, linear_urls = _extract_dag_created_links(dag_result.get("artifacts") or {})
+        user_message = "요청한 DAG 파이프라인 실행을 완료했습니다."
+        if notion_urls:
+            user_message += "\n- Notion 페이지:\n" + "\n".join(notion_urls[:5])
+        if linear_urls:
+            user_message += "\n- Linear 이슈:\n" + "\n".join(linear_urls[:5])
         artifacts = {
             "pipeline_id": str(dag_result.get("pipeline_id") or ""),
             "pipeline_run_id": str(dag_result.get("pipeline_run_id") or ""),
@@ -473,11 +479,13 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
             "dag_compensation_events_json": json.dumps(dag_result.get("compensation_events") or [], ensure_ascii=False),
             "pipeline_links_count": str(len(pipeline_links)),
             "pipeline_links_persisted": "1" if links_saved else "0",
+            "created_notion_urls_json": json.dumps(notion_urls, ensure_ascii=False),
+            "created_linear_urls_json": json.dumps(linear_urls, ensure_ascii=False),
         }
         return AgentExecutionResult(
             success=True,
             summary="DAG 파이프라인 실행 완료",
-            user_message="요청한 DAG 파이프라인 실행을 완료했습니다.",
+            user_message=user_message,
             artifacts=artifacts,
             steps=[AgentExecutionStep(name="pipeline_dag", status="success", detail="succeeded")],
         )
@@ -584,6 +592,56 @@ def _map_execution_error(detail: str) -> tuple[str, str, str]:
         "요청을 실행하던 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
         "execution_error",
     )
+
+
+def _extract_dag_created_links(artifacts: dict[str, Any]) -> tuple[list[str], list[str]]:
+    notion_urls: list[str] = []
+    linear_urls: list[str] = []
+    if not isinstance(artifacts, dict):
+        return notion_urls, linear_urls
+    for value in artifacts.values():
+        if not isinstance(value, dict):
+            continue
+        item_results = value.get("item_results")
+        if not isinstance(item_results, list):
+            continue
+        for item in item_results:
+            if not isinstance(item, dict):
+                continue
+            notion = item.get("n2_2") if isinstance(item.get("n2_2"), dict) else {}
+            linear = item.get("n2_3") if isinstance(item.get("n2_3"), dict) else {}
+            notion_data = notion.get("data") if isinstance(notion.get("data"), dict) else {}
+            linear_data = linear.get("data") if isinstance(linear.get("data"), dict) else {}
+
+            notion_url = str(notion.get("url") or notion_data.get("url") or "").strip()
+            if notion_url:
+                notion_urls.append(notion_url)
+
+            issue_create = linear.get("issueCreate") if isinstance(linear.get("issueCreate"), dict) else {}
+            data_issue_create = linear_data.get("issueCreate") if isinstance(linear_data.get("issueCreate"), dict) else {}
+            issue = issue_create.get("issue") if isinstance(issue_create.get("issue"), dict) else {}
+            data_issue = data_issue_create.get("issue") if isinstance(data_issue_create.get("issue"), dict) else {}
+            linear_url = str(
+                issue.get("url")
+                or data_issue.get("url")
+                or ((linear.get("issue") or {}).get("url") if isinstance(linear.get("issue"), dict) else "")
+                or ((linear_data.get("issue") or {}).get("url") if isinstance(linear_data.get("issue"), dict) else "")
+                or ""
+            ).strip()
+            if linear_url:
+                linear_urls.append(linear_url)
+
+    def _dedupe_keep_order(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for value in values:
+            if value in seen:
+                continue
+            seen.add(value)
+            out.append(value)
+        return out
+
+    return _dedupe_keep_order(notion_urls), _dedupe_keep_order(linear_urls)
 
 
 def _is_explicit_delete_request(text: str) -> bool:

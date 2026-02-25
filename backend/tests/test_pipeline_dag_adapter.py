@@ -170,9 +170,9 @@ def test_execute_agent_plan_pipeline_persists_pipeline_links(monkeypatch):
         if tool_name == "google_calendar_list_events":
             return {"ok": True, "data": {"events": [{"id": "evt-1", "title": "회의"}]}}
         if tool_name == "notion_create_page":
-            return {"ok": True, "data": {"id": "page-1"}}
+            return {"ok": True, "data": {"id": "page-1", "url": "https://notion.so/page-1"}}
         if tool_name == "linear_create_issue":
-            return {"ok": True, "data": {"issueCreate": {"issue": {"id": "issue-1"}}}}
+            return {"ok": True, "data": {"issueCreate": {"issue": {"id": "issue-1", "url": "https://linear.app/issue-1"}}}}
         raise AssertionError(f"unexpected tool {tool_name}")
 
     def _fake_persist(*, links):
@@ -203,6 +203,8 @@ def test_execute_agent_plan_pipeline_persists_pipeline_links(monkeypatch):
     assert persisted["count"] == 1
     assert result.artifacts.get("pipeline_links_count") == "1"
     assert result.artifacts.get("pipeline_links_persisted") == "1"
+    assert "https://notion.so/page-1" in result.user_message
+    assert "https://linear.app/issue-1" in result.user_message
 
 
 def test_execute_agent_plan_pipeline_dag_marks_manual_required_failure_status(monkeypatch):

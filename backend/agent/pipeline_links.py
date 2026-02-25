@@ -24,10 +24,14 @@ def _pipeline_links_table_name() -> str:
 
 
 def _extract_notion_page_id(payload: dict[str, Any]) -> str:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     candidates = [
         payload.get("id"),
         payload.get("page_id"),
         ((payload.get("result") or {}).get("id") if isinstance(payload.get("result"), dict) else None),
+        data.get("id"),
+        data.get("page_id"),
+        ((data.get("result") or {}).get("id") if isinstance(data.get("result"), dict) else None),
     ]
     for candidate in candidates:
         value = str(candidate or "").strip()
@@ -37,9 +41,19 @@ def _extract_notion_page_id(payload: dict[str, Any]) -> str:
 
 
 def _extract_linear_issue_id(payload: dict[str, Any]) -> str:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     issue_create = payload.get("issueCreate") if isinstance(payload.get("issueCreate"), dict) else {}
     issue = issue_create.get("issue") if isinstance(issue_create.get("issue"), dict) else {}
-    candidates = [issue.get("id"), ((payload.get("issue") or {}).get("id") if isinstance(payload.get("issue"), dict) else None), payload.get("id")]
+    data_issue_create = data.get("issueCreate") if isinstance(data.get("issueCreate"), dict) else {}
+    data_issue = data_issue_create.get("issue") if isinstance(data_issue_create.get("issue"), dict) else {}
+    candidates = [
+        issue.get("id"),
+        ((payload.get("issue") or {}).get("id") if isinstance(payload.get("issue"), dict) else None),
+        payload.get("id"),
+        data_issue.get("id"),
+        ((data.get("issue") or {}).get("id") if isinstance(data.get("issue"), dict) else None),
+        data.get("id"),
+    ]
     for candidate in candidates:
         value = str(candidate or "").strip()
         if value:
