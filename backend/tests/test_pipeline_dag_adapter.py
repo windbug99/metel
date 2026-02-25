@@ -392,6 +392,47 @@ def test_execute_agent_plan_pipeline_maps_notion_page_create_payload(monkeypatch
     assert sent["properties"]["title"]["title"][0]["text"]["content"] == "회의록"
 
 
+def test_execute_agent_plan_pipeline_resolves_linear_team_ref(monkeypatch):
+    seen_create_payloads: list[dict] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict) -> dict:
+        _ = user_id
+        if tool_name == "linear_list_teams":
+            return {
+                "ok": True,
+                "data": {"teams": {"nodes": [{"id": "team-1", "key": "OPS", "name": "Operate"}]}},
+            }
+        if tool_name == "linear_create_issue":
+            seen_create_payloads.append(dict(payload))
+            return {"ok": True, "data": {"issueCreate": {"success": True}}}
+        raise AssertionError(f"unexpected tool {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._validate_dag_policy_guards", lambda **kwargs: (True, None, None, None))
+    monkeypatch.setattr("agent.executor.persist_pipeline_links", lambda *, links: True)
+
+    pipeline = {
+        "pipeline_id": "p_linear_team_ref",
+        "version": "1.0",
+        "limits": {"max_nodes": 6, "max_fanout": 50, "max_tool_calls": 200, "pipeline_timeout_sec": 300},
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "skill",
+                "name": "linear.issue_create",
+                "depends_on": [],
+                "input": {"team_ref": "operate", "title": "테스트"},
+                "timeout_sec": 20,
+            }
+        ],
+    }
+    result = asyncio.run(execute_agent_plan("u1", _build_dag_plan(pipeline)))
+    assert result.success is True
+    assert seen_create_payloads
+    assert seen_create_payloads[0].get("team_id") == "team-1"
+    assert "team_ref" not in seen_create_payloads[0]
+
+
 def test_validate_dag_policy_guards_accepts_google_scope_alias(monkeypatch):
     monkeypatch.setattr("agent.executor.required_scopes_for_skill", lambda _skill: ["calendar.read"])
     monkeypatch.setattr("agent.executor.service_for_skill", lambda _skill: "google")

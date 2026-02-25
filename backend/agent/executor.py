@@ -289,6 +289,52 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                         },
                     }
                 ]
+        if skill_name == "linear.issue_create":
+            team_ref = str(normalized_payload.get("team_ref") or "").strip()
+            team_id = str(normalized_payload.get("team_id") or "").strip()
+            normalized_payload.pop("team_ref", None)
+
+            async def _resolve_linear_team_id_for_dag(ref_text: str) -> str:
+                try:
+                    teams_result = await execute_tool(run_user_id, "linear_list_teams", {"first": 20})
+                except Exception:
+                    return ""
+                nodes = (
+                    (((teams_result.get("data") or {}).get("teams") or {}).get("nodes"))
+                    if isinstance(teams_result, dict)
+                    else None
+                ) or []
+                if not isinstance(nodes, list):
+                    return ""
+                ref_lower = ref_text.lower()
+                for node in nodes:
+                    if not isinstance(node, dict):
+                        continue
+                    key = str(node.get("key") or "").strip().lower()
+                    name = str(node.get("name") or "").strip().lower()
+                    if ref_lower and (ref_lower == key or ref_lower == name):
+                        return str(node.get("id") or "").strip()
+                for node in nodes:
+                    if not isinstance(node, dict):
+                        continue
+                    key = str(node.get("key") or "").strip().lower()
+                    name = str(node.get("name") or "").strip().lower()
+                    if ref_lower and (ref_lower in key or ref_lower in name):
+                        return str(node.get("id") or "").strip()
+                for node in nodes:
+                    if isinstance(node, dict):
+                        fallback = str(node.get("id") or "").strip()
+                        if fallback:
+                            return fallback
+                return ""
+
+            if not team_id:
+                if team_ref:
+                    team_id = await _resolve_linear_team_id_for_dag(team_ref)
+                else:
+                    team_id = await _resolve_linear_team_id_for_dag("")
+            if team_id:
+                normalized_payload["team_id"] = team_id
 
         raw = await execute_tool(run_user_id, tool_name, normalized_payload)
         if not isinstance(raw, dict):

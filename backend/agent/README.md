@@ -34,3 +34,5 @@ Human-readable API guides are references for planning, not direct execution cont
   - `cd backend && . .venv/bin/activate && ./scripts/run_autonomous_gate.sh`
 - DAG quality gate (includes preflight):
   - `cd backend && . .venv/bin/activate && ./scripts/run_dag_quality_gate.sh`
+- DAG smoke/gate cycle loop (retries until pass or attempts exhausted):
+  - `cd backend && . .venv/bin/activate && ATTEMPTS=8 SLEEP_SEC=15 ./scripts/run_dag_smoke_cycle.sh`

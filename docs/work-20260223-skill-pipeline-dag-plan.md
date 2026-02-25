@@ -34,6 +34,10 @@
 - [x] 스모크 안정화: calendar/notion/linear 노드 timeout/retry 상향 (`pipeline_fixtures`)
 - [x] 스모크 안정화: calendar 조회 fan-out 부하 제한(`google.list_today.max_results=1`)
 - [x] 스모크 실패 원인 수정: `google.list_today` 입력에 `calendar_id=primary` 기본값 적용
+- [x] 스모크 실패 원인 수정: Google 응답 `items/summary` -> `events/title` 정규화 + `description` 기본값 보강
+- [x] 스모크 실패 원인 수정: `notion.page_create(title/body)` -> `notion_create_page(parent/properties/children)` payload 매핑
+- [x] 스모크 실패 원인 수정: `linear.issue_create.team_ref` -> `team_id` 자동 해석(`linear_list_teams`)
+- [x] 배포 후 반복 검증 자동화 스크립트 추가 (`backend/scripts/run_dag_smoke_cycle.sh`)
 
 ## 0.1) 배포 전 필수 체크리스트 (DAG)
 - [x] DB 마이그레이션 적용
@@ -57,6 +61,7 @@
     - `pipeline_links`에 `status=succeeded` row 생성
     - `docs/reports/dag_quality_latest.json` 생성 및 `verdict=PASS`
   - 자동 검증: `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/check_dag_smoke_result.py --limit 100`
+  - 반복 자동 검증: `cd backend && . .venv/bin/activate && ATTEMPTS=8 SLEEP_SEC=15 ./scripts/run_dag_smoke_cycle.sh`
 - [x] 프리배포 자동 점검 스크립트 추가
   - `backend/scripts/predeploy_dag_checklist.sh`
   - 실행: `cd backend && . .venv/bin/activate && ./scripts/predeploy_dag_checklist.sh`
