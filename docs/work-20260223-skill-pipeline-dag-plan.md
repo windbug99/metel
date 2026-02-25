@@ -32,6 +32,8 @@
 - [x] DAG 실패 시 텔레그램 로그에 `dag_pipeline=1`/`dag_reason` 태깅 보강
 - [x] OAuth scope alias 정규화(google `calendar.readonly` URL -> `calendar.read`) 적용
 - [x] 스모크 안정화: calendar/notion/linear 노드 timeout/retry 상향 (`pipeline_fixtures`)
+- [x] 스모크 안정화: calendar 조회 fan-out 부하 제한(`google.list_today.max_results=1`)
+- [x] 스모크 실패 원인 수정: `google.list_today` 입력에 `calendar_id=primary` 기본값 적용
 
 ## 0.1) 배포 전 필수 체크리스트 (DAG)
 - [x] DB 마이그레이션 적용

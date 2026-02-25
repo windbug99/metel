@@ -20,7 +20,7 @@ def build_google_calendar_to_notion_linear_pipeline(*, user_text: str) -> dict:
                 "type": "skill",
                 "name": "google.list_today",
                 "depends_on": [],
-                "input": {},
+                "input": {"calendar_id": "primary", "max_results": 1},
                 "when": "$ctx.enabled == true",
                 "retry": {"max_attempts": 2, "backoff_ms": 500},
                 "timeout_sec": 45,

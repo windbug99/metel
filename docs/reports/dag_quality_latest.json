@@ -1,7 +1,7 @@
 {
   "window_days": 0,
   "window_start_utc": null,
-  "dag_sample_size": 2,
+  "dag_sample_size": 7,
   "pipeline_links_sample_size": 0,
   "manual_required_count": 0,
   "dsl_validation_failed_count": 0,
@@ -17,7 +17,7 @@
   "compensation_failed_rate": 0.0,
   "idempotent_success_reuse_rate": 0.0,
   "error_code_counts": {
-    "TOOL_TIMEOUT": 1,
+    "TOOL_TIMEOUT": 6,
     "TOOL_AUTH_ERROR": 1
   },
   "min_sample": 1,
