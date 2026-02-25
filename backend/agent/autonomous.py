@@ -4,7 +4,9 @@ import asyncio
 import json
 import re
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from fastapi import HTTPException
@@ -139,6 +141,40 @@ def _compact_tool_result(data: Any, max_chars: int = 1200) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars].rstrip() + "...(truncated)"
+
+
+def _today_utc_range_for_timezone(tz_name: str) -> tuple[str, str]:
+    zone = str(tz_name or "UTC").strip() or "UTC"
+    try:
+        tzinfo = ZoneInfo(zone)
+    except ZoneInfoNotFoundError:
+        tzinfo = timezone.utc
+    now_local = datetime.now(tzinfo)
+    day_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end_local = day_start_local + timedelta(days=1)
+    start_utc = day_start_local.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    end_utc = day_end_local.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return start_utc, end_utc
+
+
+def _normalize_tool_input_for_today_query(plan: AgentPlan, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+    if tool_name != "google_calendar_list_events":
+        return dict(tool_input)
+    text = (plan.user_text or "").lower()
+    if ("오늘" not in plan.user_text) and ("today" not in text):
+        return dict(tool_input)
+    normalized = dict(tool_input)
+    user_tz = str(normalized.get("time_zone") or "UTC").strip() or "UTC"
+    time_min, time_max = _today_utc_range_for_timezone(user_tz)
+    normalized["time_min"] = time_min
+    normalized["time_max"] = time_max
+    normalized["time_zone"] = user_tz
+    normalized["single_events"] = True
+    normalized["order_by"] = "startTime"
+    normalized["calendar_id"] = str(normalized.get("calendar_id") or "").strip() or "primary"
+    if "max_results" not in normalized:
+        normalized["max_results"] = 2500
+    return normalized
 
 
 def _has_new_artifact_reference(history: list[dict[str, Any]]) -> bool:
@@ -840,6 +876,7 @@ async def run_autonomous_loop(
                 replan_count += 1
                 history.append({"turn": turn, "action": "replan", "status": "forced", "reason": "invalid_tool_input"})
             continue
+        tool_input = _normalize_tool_input_for_today_query(plan, tool_name, tool_input)
 
         if _has_same_failed_validation_call(history, tool_name=tool_name, tool_input=tool_input):
             steps.append(

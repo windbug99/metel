@@ -665,3 +665,71 @@ def test_autonomous_llm_verifier_fail_closed_on_unavailable(monkeypatch):
     assert result.success is False
     assert result.artifacts.get("error_code") == "verification_failed"
     assert str(result.artifacts.get("verification_reason", "")).startswith("llm_verifier_rejected:verifier_unavailable_fail_closed")
+
+
+def test_autonomous_forces_today_range_for_google_calendar_tool(monkeypatch):
+    plan = AgentPlan(
+        user_text="구글캘린더에서 오늘 일정 조회해주세요",
+        requirements=[AgentRequirement(summary="오늘 일정 조회")],
+        target_services=["google"],
+        selected_tools=["google_calendar_list_events"],
+        workflow_steps=[],
+        notes=[],
+    )
+
+    sequence = iter(
+        [
+            (
+                {
+                    "action": "tool_call",
+                    "tool_name": "google_calendar_list_events",
+                    "tool_input": {
+                        "calendar_id": "windbug99@gmail.com",
+                        "time_min": "2023-10-10T00:00:00+09:00",
+                        "time_max": "2023-10-10T23:59:59+09:00",
+                        "time_zone": "Asia/Seoul",
+                    },
+                },
+                None,
+            ),
+            ({"action": "final", "final_response": "조회 완료"}, None),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    google_tool = SimpleNamespace(
+        tool_name="google_calendar_list_events",
+        description="list events",
+        input_schema={"type": "object", "properties": {"calendar_id": {"type": "string"}}},
+    )
+    registry = SimpleNamespace(
+        list_tools=lambda service: [google_tool] if service == "google" else [],
+        get_tool=lambda name: google_tool,
+    )
+
+    captured: dict = {}
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        captured["tool_name"] = tool_name
+        captured["payload"] = dict(payload)
+        return {"ok": True, "data": {"items": [{"id": "e1"}]}}
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings)
+    monkeypatch.setattr("agent.autonomous.load_registry", lambda: registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+
+    result = asyncio.run(run_autonomous_loop("user-1", plan))
+
+    assert result.success is True
+    payload = captured["payload"]
+    assert captured["tool_name"] == "google_calendar_list_events"
+    assert payload["calendar_id"] == "windbug99@gmail.com"
+    assert payload["time_zone"] == "Asia/Seoul"
+    assert payload["time_min"] != "2023-10-10T00:00:00+09:00"
+    assert payload["time_max"] != "2023-10-10T23:59:59+09:00"
+    assert payload["single_events"] is True
+    assert payload["order_by"] == "startTime"
