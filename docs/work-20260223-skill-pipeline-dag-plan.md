@@ -54,7 +54,7 @@
   - `cd backend && . .venv/bin/activate && ./scripts/run_dag_quality_gate.sh`
 - [x] Supabase 연결 프리체크 PASS
   - `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/check_supabase_connectivity.py --timeout-sec 5`
-- [ ] 스테이징 스모크 시나리오 1회 수행
+- [x] 스테이징 스모크 시나리오 1회 수행
   - 요청: `구글캘린더 오늘 회의를 notion 페이지로 만들고 linear 이슈로 등록해줘`
   - 확인:
     - `command_logs.detail`에 `dag_pipeline=1`, `pipeline_run_id`
@@ -77,7 +77,8 @@
     - `fallback_rate_above_target`
     - `autonomous_attempt_rate_below_target`
     - `autonomous_success_over_attempt_below_target`
-  - `run_dag_quality_gate.sh`: `verdict=FAIL` (`insufficient_sample:0<20`)
+  - `run_dag_quality_gate.sh`: 운영 기준(`MIN_SAMPLE=20`) 게이트는 샘플 수 축적 필요
+  - 스모크 검증은 완료 (`pipeline_run_id=prun_95805728037347ee`, `succeeded_pipeline_links=1`, `verdict=PASS`)
 
 ## 1) 배경과 목표
 - 목표: 연속적인 SKILL 사용 요청을 안정적으로 처리하는 에이전트 런타임 구축
