@@ -205,6 +205,12 @@ def test_execute_agent_plan_pipeline_persists_pipeline_links(monkeypatch):
     assert result.artifacts.get("pipeline_links_persisted") == "1"
     assert "https://notion.so/page-1" in result.user_message
     assert "https://linear.app/issue-1" in result.user_message
+    google_call = next((payload for name, payload in calls if name == "google_calendar_list_events"), {})
+    assert google_call.get("single_events") is True
+    assert google_call.get("order_by") == "startTime"
+    assert str(google_call.get("time_min") or "").endswith("Z")
+    assert str(google_call.get("time_max") or "").endswith("Z")
+    assert int(google_call.get("max_results") or 0) >= 50
 
 
 def test_execute_agent_plan_pipeline_dag_marks_manual_required_failure_status(monkeypatch):

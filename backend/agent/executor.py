@@ -277,6 +277,7 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
     if not isinstance(context, dict):
         context = {}
     context.setdefault("user_text", plan.user_text)
+    user_timezone = _load_user_timezone(user_id)
 
     async def _execute_skill_for_dag(run_user_id: str, skill_name: str, payload: dict) -> dict:
         runtime_tools = runtime_tools_for_skill(skill_name)
@@ -367,6 +368,16 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                     team_id = await _resolve_linear_team_id_for_dag("")
             if team_id:
                 normalized_payload["team_id"] = team_id
+        if skill_name == "google.list_today":
+            # Enforce "today" window at execution-time to block stale LLM dates.
+            time_min, time_max = _today_utc_range_for_timezone(user_timezone)
+            normalized_payload["calendar_id"] = str(normalized_payload.get("calendar_id") or "").strip() or "primary"
+            normalized_payload["time_min"] = time_min
+            normalized_payload["time_max"] = time_max
+            normalized_payload["time_zone"] = str(normalized_payload.get("time_zone") or "").strip() or user_timezone
+            normalized_payload["single_events"] = True
+            normalized_payload["order_by"] = "startTime"
+            normalized_payload["max_results"] = int(normalized_payload.get("max_results") or 50)
 
         raw = await execute_tool(run_user_id, tool_name, normalized_payload)
         if not isinstance(raw, dict):
