@@ -254,7 +254,29 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                 code=PipelineErrorCode.DSL_VALIDATION_FAILED,
                 reason=f"runtime_tool_not_found:{skill_name}",
             )
-        return await execute_tool(run_user_id, tool_name, payload)
+        raw = await execute_tool(run_user_id, tool_name, payload)
+        if not isinstance(raw, dict):
+            return raw
+        output = raw.get("data", {})
+        if not isinstance(output, dict):
+            return raw
+        if skill_name == "google.list_today":
+            # Google Calendar API returns `items` with `summary`; DAG fixture expects
+            # a stable `events` array with `title` for downstream refs.
+            source_items = output.get("events") if isinstance(output.get("events"), list) else output.get("items")
+            events: list[dict] = []
+            if isinstance(source_items, list):
+                for item in source_items:
+                    if not isinstance(item, dict):
+                        continue
+                    normalized = dict(item)
+                    if not str(normalized.get("title") or "").strip():
+                        normalized["title"] = str(normalized.get("summary") or "").strip()
+                    events.append(normalized)
+            normalized_raw = dict(raw)
+            normalized_raw["data"] = {"events": events}
+            return normalized_raw
+        return raw
 
     async def _execute_llm_transform_for_dag(
         run_user_id: str,

@@ -260,6 +260,51 @@ def test_execute_agent_plan_pipeline_dag_policy_guard_fails_closed(monkeypatch):
     assert result.artifacts.get("failed_step") == "n1"
 
 
+def test_execute_agent_plan_pipeline_accepts_google_items_summary_shape(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict) -> dict:
+        _ = (user_id, payload)
+        if tool_name == "google_calendar_list_events":
+            return {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {"id": "evt-1", "summary": "주간 회의", "description": "agenda"},
+                    ]
+                },
+            }
+        raise AssertionError(f"unexpected tool {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._validate_dag_policy_guards", lambda **kwargs: (True, None, None, None))
+    monkeypatch.setattr("agent.executor.persist_pipeline_links", lambda *, links: True)
+
+    pipeline = {
+        "pipeline_id": "p_google_shape",
+        "version": "1.0",
+        "limits": {"max_nodes": 6, "max_fanout": 50, "max_tool_calls": 200, "pipeline_timeout_sec": 300},
+        "nodes": [
+            {"id": "n1", "type": "skill", "name": "google.list_today", "depends_on": [], "input": {"calendar_id": "primary"}, "timeout_sec": 20},
+            {"id": "n2", "type": "for_each", "name": "loop", "depends_on": ["n1"], "input": {}, "source_ref": "$n1.events", "item_node_ids": ["n2_1"], "timeout_sec": 20},
+            {
+                "id": "n2_1",
+                "type": "llm_transform",
+                "name": "tf",
+                "depends_on": ["n2"],
+                "input": {"event_id": "$item.id", "notion_title": "$item.title"},
+                "output_schema": {
+                    "type": "object",
+                    "required": ["event_id", "notion_title"],
+                    "properties": {"event_id": {"type": "string"}, "notion_title": {"type": "string"}},
+                },
+                "timeout_sec": 20,
+            },
+        ],
+    }
+    result = asyncio.run(execute_agent_plan("u1", _build_dag_plan(pipeline)))
+    assert result.success is True
+    assert result.artifacts.get("router_mode") == "PIPELINE_DAG"
+
+
 def test_validate_dag_policy_guards_accepts_google_scope_alias(monkeypatch):
     monkeypatch.setattr("agent.executor.required_scopes_for_skill", lambda _skill: ["calendar.read"])
     monkeypatch.setattr("agent.executor.service_for_skill", lambda _skill: "google")
