@@ -212,6 +212,59 @@ def _extract_pipeline_dag_task(plan: AgentPlan) -> AgentTask | None:
     return None
 
 
+def _pipeline_has_skill(pipeline: dict, skill_name: str) -> bool:
+    nodes = pipeline.get("nodes") if isinstance(pipeline, dict) else None
+    if not isinstance(nodes, list):
+        return False
+    target = str(skill_name or "").strip()
+    if not target:
+        return False
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        if str(node.get("type") or "").strip() != "skill":
+            continue
+        if str(node.get("name") or "").strip() == target:
+            return True
+    return False
+
+
+async def _preflight_linear_for_pipeline(user_id: str, pipeline: dict) -> tuple[bool, str | None]:
+    if not _pipeline_has_skill(pipeline, "linear.issue_create"):
+        return True, None
+    try:
+        teams_result = await execute_tool(user_id, "linear_list_teams", {"first": 1})
+    except Exception as exc:
+        return False, str(exc)
+    nodes = ((((teams_result.get("data") or {}).get("teams") or {}).get("nodes")) if isinstance(teams_result, dict) else None) or []
+    if not isinstance(nodes, list) or not nodes:
+        return False, "linear_list_teams:NOT_FOUND|message=empty_team_nodes"
+    return True, None
+
+
+async def _archive_notion_page_best_effort(user_id: str, page_id: str) -> bool:
+    try:
+        response = await execute_tool(
+            user_id=user_id,
+            tool_name="notion_update_page",
+            payload={"page_id": page_id, "archived": True},
+        )
+        return bool(response.get("ok", False))
+    except Exception as exc:
+        detail = str(exc).lower()
+        if not any(token in detail for token in ("bad_request", "status=400", " 400", "validation_")):
+            return False
+    try:
+        response = await execute_tool(
+            user_id=user_id,
+            tool_name="notion_update_page",
+            payload={"page_id": page_id, "in_trash": True},
+        )
+        return bool(response.get("ok", False))
+    except Exception:
+        return False
+
+
 def _retry_hint_for_pipeline_error(code: PipelineErrorCode) -> str:
     if code == PipelineErrorCode.DSL_VALIDATION_FAILED:
         return "요청 구조를 확인한 뒤 다시 시도하세요."
@@ -279,6 +332,23 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
     context.setdefault("user_text", plan.user_text)
     user_timezone = _load_user_timezone(user_id)
     context.setdefault("user_timezone", user_timezone)
+    preflight_ok, preflight_reason = await _preflight_linear_for_pipeline(user_id=user_id, pipeline=raw_pipeline)
+    if not preflight_ok:
+        summary, user_message, error_code = _map_execution_error(str(preflight_reason or "linear_preflight_failed"))
+        return AgentExecutionResult(
+            success=False,
+            summary=summary,
+            user_message=user_message,
+            artifacts={
+                "error_code": error_code,
+                "router_mode": "PIPELINE_DAG",
+                "failed_step": "preflight_linear_list_teams",
+                "reason": str(preflight_reason or "linear_preflight_failed"),
+                "retry_hint": _retry_hint_for_pipeline_error(PipelineErrorCode.TOOL_AUTH_ERROR),
+                "compensation_status": "not_required",
+            },
+            steps=[AgentExecutionStep(name="pipeline_dag_preflight", status="error", detail=str(preflight_reason or "linear_preflight_failed")[:200])],
+        )
 
     async def _execute_skill_for_dag(run_user_id: str, skill_name: str, payload: dict) -> dict:
         runtime_tools = runtime_tools_for_skill(skill_name)
@@ -475,12 +545,7 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                 page_id = str(output.get("id") or output.get("page_id") or "").strip()
                 if not page_id:
                     return False
-                resp = await execute_tool(
-                    user_id=user_id,
-                    tool_name="notion_update_page",
-                    payload={"page_id": page_id, "archived": True},
-                )
-                return bool(resp.get("ok", False))
+                return await _archive_notion_page_best_effort(user_id=user_id, page_id=page_id)
             if skill_name == "linear.issue_create":
                 issue_id = str(
                     (((output.get("issueCreate") or {}).get("issue") or {}).get("id"))
@@ -3034,12 +3099,12 @@ async def _execute_google_calendar_to_notion_linear_flow(
 
         for page_id in reversed(created_notion_page_ids):
             try:
-                await execute_tool(
-                    user_id=user_id,
-                    tool_name=_pick_service_tool(plan, "notion", "update_page", "notion_update_page"),
-                    payload={"page_id": page_id, "archived": True},
-                )
-                steps.append(AgentExecutionStep(name="compensate_notion_archive", status="success", detail=page_id))
+                ok = await _archive_notion_page_best_effort(user_id=user_id, page_id=page_id)
+                if ok:
+                    steps.append(AgentExecutionStep(name="compensate_notion_archive", status="success", detail=page_id))
+                else:
+                    compensation_errors.append(f"notion:{page_id}:archive_failed")
+                    steps.append(AgentExecutionStep(name="compensate_notion_archive", status="error", detail=page_id))
             except Exception as exc:  # pragma: no cover - defensive
                 compensation_errors.append(f"notion:{page_id}:{exc}")
                 steps.append(AgentExecutionStep(name="compensate_notion_archive", status="error", detail=page_id))

@@ -1064,6 +1064,50 @@ def test_execute_agent_plan_google_calendar_to_notion_linear_rollback_on_failure
     assert [name for name, _ in calls].count("notion_update_page") == 2
 
 
+def test_execute_agent_plan_google_calendar_to_notion_linear_rollback_uses_in_trash_fallback(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, payload))
+        if tool_name == "google_calendar_list_events":
+            return {
+                "ok": True,
+                "data": {"items": [{"summary": "A", "start": {"dateTime": "2026-02-24T01:00:00Z"}, "end": {"dateTime": "2026-02-24T02:00:00Z"}}]},
+            }
+        if tool_name == "linear_list_teams":
+            return {"ok": True, "data": {"teams": {"nodes": [{"id": "team-1", "name": "Platform"}]}}}
+        if tool_name == "notion_create_page":
+            return {"ok": True, "data": {"id": "page-1", "url": "https://notion.so/page-1"}}
+        if tool_name == "linear_create_issue":
+            raise HTTPException(status_code=400, detail="linear_create_issue:TOOL_FAILED|message=boom")
+        if tool_name == "notion_update_page":
+            if payload.get("archived") is True:
+                raise HTTPException(status_code=400, detail="notion_update_page:BAD_REQUEST|status=400")
+            assert payload.get("in_trash") is True
+            return {"ok": True, "data": {"id": payload.get("page_id")}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="구글캘린더에서 오늘 회의일정 조회해서 각 회의마다 노션에 회의록 초안 생성하고 각 회의를 리니어 이슈로 등록",
+        requirements=[AgentRequirement(summary="연속 자동화")],
+        target_services=["google", "notion", "linear"],
+        selected_tools=["google_calendar_list_events", "notion_create_page", "linear_create_issue"],
+        workflow_steps=[],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is False
+    notion_updates = [payload for name, payload in calls if name == "notion_update_page"]
+    assert len(notion_updates) == 2
+    assert notion_updates[0].get("archived") is True
+    assert notion_updates[1].get("in_trash") is True
+    assert result.artifacts.get("compensation_error_json") is None
+
+
 def test_execute_agent_plan_google_calendar_to_linear_issue_meeting_only(monkeypatch):
     calls = []
 
@@ -1320,3 +1364,61 @@ def test_execute_agent_plan_google_calendar_to_notion_todo_uses_default_title_wh
 
     result = asyncio.run(execute_agent_plan("user-1", plan))
     assert result.success is True
+
+
+def test_execute_agent_plan_pipeline_dag_linear_auth_preflight_blocks_partial_writes(monkeypatch):
+    calls: list[str] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, payload)
+        calls.append(tool_name)
+        if tool_name == "linear_list_teams":
+            raise HTTPException(status_code=400, detail="linear_list_teams:AUTH_REQUIRED|status=401|message=expired_token")
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._validate_dag_policy_guards", lambda **kwargs: (True, None, None, None))
+
+    pipeline = {
+        "pipeline_id": "google_calendar_to_notion_linear_v1",
+        "version": "1.0",
+        "limits": {"max_nodes": 6, "max_fanout": 50, "max_tool_calls": 200, "pipeline_timeout_sec": 300},
+        "nodes": [
+            {"id": "n1", "type": "skill", "name": "google.list_today", "depends_on": [], "input": {}, "timeout_sec": 20},
+            {"id": "n2", "type": "for_each", "name": "loop", "depends_on": ["n1"], "input": {}, "source_ref": "$n1.events", "item_node_ids": ["n2_1", "n2_2", "n2_3"], "timeout_sec": 20},
+            {
+                "id": "n2_1",
+                "type": "llm_transform",
+                "name": "tf",
+                "depends_on": ["n2"],
+                "input": {"event_id": "$item.id", "notion_title": "$item.title", "linear_title": "$item.title"},
+                "output_schema": {"type": "object", "required": ["event_id", "notion_title", "linear_title"]},
+                "timeout_sec": 20,
+            },
+            {"id": "n2_2", "type": "skill", "name": "notion.page_create", "depends_on": ["n2_1"], "input": {"title": "$n2_1.notion_title"}, "timeout_sec": 20},
+            {"id": "n2_3", "type": "skill", "name": "linear.issue_create", "depends_on": ["n2_1", "n2_2"], "input": {"title": "$n2_1.linear_title"}, "timeout_sec": 20},
+        ],
+    }
+    plan = AgentPlan(
+        user_text="구글캘린더에서 오늘 회의일정 조회해서 노션/리니어 동기화",
+        requirements=[AgentRequirement(summary="calendar_notion_linear_pipeline_dag")],
+        target_services=["google", "notion", "linear"],
+        selected_tools=["google_calendar_list_events", "notion_create_page", "linear_create_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_pipeline_dag_calendar_notion_linear",
+                title="calendar->notion->linear DAG",
+                task_type="PIPELINE_DAG",
+                payload={"pipeline": pipeline, "ctx": {"enabled": True}},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "auth_error"
+    assert result.artifacts.get("failed_step") == "preflight_linear_list_teams"
+    assert result.artifacts.get("compensation_status") == "not_required"
+    assert calls == ["linear_list_teams"]
