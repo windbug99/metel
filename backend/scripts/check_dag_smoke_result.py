@@ -102,7 +102,7 @@ def main() -> int:
     try:
         logs = (
             supabase.table("command_logs")
-            .select("detail,created_at")
+            .select("detail,created_at,status,error_code,plan_source,execution_mode")
             .eq("command", "agent_plan")
             .order("created_at", desc=True)
             .limit(max(1, int(args.limit)))
@@ -114,6 +114,7 @@ def main() -> int:
         _print_data_source_error(settings, exc)
         return 1
     dag_row = _find_latest_dag_row(logs)
+    latest_row = logs[0] if logs else {}
     detail_map = _parse_detail_pairs((dag_row or {}).get("detail"))
     pipeline_run_id = str(detail_map.get("pipeline_run_id") or "").strip()
 
@@ -150,6 +151,14 @@ def main() -> int:
     print(f"- pipeline_run_id: {pipeline_run_id or 'missing'}")
     print(f"- succeeded_pipeline_links: {succeeded_links_count}")
     print(f"- dag_quality_verdict: {dag_quality_verdict or 'missing'}")
+    if dag_row is None and latest_row:
+        print("- latest_agent_plan_row:")
+        print(f"  - created_at: {str(latest_row.get('created_at') or '').strip() or 'missing'}")
+        print(f"  - status: {str(latest_row.get('status') or '').strip() or 'missing'}")
+        print(f"  - plan_source: {str(latest_row.get('plan_source') or '').strip() or 'missing'}")
+        print(f"  - execution_mode: {str(latest_row.get('execution_mode') or '').strip() or 'missing'}")
+        print(f"  - error_code: {str(latest_row.get('error_code') or '').strip() or 'none'}")
+        print(f"  - detail: {str(latest_row.get('detail') or '').strip() or 'missing'}")
     print(f"- verdict: {'PASS' if passed else 'FAIL'}")
     if reasons:
         print("- reasons:")
