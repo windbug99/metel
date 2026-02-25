@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     pending_action_storage: str = "db"
     pending_action_ttl_seconds: int = 900
     pending_action_table: str = "pending_actions"
+    pipeline_links_table: str = "pipeline_links"
     slot_loop_enabled: bool = True
     slot_loop_rollout_percent: int = 100
     slot_loop_metrics_enabled: bool = True

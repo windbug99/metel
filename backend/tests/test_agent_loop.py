@@ -17,6 +17,46 @@ def _sample_plan() -> AgentPlan:
     )
 
 
+def test_run_agent_analysis_calendar_pipeline_uses_dag_template(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        slot_loop_enabled = False
+        slot_loop_rollout_percent = 0
+
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        assert user_id == "user-dag"
+        assert plan.tasks
+        assert plan.tasks[0].task_type == "PIPELINE_DAG"
+        return AgentExecutionResult(
+            success=True,
+            user_message="dag ok",
+            summary="DAG 파이프라인 실행 완료",
+            artifacts={"router_mode": "PIPELINE_DAG", "pipeline_run_id": "prun_test"},
+            steps=[AgentExecutionStep(name="pipeline_dag", status="success", detail="succeeded")],
+        )
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(
+        run_agent_analysis(
+            "구글캘린더 오늘 회의를 notion 페이지로 만들고 linear 이슈로 등록해줘",
+            ["google", "notion", "linear"],
+            "user-dag",
+        )
+    )
+    assert result.ok is True
+    assert result.plan_source == "dag_template"
+    assert result.execution is not None
+    assert result.execution.artifacts.get("router_mode") == "PIPELINE_DAG"
+
+
 def test_run_agent_analysis_slot_question_and_resume(monkeypatch):
     clear_pending_action("user-slot")
     llm_plan = AgentPlan(

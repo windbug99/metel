@@ -85,6 +85,7 @@ async def notion_oauth_callback(code: str, state: str):
         "user_id": user_id,
         "provider": "notion",
         "access_token_encrypted": encrypted,
+        "granted_scopes": ["insert_content"],
         "workspace_id": data.get("workspace_id"),
         "workspace_name": data.get("workspace_name"),
         "updated_at": datetime.now(timezone.utc).isoformat(),

@@ -13,6 +13,7 @@ from app.routes.notion import router as notion_router
 from app.routes.spotify import router as spotify_router
 from app.routes.google import router as google_router
 from app.routes.telegram import router as telegram_router
+from app.routes.pipeline_links import router as pipeline_links_router
 
 settings = get_settings()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -133,3 +134,4 @@ app.include_router(linear_router)
 app.include_router(spotify_router)
 app.include_router(google_router)
 app.include_router(telegram_router)
+app.include_router(pipeline_links_router)

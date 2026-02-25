@@ -1,0 +1,59 @@
+{
+  "sample_size": 30,
+  "min_sample": 20,
+  "autonomous_success": 29,
+  "autonomous_count": 29,
+  "autonomous_success_rate": 1.0,
+  "autonomous_attempt_count": 30,
+  "autonomous_attempt_rate": 1.0,
+  "autonomous_success_over_attempt_rate": 0.9666666666666667,
+  "planner_failed_count": 0,
+  "planner_failed_rate": 0.0,
+  "verification_failed_count": 0,
+  "verification_failed_rate": 0.0,
+  "guardrail_degrade_count": 0,
+  "guardrail_degrade_rate": 0.0,
+  "fallback_count": 3,
+  "fallback_rate": 0.1,
+  "top_fallback": [
+    [
+      "replan_limit",
+      3
+    ]
+  ],
+  "top_verification": [],
+  "top_error_codes": [],
+  "top_guardrail_degrade": [],
+  "top_plan_source": [
+    [
+      "llm",
+      28
+    ],
+    [
+      "rule",
+      2
+    ]
+  ],
+  "top_execution_mode": [
+    [
+      "autonomous",
+      29
+    ],
+    [
+      "rule",
+      1
+    ]
+  ],
+  "tuning_hints": [
+    "replan_limit 비중이 높습니다. replan 조건을 줄이고 초기 tool ranking 품질을 먼저 개선하세요."
+  ],
+  "policy_recommendations": [
+    {
+      "env_key": "LLM_AUTONOMOUS_REPLAN_LIMIT",
+      "suggested_value": "2",
+      "reason": "replan_limit 비중이 높아 재계획 허용 횟수 상향이 필요합니다."
+    }
+  ],
+  "gate_reasons": [],
+  "verdict": "PASS"
+}

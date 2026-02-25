@@ -813,6 +813,13 @@ async def telegram_webhook(
                     f"\n- slot_loop_completed: {slot_loop_completed}"
                     f"\n- slot_loop_turns: {slot_loop_turns}"
                 )
+            exec_artifacts = analysis.execution.artifacts if analysis.execution else {}
+            pipeline_run_id = str(exec_artifacts.get("pipeline_run_id") or "").strip()
+            dag_idempotent_reuse = str(exec_artifacts.get("idempotent_success_reuse_count") or "").strip()
+            dag_mode = str(exec_artifacts.get("router_mode") or "").strip() == "PIPELINE_DAG"
+            dag_pipeline = dag_mode or bool(pipeline_run_id) or analysis.plan_source == "dag_template"
+            dag_failed_step = str(exec_artifacts.get("failed_step") or "").strip()
+            dag_reason = str(exec_artifacts.get("reason") or "").strip()
 
             _record_command_log(
                 user_id=user_id,
@@ -852,6 +859,11 @@ async def telegram_webhook(
                     + (f";skill_v2_shadow_executed={v2_shadow_executed}" if v2_shadow_executed is not None else "")
                     + (f";skill_v2_shadow_ok={v2_shadow_ok}" if v2_shadow_ok is not None else "")
                     + (f";router_source={router_source}" if router_source else "")
+                    + (f";dag_pipeline=1" if dag_pipeline else "")
+                    + (f";pipeline_run_id={pipeline_run_id}" if pipeline_run_id else "")
+                    + (f";dag_failed_step={dag_failed_step}" if dag_failed_step else "")
+                    + (f";dag_reason={dag_reason}" if dag_reason else "")
+                    + (f";idempotent_success_reuse_count={dag_idempotent_reuse}" if dag_idempotent_reuse else "")
                     + f";analysis_latency_ms={analysis_latency_ms}"
                 ),
                 plan_source=analysis.plan_source,

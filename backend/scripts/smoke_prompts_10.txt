@@ -1,0 +1,11 @@
+# DAG smoke prompts (10 variants)
+구글캘린더 오늘 회의를 notion 페이지로 만들고 linear 이슈로 등록해줘.
+오늘 캘린더 일정 중 첫 회의만 notion 문서로 만들고 linear 이슈를 생성해줘.
+구글캘린더 오늘 미팅을 모아서 notion에 정리하고 linear operate 팀 이슈로 등록해줘.
+오늘 회의 일정을 notion 페이지로 기록하고 linear에 후속 작업 이슈를 만들어줘.
+오늘 캘린더에서 확인되는 회의를 notion 초안으로 만들고 linear issue로 연결해줘.
+구글캘린더 오늘 회의 제목 기반으로 notion 페이지를 만들고 linear 팀 operate에 등록해줘.
+오늘 일정 중 회의 항목만 notion에 생성하고 linear 이슈 생성까지 진행해줘.
+오늘 회의 1건을 notion에 만들고 linear 이슈도 1건 생성해줘.
+오늘 캘린더 회의 내용을 notion 페이지로 작성하고 linear issue로 동기화해줘.
+오늘 회의 처리 파이프라인 실행: google calendar 조회 -> notion 페이지 생성 -> linear 이슈 등록.

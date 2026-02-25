@@ -15,6 +15,24 @@ if str(ROOT) not in sys.path:
 from app.core.config import get_settings
 
 
+def _print_data_source_error(settings: object, exc: Exception) -> None:
+    supabase_url = str(getattr(settings, "supabase_url", "") or "").strip()
+    service_key = str(getattr(settings, "supabase_service_role_key", "") or "").strip()
+    host_hint = "unknown-host"
+    try:
+        host_hint = supabase_url.split("://", 1)[-1].split("/", 1)[0] or host_hint
+    except Exception:
+        host_hint = "unknown-host"
+    print("[Agent Quality Evaluation]")
+    print("- verdict: FAIL")
+    print(f"- reasons:\n  - data_source_error:{type(exc).__name__}")
+    print("- diagnostics:")
+    print(f"  - SUPABASE_URL set: {'yes' if supabase_url else 'no'}")
+    print(f"  - SUPABASE_SERVICE_ROLE_KEY set: {'yes' if service_key else 'no'}")
+    print(f"  - target host: {host_hint}")
+    print("  - action: check .env value, DNS/network/VPN/firewall, then retry")
+
+
 def _pct(numerator: int, denominator: int) -> float:
     if denominator <= 0:
         return 0.0
@@ -361,14 +379,33 @@ def main() -> int:
     settings = get_settings()
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
 
-    result = (
-        supabase.table("command_logs")
-        .select("status, execution_mode, plan_source, autonomous_fallback_reason, verification_reason, error_code, created_at")
-        .eq("command", "agent_plan")
-        .order("created_at", desc=True)
-        .limit(max(1, args.limit))
-        .execute()
-    )
+    try:
+        result = (
+            supabase.table("command_logs")
+            .select(
+                "status, execution_mode, plan_source, autonomous_fallback_reason, verification_reason, error_code, created_at"
+            )
+            .eq("command", "agent_plan")
+            .order("created_at", desc=True)
+            .limit(max(1, args.limit))
+            .execute()
+        )
+    except Exception as exc:
+        _print_data_source_error(settings, exc)
+        if args.output_json:
+            with open(args.output_json, "w", encoding="utf-8") as fp:
+                json.dump(
+                    {
+                        "sample_size": 0,
+                        "min_sample": int(args.min_sample),
+                        "verdict": "FAIL",
+                        "gate_reasons": [f"data_source_error:{type(exc).__name__}"],
+                    },
+                    fp,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+        return 1
     rows = result.data or []
     total = len(rows)
     autonomous_rows = [row for row in rows if row.get("execution_mode") == "autonomous"]

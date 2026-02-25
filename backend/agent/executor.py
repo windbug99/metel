@@ -5,9 +5,11 @@ import re
 from html import unescape
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from fastapi import HTTPException
+from supabase import create_client
 
 from agent.intent_keywords import (
     contains_any,
@@ -17,7 +19,11 @@ from agent.intent_keywords import (
     is_summary_intent,
     is_update_intent,
 )
+from agent.pipeline_dag import PipelineExecutionError, execute_pipeline_dag
+from agent.pipeline_error_codes import PipelineErrorCode
+from agent.pipeline_links import extract_pipeline_links, persist_pipeline_failure_link, persist_pipeline_links
 from agent.planner import build_execution_tasks
+from agent.skill_contracts import required_scopes_for_skill, runtime_tools_for_skill, service_for_skill
 from agent.slot_collector import collect_slots_from_user_reply
 from agent.slot_schema import get_action_slot_schema, validate_slots
 from agent.tool_runner import execute_tool
@@ -27,6 +33,13 @@ from app.core.config import get_settings
 
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 GEMINI_GENERATE_CONTENT_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+
+_SCOPE_ALIASES: dict[str, dict[str, str]] = {
+    "google": {
+        "https://www.googleapis.com/auth/calendar.readonly": "calendar.read",
+        "https://www.googleapis.com/auth/calendar": "calendar.read",
+    },
+}
 
 
 def _is_gemini_provider(provider: str) -> bool:
@@ -40,6 +53,466 @@ class CopyRequest:
     target_service: str
     target_ref: str
     target_field: str
+
+
+def _is_write_skill_name(skill_name: str) -> bool:
+    lower = str(skill_name or "").strip().lower()
+    return any(token in lower for token in ("create", "update", "delete", "append", "archive", "move"))
+
+
+def _parse_write_skill_allowlist() -> set[str]:
+    settings = get_settings()
+    raw = str(getattr(settings, "skill_v2_allowlist", "") or "").strip()
+    items = [item.strip() for item in raw.split(",") if item and item.strip()]
+    allowlist = {item for item in items if "." in item}
+    if allowlist:
+        return allowlist
+    return {
+        "notion.page_create",
+        "notion.page_update",
+        "notion.page_delete",
+        "linear.issue_create",
+        "linear.issue_update",
+        "linear.issue_delete",
+    }
+
+
+def _canonical_scope(provider: str, scope: str) -> str:
+    normalized_provider = str(provider or "").strip().lower()
+    value = str(scope or "").strip()
+    if not value:
+        return ""
+    alias_map = _SCOPE_ALIASES.get(normalized_provider, {})
+    return alias_map.get(value, value)
+
+
+def _normalize_timezone(value: str | None) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return "UTC"
+    try:
+        ZoneInfo(candidate)
+        return candidate
+    except Exception:
+        return "UTC"
+
+
+def _load_user_timezone(user_id: str) -> str:
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    try:
+        rows = (
+            supabase.table("users")
+            .select("timezone")
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return "UTC"
+    if not rows:
+        return "UTC"
+    return _normalize_timezone(str(rows[0].get("timezone") or "").strip())
+
+
+def _load_granted_scopes_map(user_id: str, providers: set[str]) -> dict[str, set[str]]:
+    if not providers:
+        return {}
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    rows = (
+        supabase.table("oauth_tokens")
+        .select("provider,granted_scopes")
+        .eq("user_id", user_id)
+        .in_("provider", sorted(providers))
+        .execute()
+        .data
+        or []
+    )
+    result: dict[str, set[str]] = {}
+    for row in rows:
+        provider = str(row.get("provider") or "").strip().lower()
+        scopes_raw = row.get("granted_scopes")
+        scopes: set[str] = set()
+        if isinstance(scopes_raw, list):
+            scopes = {
+                _canonical_scope(provider, str(item).strip())
+                for item in scopes_raw
+                if str(item).strip() and _canonical_scope(provider, str(item).strip())
+            }
+        elif isinstance(scopes_raw, str):
+            scopes = {
+                _canonical_scope(provider, item.strip())
+                for item in scopes_raw.split(" ")
+                if item.strip() and _canonical_scope(provider, item.strip())
+            }
+        if provider:
+            result[provider] = scopes
+    return result
+
+
+def _validate_dag_policy_guards(
+    *,
+    user_id: str,
+    pipeline: dict,
+) -> tuple[bool, str | None, str | None, PipelineErrorCode | None]:
+    nodes = pipeline.get("nodes") if isinstance(pipeline, dict) else None
+    if not isinstance(nodes, list):
+        return False, "pipeline_nodes_invalid", None, PipelineErrorCode.DSL_VALIDATION_FAILED
+
+    allowlist = _parse_write_skill_allowlist()
+    providers_needed: set[str] = set()
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("type") != "skill":
+            continue
+        node_id = str(node.get("id") or "").strip() or None
+        skill_name = str(node.get("name") or "").strip()
+        if _is_write_skill_name(skill_name) and skill_name not in allowlist:
+            return False, f"write_skill_not_allowlisted:{skill_name}", node_id, PipelineErrorCode.DSL_VALIDATION_FAILED
+        if required_scopes_for_skill(skill_name):
+            provider = service_for_skill(skill_name) or ""
+            if provider:
+                providers_needed.add(provider)
+
+    granted = _load_granted_scopes_map(user_id, providers_needed)
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("type") != "skill":
+            continue
+        node_id = str(node.get("id") or "").strip() or None
+        skill_name = str(node.get("name") or "").strip()
+        provider = (service_for_skill(skill_name) or "").strip().lower()
+        required = {_canonical_scope(provider, value) for value in required_scopes_for_skill(skill_name) if value}
+        if not required:
+            continue
+        granted_scopes = {
+            _canonical_scope(provider, value)
+            for value in granted.get(provider, set())
+            if _canonical_scope(provider, value)
+        }
+        if not granted_scopes:
+            return False, f"oauth_scope_missing:{provider}", node_id, PipelineErrorCode.TOOL_AUTH_ERROR
+        if not required.issubset(granted_scopes):
+            missing = sorted(required - granted_scopes)
+            return (
+                False,
+                f"oauth_scope_insufficient:{provider}:{','.join(missing)}",
+                node_id,
+                PipelineErrorCode.TOOL_AUTH_ERROR,
+            )
+
+    return True, None, None, None
+
+
+def _extract_pipeline_dag_task(plan: AgentPlan) -> AgentTask | None:
+    for task in plan.tasks:
+        if str(task.task_type or "").strip().upper() == "PIPELINE_DAG":
+            return task
+    return None
+
+
+def _retry_hint_for_pipeline_error(code: PipelineErrorCode) -> str:
+    if code == PipelineErrorCode.DSL_VALIDATION_FAILED:
+        return "요청 구조를 확인한 뒤 다시 시도하세요."
+    if code == PipelineErrorCode.DSL_REF_NOT_FOUND:
+        return "이전 노드 출력 참조 경로를 확인한 뒤 다시 시도하세요."
+    if code == PipelineErrorCode.LLM_AUTOFILL_FAILED:
+        return "필수 슬롯이 채워지도록 입력 항목을 보강한 뒤 다시 시도하세요."
+    if code == PipelineErrorCode.TOOL_AUTH_ERROR:
+        return "연동 권한을 다시 승인한 뒤 동일 요청을 재시도하세요."
+    if code == PipelineErrorCode.TOOL_RATE_LIMITED:
+        return "잠시 후 다시 시도하세요."
+    if code == PipelineErrorCode.TOOL_TIMEOUT:
+        return "요청 범위를 줄여 다시 시도하세요."
+    if code == PipelineErrorCode.VERIFY_COUNT_MISMATCH:
+        return "입력 수와 생성 수가 일치하도록 조건을 점검한 뒤 다시 시도하세요."
+    if code == PipelineErrorCode.COMPENSATION_FAILED:
+        return "수동 확인이 필요합니다."
+    if code == PipelineErrorCode.PIPELINE_TIMEOUT:
+        return "작업 대상을 줄인 뒤 다시 시도하세요."
+    return "잠시 후 다시 시도하세요."
+
+
+async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExecutionResult | None:
+    task = _extract_pipeline_dag_task(plan)
+    if task is None:
+        return None
+
+    raw_pipeline = (task.payload or {}).get("pipeline")
+    if not isinstance(raw_pipeline, dict):
+        return AgentExecutionResult(
+            success=False,
+            summary="DAG 파이프라인 입력이 올바르지 않습니다.",
+            user_message="DAG 파이프라인 정의가 누락되었거나 형식이 잘못되었습니다.",
+            artifacts={
+                "error_code": PipelineErrorCode.DSL_VALIDATION_FAILED.value,
+                "router_mode": "PIPELINE_DAG",
+                "failed_step": str(task.id or "pipeline_dag"),
+                "reason": "pipeline_payload_missing_or_invalid",
+                "retry_hint": _retry_hint_for_pipeline_error(PipelineErrorCode.DSL_VALIDATION_FAILED),
+                "compensation_status": "not_required",
+            },
+            steps=[AgentExecutionStep(name="pipeline_dag", status="error", detail="invalid_pipeline_payload")],
+        )
+    ok, reason, failed_step, code = _validate_dag_policy_guards(user_id=user_id, pipeline=raw_pipeline)
+    if not ok:
+        resolved = code or PipelineErrorCode.DSL_VALIDATION_FAILED
+        return AgentExecutionResult(
+            success=False,
+            summary="DAG 정책 검증 실패",
+            user_message=f"DAG 실행 전 정책 검증에 실패했습니다. ({resolved.value})",
+            artifacts={
+                "error_code": resolved.value,
+                "router_mode": "PIPELINE_DAG",
+                "failed_step": str(failed_step or ""),
+                "reason": str(reason or "dag_policy_validation_failed"),
+                "retry_hint": _retry_hint_for_pipeline_error(resolved),
+                "compensation_status": "not_required",
+            },
+            steps=[AgentExecutionStep(name="pipeline_dag_policy_guard", status="error", detail=str(reason or "guard_failed"))],
+        )
+
+    context = (task.payload or {}).get("ctx")
+    if not isinstance(context, dict):
+        context = {}
+    context.setdefault("user_text", plan.user_text)
+
+    async def _execute_skill_for_dag(run_user_id: str, skill_name: str, payload: dict) -> dict:
+        runtime_tools = runtime_tools_for_skill(skill_name)
+        tool_name = runtime_tools[0] if runtime_tools else ""
+        if not tool_name:
+            raise PipelineExecutionError(
+                code=PipelineErrorCode.DSL_VALIDATION_FAILED,
+                reason=f"runtime_tool_not_found:{skill_name}",
+            )
+        normalized_payload = dict(payload or {})
+        if skill_name == "notion.page_create":
+            # Skill contract uses title/body abstraction, while runtime tool requires
+            # Notion API shape parent/properties.
+            if "properties" not in normalized_payload:
+                title = str(normalized_payload.pop("title", "") or "").strip()
+                if title:
+                    normalized_payload["properties"] = {
+                        "title": {
+                            "title": [
+                                {
+                                    "type": "text",
+                                    "text": {"content": title},
+                                }
+                            ]
+                        }
+                    }
+            if "parent" not in normalized_payload:
+                normalized_payload["parent"] = {"workspace": True}
+            body = str(normalized_payload.pop("body", "") or "").strip()
+            if body and "children" not in normalized_payload:
+                normalized_payload["children"] = [
+                    {
+                        "object": "block",
+                        "type": "paragraph",
+                        "paragraph": {
+                            "rich_text": [
+                                {
+                                    "type": "text",
+                                    "text": {"content": body},
+                                }
+                            ]
+                        },
+                    }
+                ]
+        if skill_name == "linear.issue_create":
+            team_ref = str(normalized_payload.get("team_ref") or "").strip()
+            team_id = str(normalized_payload.get("team_id") or "").strip()
+            normalized_payload.pop("team_ref", None)
+
+            async def _resolve_linear_team_id_for_dag(ref_text: str) -> str:
+                try:
+                    teams_result = await execute_tool(run_user_id, "linear_list_teams", {"first": 20})
+                except Exception:
+                    return ""
+                nodes = (
+                    (((teams_result.get("data") or {}).get("teams") or {}).get("nodes"))
+                    if isinstance(teams_result, dict)
+                    else None
+                ) or []
+                if not isinstance(nodes, list):
+                    return ""
+                ref_lower = ref_text.lower()
+                for node in nodes:
+                    if not isinstance(node, dict):
+                        continue
+                    key = str(node.get("key") or "").strip().lower()
+                    name = str(node.get("name") or "").strip().lower()
+                    if ref_lower and (ref_lower == key or ref_lower == name):
+                        return str(node.get("id") or "").strip()
+                for node in nodes:
+                    if not isinstance(node, dict):
+                        continue
+                    key = str(node.get("key") or "").strip().lower()
+                    name = str(node.get("name") or "").strip().lower()
+                    if ref_lower and (ref_lower in key or ref_lower in name):
+                        return str(node.get("id") or "").strip()
+                for node in nodes:
+                    if isinstance(node, dict):
+                        fallback = str(node.get("id") or "").strip()
+                        if fallback:
+                            return fallback
+                return ""
+
+            if not team_id:
+                if team_ref:
+                    team_id = await _resolve_linear_team_id_for_dag(team_ref)
+                else:
+                    team_id = await _resolve_linear_team_id_for_dag("")
+            if team_id:
+                normalized_payload["team_id"] = team_id
+
+        raw = await execute_tool(run_user_id, tool_name, normalized_payload)
+        if not isinstance(raw, dict):
+            return raw
+        output = raw.get("data", {})
+        if not isinstance(output, dict):
+            return raw
+        if skill_name == "google.list_today":
+            # Google Calendar API returns `items` with `summary`; DAG fixture expects
+            # a stable `events` array with `title` for downstream refs.
+            source_items = output.get("events") if isinstance(output.get("events"), list) else output.get("items")
+            events: list[dict] = []
+            if isinstance(source_items, list):
+                for item in source_items:
+                    if not isinstance(item, dict):
+                        continue
+                    normalized = dict(item)
+                    if not str(normalized.get("title") or "").strip():
+                        normalized["title"] = str(normalized.get("summary") or "").strip()
+                    # Some events omit `description`; keep key stable for DAG refs.
+                    if "description" not in normalized:
+                        normalized["description"] = ""
+                    events.append(normalized)
+            normalized_raw = dict(raw)
+            normalized_raw["data"] = {"events": events}
+            return normalized_raw
+        return raw
+
+    async def _execute_llm_transform_for_dag(
+        run_user_id: str,
+        payload: dict,
+        output_schema: dict,
+    ) -> dict:
+        _ = run_user_id
+        transformed = dict(payload or {})
+        required = [str(key).strip() for key in (output_schema or {}).get("required", []) if str(key).strip()]
+        missing = [key for key in required if transformed.get(key) in (None, "")]
+        if missing:
+            raise PipelineExecutionError(
+                code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
+                reason=f"missing_required_slots:{','.join(missing)}",
+            )
+        return transformed
+
+    async def _execute_compensation_for_dag(
+        node_id: str,
+        skill_name: str,
+        output: dict,
+        item: dict | None,
+    ) -> bool:
+        _ = (node_id, item)
+        try:
+            if skill_name == "notion.page_create":
+                page_id = str(output.get("id") or output.get("page_id") or "").strip()
+                if not page_id:
+                    return False
+                resp = await execute_tool(
+                    user_id=user_id,
+                    tool_name="notion_update_page",
+                    payload={"page_id": page_id, "archived": True},
+                )
+                return bool(resp.get("ok", False))
+            if skill_name == "linear.issue_create":
+                issue_id = str(
+                    (((output.get("issueCreate") or {}).get("issue") or {}).get("id"))
+                    or ((output.get("issue") or {}).get("id"))
+                    or output.get("id")
+                    or ""
+                ).strip()
+                if not issue_id:
+                    return False
+                resp = await execute_tool(
+                    user_id=user_id,
+                    tool_name="linear_update_issue",
+                    payload={"issue_id": issue_id, "archived": True},
+                )
+                return bool(resp.get("ok", False))
+        except Exception:
+            return False
+        return True
+
+    try:
+        dag_result = await execute_pipeline_dag(
+            user_id=user_id,
+            pipeline=raw_pipeline,
+            ctx=context,
+            execute_skill=_execute_skill_for_dag,
+            execute_llm_transform=_execute_llm_transform_for_dag,
+            execute_compensation=_execute_compensation_for_dag,
+        )
+        pipeline_links = extract_pipeline_links(
+            user_id=user_id,
+            pipeline_run_id=str(dag_result.get("pipeline_run_id") or ""),
+            artifacts=dag_result.get("artifacts") or {},
+        )
+        links_saved = persist_pipeline_links(links=pipeline_links)
+        artifacts = {
+            "pipeline_id": str(dag_result.get("pipeline_id") or ""),
+            "pipeline_run_id": str(dag_result.get("pipeline_run_id") or ""),
+            "pipeline_status": str(dag_result.get("status") or "succeeded"),
+            "router_mode": "PIPELINE_DAG",
+            "idempotent_success_reuse_count": str(dag_result.get("idempotent_success_reuse_count") or 0),
+            "dag_node_runs_json": json.dumps(dag_result.get("node_runs") or [], ensure_ascii=False),
+            "dag_compensation_events_json": json.dumps(dag_result.get("compensation_events") or [], ensure_ascii=False),
+            "pipeline_links_count": str(len(pipeline_links)),
+            "pipeline_links_persisted": "1" if links_saved else "0",
+        }
+        return AgentExecutionResult(
+            success=True,
+            summary="DAG 파이프라인 실행 완료",
+            user_message="요청한 DAG 파이프라인 실행을 완료했습니다.",
+            artifacts=artifacts,
+            steps=[AgentExecutionStep(name="pipeline_dag", status="success", detail="succeeded")],
+        )
+    except PipelineExecutionError as exc:
+        code = exc.code
+        failure_status = "failed"
+        if str(exc.compensation_status or "") == "failed":
+            failure_status = "manual_required"
+        elif str(exc.compensation_status or "") == "manual_required":
+            failure_status = "manual_required"
+        failure_link_saved = persist_pipeline_failure_link(
+            user_id=user_id,
+            event_id=str(exc.failed_item_ref or ""),
+            run_id=str(exc.pipeline_run_id or ""),
+            status=failure_status,
+            error_code=code.value,
+            compensation_status=str(exc.compensation_status or "not_required"),
+        )
+        return AgentExecutionResult(
+            success=False,
+            summary="DAG 파이프라인 실행 실패",
+            user_message=f"파이프라인 실행에 실패했습니다. ({code.value})",
+            artifacts={
+                "error_code": code.value,
+                "pipeline_run_id": str(exc.pipeline_run_id or ""),
+                "failed_item_ref": str(exc.failed_item_ref or ""),
+                "failed_step": str(exc.failed_step or ""),
+                "reason": exc.reason,
+                "retry_hint": _retry_hint_for_pipeline_error(code),
+                "compensation_status": str(exc.compensation_status or "not_required"),
+                "pipeline_links_failure_persisted": "1" if failure_link_saved else "0",
+                "pipeline_links_failure_status": failure_status,
+            },
+            steps=[AgentExecutionStep(name="pipeline_dag", status="error", detail=exc.reason[:200])],
+        )
 
 
 def _map_execution_error(detail: str) -> tuple[str, str, str]:
@@ -861,6 +1334,7 @@ def _build_task_tool_payload(
     plan: AgentPlan,
     task: AgentTask,
     task_outputs: dict[str, dict],
+    user_timezone: str = "UTC",
 ) -> dict:
     tool_name = (task.tool_name or "").strip()
     payload = dict(task.payload or {})
@@ -908,10 +1382,11 @@ def _build_task_tool_payload(
         }
 
     if "google_calendar_list_events" in tool_name:
-        time_min, time_max = _today_utc_range()
+        time_min, time_max = _today_utc_range_for_timezone(user_timezone)
         payload.setdefault("calendar_id", "primary")
         payload.setdefault("time_min", time_min)
         payload.setdefault("time_max", time_max)
+        payload.setdefault("time_zone", user_timezone)
         payload.setdefault("single_events", True)
         payload.setdefault("order_by", "startTime")
         payload.setdefault("max_results", 100)
@@ -1369,6 +1844,7 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
     steps: list[AgentExecutionStep] = []
     slot_context: dict[str, str] = {}
     validated_payloads: list[dict[str, object]] = []
+    user_timezone = _load_user_timezone(user_id)
 
     for task in tasks:
         missing_deps = [dep for dep in task.depends_on if dep not in task_outputs]
@@ -1379,7 +1855,12 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
             tool_name = (task.tool_name or "").strip()
             if not tool_name:
                 return None
-            payload = _build_task_tool_payload(plan=plan, task=task, task_outputs=task_outputs)
+            payload = _build_task_tool_payload(
+                plan=plan,
+                task=task,
+                task_outputs=task_outputs,
+                user_timezone=user_timezone,
+            )
             payload = await _autofill_task_payload(
                 user_id=user_id,
                 plan=plan,
@@ -2206,10 +2687,16 @@ def _event_summary(event: dict) -> str:
     return "제목 없음 회의"
 
 
-def _today_utc_range() -> tuple[str, str]:
-    now_utc = datetime.now(timezone.utc)
-    day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timedelta(days=1)
+def _today_utc_range_for_timezone(tz_name: str) -> tuple[str, str]:
+    try:
+        tzinfo = ZoneInfo(_normalize_timezone(tz_name))
+    except ZoneInfoNotFoundError:
+        tzinfo = timezone.utc
+    now_local = datetime.now(tzinfo)
+    day_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end_local = day_start_local + timedelta(days=1)
+    day_start = day_start_local.astimezone(timezone.utc)
+    day_end = day_end_local.astimezone(timezone.utc)
     return (
         day_start.isoformat().replace("+00:00", "Z"),
         day_end.isoformat().replace("+00:00", "Z"),
@@ -2330,6 +2817,7 @@ async def _execute_google_calendar_to_notion_linear_flow(
     *,
     user_id: str,
     plan: AgentPlan,
+    user_timezone: str = "UTC",
 ) -> AgentExecutionResult | None:
     if not _is_google_calendar_to_notion_linear_request(plan):
         return None
@@ -2368,7 +2856,7 @@ async def _execute_google_calendar_to_notion_linear_flow(
         return compensation_errors
 
     try:
-        time_min, time_max = _today_utc_range()
+        time_min, time_max = _today_utc_range_for_timezone(user_timezone)
         calendar_result = await execute_tool(
             user_id=user_id,
             tool_name=_pick_service_tool(plan, "google", "list_events", "google_calendar_list_events"),
@@ -2376,6 +2864,7 @@ async def _execute_google_calendar_to_notion_linear_flow(
                 "calendar_id": "primary",
                 "time_min": time_min,
                 "time_max": time_max,
+                "time_zone": user_timezone,
                 "single_events": True,
                 "order_by": "startTime",
                 "max_results": 50,
@@ -2914,6 +3403,7 @@ async def _read_page_lines_or_summary(
 
 async def execute_agent_plan(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
     try:
+        user_timezone = _load_user_timezone(user_id)
         if (
             not bool(getattr(get_settings(), "delete_operations_enabled", False))
             and _is_explicit_delete_request(plan.user_text)
@@ -2925,8 +3415,15 @@ async def execute_agent_plan(user_id: str, plan: AgentPlan) -> AgentExecutionRes
                 artifacts={"error_code": "delete_disabled"},
                 steps=[AgentExecutionStep(name="policy_delete_guard", status="error", detail="delete_disabled")],
             )
+        pipeline_result = await _execute_pipeline_dag_task(user_id=user_id, plan=plan)
+        if pipeline_result is not None:
+            return pipeline_result
         plan = _ensure_common_tool_tasks(plan)
-        calendar_pipeline_result = await _execute_google_calendar_to_notion_linear_flow(user_id=user_id, plan=plan)
+        calendar_pipeline_result = await _execute_google_calendar_to_notion_linear_flow(
+            user_id=user_id,
+            plan=plan,
+            user_timezone=user_timezone,
+        )
         if calendar_pipeline_result is not None:
             return calendar_pipeline_result
         cross_copy_result = await _execute_cross_service_copy_flow(user_id=user_id, plan=plan)

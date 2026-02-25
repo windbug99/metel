@@ -1,0 +1,51 @@
+{
+  "window_days": 0,
+  "window_start_utc": null,
+  "dag_sample_size": 53,
+  "pipeline_links_sample_size": 1,
+  "manual_required_count": 0,
+  "dsl_validation_failed_count": 0,
+  "dsl_ref_not_found_count": 2,
+  "verify_count_mismatch_count": 0,
+  "compensation_failed_count": 1,
+  "idempotent_success_reuse_total": 0,
+  "manual_required_rate": 0.0,
+  "pipeline_links_error_code_counts": {},
+  "dsl_validation_failed_rate": 0.0,
+  "dsl_ref_not_found_rate": 0.03773584905660377,
+  "verify_count_mismatch_rate": 0.0,
+  "compensation_failed_rate": 0.018867924528301886,
+  "idempotent_success_reuse_rate": 0.0,
+  "error_code_counts": {
+    "TOOL_TIMEOUT": 16,
+    "COMPENSATION_FAILED": 1,
+    "DSL_REF_NOT_FOUND": 2,
+    "TOOL_AUTH_ERROR": 1
+  },
+  "min_sample": 20,
+  "max_dsl_validation_failed_rate": 0.1,
+  "max_dsl_ref_not_found_rate": 0.05,
+  "max_verify_count_mismatch_rate": 0.1,
+  "max_compensation_failed_rate": 0.02,
+  "max_manual_required_rate": 0.05,
+  "min_idempotent_success_reuse_rate": 0.0,
+  "policy_recommendations": [
+    {
+      "env_key": "LLM_HYBRID_EXECUTOR_FIRST",
+      "suggested_value": "true",
+      "reason": "참조 해석 실패 비율이 높아 deterministic-first 실행 비중을 높여야 합니다."
+    },
+    {
+      "env_key": "LLM_AUTONOMOUS_STRICT_TOOL_SCOPE",
+      "suggested_value": "true",
+      "reason": "보상 실패가 발생해 cross-service 도구 경계를 더 엄격히 유지해야 합니다."
+    },
+    {
+      "env_key": "LLM_AUTONOMOUS_RULE_FALLBACK_MUTATION_ENABLED",
+      "suggested_value": "false",
+      "reason": "idempotent 재사용률이 낮아 mutation fallback 확장을 보수적으로 유지해야 합니다."
+    }
+  ],
+  "verdict": "PASS",
+  "reasons": []
+}

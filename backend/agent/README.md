@@ -16,6 +16,7 @@ This folder contains the LLM agent runtime contract for metel.
 - `service_resolver.py`: infer target services from user request
 - `guide_retriever.py`: load summarized guide snippets from `docs/api_guides`
 - `registry.py`: load/validate tool specs and dispatch adapter functions
+- `pipeline_dag.py`: validate/evaluate/execute Pipeline DSL DAG (`when`, `$ref`, `for_each`)
 - `loop.py`: tool-calling loop with verification and retry policy
 - `safety.py`: hard limits and guardrails
 - `observability.py`: step-level logs and request tracing
@@ -24,3 +25,26 @@ This folder contains the LLM agent runtime contract for metel.
 
 LLM must only call tools declared in `tool_specs/*.json`.
 Human-readable API guides are references for planning, not direct execution contracts.
+
+## DAG Ops Quickcheck
+
+- Supabase connectivity preflight:
+  - `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/check_supabase_connectivity.py --timeout-sec 5`
+- Agent quality gate (includes preflight):
+  - `cd backend && . .venv/bin/activate && ./scripts/run_autonomous_gate.sh`
+- Autonomous SLO guard (`fallback<=10%`) for steady-state ops:
+  - `cd backend && . .venv/bin/activate && ./scripts/run_autonomous_slo_guard.sh`
+- DAG quality gate (includes preflight):
+  - `cd backend && . .venv/bin/activate && ./scripts/run_dag_quality_gate.sh`
+- DAG smoke/gate cycle loop (retries until pass or attempts exhausted):
+  - `cd backend && . .venv/bin/activate && ATTEMPTS=8 SLEEP_SEC=15 ./scripts/run_dag_smoke_cycle.sh`
+- DAG smoke/gate cycle loop with auto webhook injection (no manual Telegram send):
+  - `cd backend && . .venv/bin/activate && AUTO_INJECT_WEBHOOK=1 WEBHOOK_URL=https://<backend>/api/telegram/webhook CHAT_ID=<telegram_chat_id> ATTEMPTS=8 SLEEP_SEC=15 ./scripts/run_dag_smoke_cycle.sh`
+  - 여러 요청문 순환 주입(`SMOKE_TEXTS`, 구분자 `|||`):
+    - `cd backend && . .venv/bin/activate && AUTO_INJECT_WEBHOOK=1 WEBHOOK_URL=https://<backend>/api/telegram/webhook CHAT_ID=<telegram_chat_id> SMOKE_TEXTS='요청문A|||요청문B|||요청문C' ATTEMPTS=12 STOP_ON_PASS=0 ./scripts/run_dag_smoke_cycle.sh`
+  - 여러 요청문 파일 주입(줄 단위, `#` 주석/빈 줄 무시):
+    - `cd backend && . .venv/bin/activate && AUTO_INJECT_WEBHOOK=1 WEBHOOK_URL=https://<backend>/api/telegram/webhook CHAT_ID=<telegram_chat_id> SMOKE_TEXTS_FILE=./scripts/smoke_prompts.txt ATTEMPTS=12 STOP_ON_PASS=0 ./scripts/run_dag_smoke_cycle.sh`
+
+- Autonomous traffic seeding (connected-service auto-filter):
+  - `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/seed_autonomous_traffic.py --webhook-url https://<backend>/api/telegram/webhook --chat-id <chat_id> --target-count 30 --sleep-sec 8`
+  - dry-run: `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/seed_autonomous_traffic.py --webhook-url https://<backend>/api/telegram/webhook --chat-id <chat_id> --target-count 30 --dry-run`

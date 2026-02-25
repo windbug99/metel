@@ -1,0 +1,35 @@
+{
+  "name": "google.list_today",
+  "version": "1.0.0",
+  "summary": "List today's Google Calendar events",
+  "provider": { "service": "google", "auth": "oauth", "scopes": ["calendar.read"] },
+  "runtime_tools": ["google_calendar_list_events"],
+  "autofill": {
+    "sources": ["chat_context.user_timezone"],
+    "rules": ["if range missing, use today range in user timezone"]
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "calendar_id": { "type": ["string", "null"] },
+      "time_min": { "type": ["string", "null"] },
+      "time_max": { "type": ["string", "null"] },
+      "max_results": { "type": ["integer", "null"] }
+    },
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["status"],
+    "properties": {
+      "status": { "type": "string", "enum": ["success", "needs_input", "error"] },
+      "result": { "type": ["object", "null"] },
+      "needs_input": { "type": ["object", "null"] },
+      "error": { "type": ["object", "null"] }
+    },
+    "additionalProperties": false
+  },
+  "examples": [
+    { "name": "default_today", "input": {} }
+  ]
+}

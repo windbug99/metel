@@ -81,12 +81,15 @@ async def google_oauth_callback(code: str, state: str):
         raise HTTPException(status_code=400, detail="Missing access_token from Google")
 
     encrypted = TokenVault(settings.notion_token_encryption_key).encrypt(access_token)
+    scope_text = str(payload.get("scope") or "").strip()
+    granted_scopes = [item.strip() for item in scope_text.split(" ") if item.strip()] or ["calendar.read"]
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
     supabase.table("oauth_tokens").upsert(
         {
             "user_id": user_id,
             "provider": "google",
             "access_token_encrypted": encrypted,
+            "granted_scopes": granted_scopes,
             "workspace_id": None,
             "workspace_name": "google_calendar",
             "updated_at": datetime.now(timezone.utc).isoformat(),
