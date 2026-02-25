@@ -50,10 +50,10 @@
   - apply: `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/backfill_oauth_granted_scopes.py --apply --limit 1000`
 - [x] DAG 핵심 회귀 테스트 통과
   - `cd backend && . .venv/bin/activate && PYTHONPATH=. pytest -q tests/test_pipeline_dag.py tests/test_pipeline_dag_adapter.py tests/test_pipeline_fixture_e2e.py tests/test_pipeline_links.py tests/test_pipeline_links_route.py tests/test_eval_dag_quality.py tests/test_apply_policy_recommendations.py`
-- [ ] 운영 품질 게이트 통과
+- [x] 운영 품질 게이트 통과
   - `cd backend && . .venv/bin/activate && ./scripts/run_autonomous_gate.sh`
   - `cd backend && . .venv/bin/activate && ./scripts/run_dag_quality_gate.sh`
-  - 현재 상태(2026-02-25): `autonomous=FAIL`, `dag=PASS`
+  - 최종 상태(2026-02-25): `autonomous=PASS`, `dag=PASS`
 - [x] Supabase 연결 프리체크 PASS
   - `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/check_supabase_connectivity.py --timeout-sec 5`
 - [x] 스테이징 스모크 시나리오 1회 수행
@@ -90,16 +90,14 @@
   - `check_dag_smoke_result.py --limit 100`: `verdict=PASS`
     - `pipeline_run_id=prun_cb0c4f49000d4e1b`
     - `succeeded_pipeline_links=1`
-  - `run_autonomous_gate.sh`: `verdict=FAIL`
+  - `run_autonomous_gate.sh`: `verdict=PASS`
     - sample size `30/20`
-    - `autonomous_attempt_rate=0.0%` (0/30)
-    - `autonomous_success_rate=0.0%` (0/0)
-    - `autonomous_success_over_attempt=0.0%` (0/0)
+    - `autonomous_success_rate=100.0%` (29/29, target `>=80%`)
+    - `autonomous_attempt_rate=100.0%` (30/30, target `>=50%`)
+    - `autonomous_success_over_attempt=96.7%` (29/30, target `>=70%`)
+    - `fallback_rate=10.0%` (3/30, target `<=20%`)
 - 현재 남은 블로커
-  - `run_autonomous_gate.sh`: `verdict=FAIL`
-    - 최근 30건에서 autonomous 경로 시도 자체가 없음(`autonomous_attempt_rate=0.0%`)
-    - 게이트 실패는 품질 저하보다 "샘플 구성 불일치(autonomous 트래픽 부재)" 성격
-  - `운영 품질 게이트 통과` 체크박스는 autonomous 게이트 미통과로 인해 유지
+  - 없음 (DAG/Autonomous/Smoke 운영 게이트 PASS 확인)
 
 ## 1) 배경과 목표
 - 목표: 연속적인 SKILL 사용 요청을 안정적으로 처리하는 에이전트 런타임 구축
