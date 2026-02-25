@@ -42,3 +42,7 @@ Human-readable API guides are references for planning, not direct execution cont
     - `cd backend && . .venv/bin/activate && AUTO_INJECT_WEBHOOK=1 WEBHOOK_URL=https://<backend>/api/telegram/webhook CHAT_ID=<telegram_chat_id> SMOKE_TEXTS='요청문A|||요청문B|||요청문C' ATTEMPTS=12 STOP_ON_PASS=0 ./scripts/run_dag_smoke_cycle.sh`
   - 여러 요청문 파일 주입(줄 단위, `#` 주석/빈 줄 무시):
     - `cd backend && . .venv/bin/activate && AUTO_INJECT_WEBHOOK=1 WEBHOOK_URL=https://<backend>/api/telegram/webhook CHAT_ID=<telegram_chat_id> SMOKE_TEXTS_FILE=./scripts/smoke_prompts.txt ATTEMPTS=12 STOP_ON_PASS=0 ./scripts/run_dag_smoke_cycle.sh`
+
+- Autonomous traffic seeding (connected-service auto-filter):
+  - `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/seed_autonomous_traffic.py --webhook-url https://<backend>/api/telegram/webhook --chat-id <chat_id> --target-count 30 --sleep-sec 8`
+  - dry-run: `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/seed_autonomous_traffic.py --webhook-url https://<backend>/api/telegram/webhook --chat-id <chat_id> --target-count 30 --dry-run`
