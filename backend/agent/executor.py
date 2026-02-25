@@ -272,6 +272,9 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                     normalized = dict(item)
                     if not str(normalized.get("title") or "").strip():
                         normalized["title"] = str(normalized.get("summary") or "").strip()
+                    # Some events omit `description`; keep key stable for DAG refs.
+                    if "description" not in normalized:
+                        normalized["description"] = ""
                     events.append(normalized)
             normalized_raw = dict(raw)
             normalized_raw["data"] = {"events": events}

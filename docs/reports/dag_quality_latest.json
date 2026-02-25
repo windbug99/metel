@@ -1,7 +1,7 @@
 {
   "window_days": 0,
   "window_start_utc": null,
-  "dag_sample_size": 8,
+  "dag_sample_size": 1,
   "pipeline_links_sample_size": 0,
   "manual_required_count": 0,
   "dsl_validation_failed_count": 0,
@@ -12,14 +12,12 @@
   "manual_required_rate": 0.0,
   "pipeline_links_error_code_counts": {},
   "dsl_validation_failed_rate": 0.0,
-  "dsl_ref_not_found_rate": 0.125,
+  "dsl_ref_not_found_rate": 1.0,
   "verify_count_mismatch_rate": 0.0,
   "compensation_failed_rate": 0.0,
   "idempotent_success_reuse_rate": 0.0,
   "error_code_counts": {
-    "DSL_REF_NOT_FOUND": 1,
-    "TOOL_TIMEOUT": 6,
-    "TOOL_AUTH_ERROR": 1
+    "DSL_REF_NOT_FOUND": 1
   },
   "min_sample": 1,
   "max_dsl_validation_failed_rate": 0.1,
@@ -42,6 +40,6 @@
   ],
   "verdict": "FAIL",
   "reasons": [
-    "dsl_ref_not_found_rate_above_target:0.125>0.050"
+    "dsl_ref_not_found_rate_above_target:1.000>0.050"
   ]
 }
