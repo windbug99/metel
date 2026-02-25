@@ -363,3 +363,72 @@
   "compensation_status": "completed"
 }
 ```
+
+## 17) 로그 기반 지속 최적화 루프 (운영 포함)
+### 17.1 목표
+- DAG 도입 이후에도 실패율/지연/검증 실패를 지속적으로 낮추기 위해, 로그 기반 정책 튜닝 루프를 상시 운영 체계에 포함한다.
+- 모델 파인튜닝보다 먼저 실행 정책(재시도/예산/fallback/실행 모드)을 조정해 안정성을 우선 확보한다.
+- 변경은 canary 승격/보류/롤백 규칙으로 통제해 운영 리스크를 최소화한다.
+
+### 17.2 루프 범위(공통)
+- 수집 대상 로그:
+  - `command_logs`의 `status`, `error_code`, `verification_reason`, `plan_source`, `execution_mode`, `detail`
+  - pipeline artifact의 `pipeline_run_id`, `node_id`, `duration_ms`, `attempt`, `idempotency_key`
+- 필수 KPI:
+  - `Tool/Pipeline Success Rate`
+  - `verification_failed_rate`
+  - `fallback_rate`
+  - `p95_latency`
+  - `fanout_failed_ratio`
+- 데이터 보호:
+  - 민감정보 마스킹 로그를 기본으로 유지
+  - 사용자 원문/식별자는 최소 수집 원칙을 적용
+
+### 17.3 운영 사이클 (평가 -> 결정 -> 적용 -> 롤백)
+1. 평가(주기 실행)
+- 자율/하이브리드 품질 게이트:
+  - `cd backend && . .venv/bin/activate && ./scripts/run_autonomous_gate.sh`
+  - 산출물: `docs/reports/agent_quality_latest.{md,json}`
+- Skill V2 rollout 게이트:
+  - `cd backend && DAYS=3 ./scripts/run_skill_v2_rollout_gate.sh`
+  - 산출물: `docs/reports/skill_v2_rollout_latest.json`
+
+2. 결정(승격/보류/롤백)
+- Skill V2 전환 단계 결정:
+  - `cd backend && . .venv/bin/activate && python scripts/decide_skill_v2_rollout.py --report-json ../docs/reports/skill_v2_rollout_latest.json --current-percent <0|10|30|60|100>`
+- 자율/하이브리드 정책 추천:
+  - `cd backend && . .venv/bin/activate && python scripts/apply_agent_policy_recommendations.py --from-json ../docs/reports/agent_quality_latest.json --env-file .env` (dry-run)
+
+3. 적용(승인 후 제한 반영)
+- 자율/하이브리드 정책 반영:
+  - `cd backend && APPLY_POLICY=true ./scripts/run_hybrid_learning_loop.sh`
+- Skill V2 전환 정책 반영:
+  - `cd backend && . .venv/bin/activate && python scripts/apply_skill_v2_rollout_decision.py --decision-json ../docs/reports/skill_v2_rollout_decision_latest.json --env-file .env --apply`
+- 원칙:
+  - allowlist된 env 키만 변경
+  - 기본은 dry-run, 운영자 승인 후 apply
+
+4. 롤백(임계치 이탈 시 즉시)
+- 아래 중 1개라도 충족 시 즉시 보류/롤백:
+  - 성공률 급락(기준 대비 10%p 이상 하락)
+  - auth/server 오류 급증(기준 대비 2배 이상)
+  - p95 지연 급증(운영 임계치 초과)
+- 조치:
+  - `SKILL_RUNNER_V2_ENABLED=false` 또는 `SKILL_ROUTER_V2_ENABLED=false`
+  - 필요 시 `LLM_HYBRID_EXECUTOR_FIRST=true`로 deterministic-first 강제
+
+### 17.4 자동화 수준 권장
+- 권장 기본값:
+  - `자동 평가 + 자동 추천`, `수동 승인 + 자동 반영`
+- 금지:
+  - 임계치/근거 없이 자동 100% 승격
+  - 승인 없는 즉시 정책 반영
+
+### 17.5 DAG 전용 확장 항목(추가 구현)
+- 신규 리포트(`dag_quality_latest.json`)를 도입해 아래 지표를 추가 평가:
+  - `DSL_VALIDATION_FAILED` 비율
+  - `DSL_REF_NOT_FOUND` 비율
+  - `VERIFY_COUNT_MISMATCH` 비율
+  - `COMPENSATION_FAILED` 비율
+  - `idempotent_success_reuse_rate`
+- DAG 품질 게이트 스크립트(예: `run_dag_quality_gate.sh`)를 추가해 기존 rollout 사이클에 병합한다.
