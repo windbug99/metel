@@ -42,9 +42,12 @@ class Settings(BaseSettings):
     llm_planner_model: str = "gpt-4o-mini"
     llm_planner_fallback_provider: str | None = None
     llm_planner_fallback_model: str | None = None
+    llm_intent_schema_version: str = "v1"
     llm_request_timeout_sec: int = 20
     llm_request_max_retries: int = 1
     llm_autonomous_enabled: bool = False
+    llm_autonomous_traffic_percent: int = 100
+    llm_autonomous_shadow_mode: bool = False
     llm_autonomous_max_turns: int = 6
     llm_autonomous_max_tool_calls: int = 8
     llm_autonomous_timeout_sec: int = 45
@@ -61,6 +64,7 @@ class Settings(BaseSettings):
     llm_autonomous_verifier_require_tool_evidence: bool = True
     llm_autonomous_guardrail_enabled: bool = True
     llm_autonomous_guardrail_tool_error_rate_threshold: float = 0.6
+    llm_autonomous_guardrail_min_tool_samples: int = 2
     llm_autonomous_guardrail_replan_ratio_threshold: float = 0.5
     llm_autonomous_guardrail_cross_service_block_threshold: int = 1
     llm_hybrid_executor_first: bool = False

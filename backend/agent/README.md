@@ -48,3 +48,40 @@ Human-readable API guides are references for planning, not direct execution cont
 - Autonomous traffic seeding (connected-service auto-filter):
   - `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/seed_autonomous_traffic.py --webhook-url https://<backend>/api/telegram/webhook --chat-id <chat_id> --target-count 30 --sleep-sec 8`
   - dry-run: `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/seed_autonomous_traffic.py --webhook-url https://<backend>/api/telegram/webhook --chat-id <chat_id> --target-count 30 --dry-run`
+
+## Autonomous Rollout Runbook (Railway)
+
+- Required Railway env keys:
+  - `LLM_AUTONOMOUS_ENABLED`
+  - `LLM_AUTONOMOUS_TRAFFIC_PERCENT`
+  - `LLM_AUTONOMOUS_SHADOW_MODE`
+  - `LLM_HYBRID_EXECUTOR_FIRST`
+- Recommended start (shadow-only):
+  - `LLM_AUTONOMOUS_ENABLED=true`
+  - `LLM_AUTONOMOUS_TRAFFIC_PERCENT=0`
+  - `LLM_AUTONOMOUS_SHADOW_MODE=true`
+  - `LLM_HYBRID_EXECUTOR_FIRST=true`
+- Canary promote target:
+  - `10% -> 30% -> 100%`
+  - `TRAFFIC_PERCENT >= 10`부터 `LLM_AUTONOMOUS_SHADOW_MODE=false`
+
+- Decision cycle (dry-run):
+  - `cd backend && . .venv/bin/activate && CURRENT_PERCENT=0 ./scripts/run_autonomous_rollout_cycle.sh`
+  - outputs:
+    - `docs/reports/agent_quality_latest.json`
+    - `docs/reports/autonomous_rollout_decision_latest.json`
+- Decision cycle (apply to env file):
+  - `cd backend && . .venv/bin/activate && CURRENT_PERCENT=0 APPLY_DECISION=true ENV_FILE=.env ./scripts/run_autonomous_rollout_cycle.sh`
+- Apply decision only:
+  - dry-run: `cd backend && . .venv/bin/activate && python scripts/apply_autonomous_rollout_decision.py --from-json ../docs/reports/autonomous_rollout_decision_latest.json --env-file .env`
+  - apply: `cd backend && . .venv/bin/activate && python scripts/apply_autonomous_rollout_decision.py --from-json ../docs/reports/autonomous_rollout_decision_latest.json --env-file .env --apply`
+
+- Kill-switch policy (30-minute moving window):
+  - `fallback_rate > 20%`
+  - `autonomous_success_over_attempt < 75%`
+  - `auth_error` ratio surge (`>= 2x` vs previous window)
+- Emergency rollback values:
+  - `LLM_AUTONOMOUS_ENABLED=false`
+  - `LLM_AUTONOMOUS_TRAFFIC_PERCENT=0`
+  - `LLM_AUTONOMOUS_SHADOW_MODE=true`
+  - `LLM_HYBRID_EXECUTOR_FIRST=true`

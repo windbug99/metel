@@ -1,7 +1,12 @@
+from datetime import datetime, timezone
+
 from scripts.eval_agent_quality import (
     _evaluate_gate,
     _build_markdown_report,
     _build_policy_recommendations,
+    _dedupe_rows_by_request_id,
+    _parse_detail_pairs,
+    _window_start_iso_utc,
     _build_tuning_hints,
     _top_items,
 )
@@ -11,6 +16,47 @@ def test_top_items_sorts_descending():
     items = {"b": 1, "a": 3, "c": 2}
     top = _top_items(items, limit=2)
     assert top == [("a", 3), ("c", 2)]
+
+
+def test_window_start_iso_utc_with_fixed_now():
+    now = datetime(2026, 2, 26, 12, 34, 56, tzinfo=timezone.utc)
+    assert _window_start_iso_utc(3, now=now) == "2026-02-23T12:34:56Z"
+    assert _window_start_iso_utc(0, now=now) == ""
+
+
+def test_parse_detail_pairs_reads_structured_fields():
+    parsed = _parse_detail_pairs(
+        "services=notion;request_id=tg_update:1;intent_json={\"target_scope\":\"notion_only\"};autonomous_json={\"attempted\":true}"
+    )
+    assert parsed["services"] == "notion"
+    assert parsed["request_id"] == "tg_update:1"
+    assert "target_scope" in parsed["intent_json"]
+
+
+def test_dedupe_rows_by_request_id_prefers_success_over_failed():
+    rows = [
+        {
+            "status": "error",
+            "execution_mode": "rule",
+            "autonomous_fallback_reason": "verification_failed",
+            "verification_reason": "x",
+            "error_code": "verification_failed",
+            "detail": "request_id=tg_update:10;autonomous_json={\"attempted\":true,\"fallback\":true}",
+            "created_at": "2026-02-25T10:00:00Z",
+        },
+        {
+            "status": "success",
+            "execution_mode": "autonomous",
+            "autonomous_fallback_reason": "",
+            "verification_reason": "",
+            "error_code": "",
+            "detail": "request_id=tg_update:10;autonomous_json={\"attempted\":true,\"success\":true}",
+            "created_at": "2026-02-25T10:00:01Z",
+        },
+    ]
+    deduped = _dedupe_rows_by_request_id(rows)
+    assert len(deduped) == 1
+    assert deduped[0]["status"] == "success"
 
 
 def test_build_tuning_hints_maps_known_reasons():

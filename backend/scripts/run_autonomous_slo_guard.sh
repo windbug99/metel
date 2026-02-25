@@ -6,6 +6,7 @@ REPORT_DIR="${ROOT_DIR}/../docs/reports"
 mkdir -p "${REPORT_DIR}"
 
 LIMIT="${LIMIT:-30}"
+DAYS="${DAYS:-0}"
 MIN_SAMPLE="${MIN_SAMPLE:-20}"
 TARGET_AUTONOMOUS_SUCCESS="${TARGET_AUTONOMOUS_SUCCESS:-0.80}"
 MAX_FALLBACK_RATE="${MAX_FALLBACK_RATE:-0.10}"   # stricter than default gate
@@ -16,7 +17,7 @@ MIN_AUTONOMOUS_ATTEMPT_RATE="${MIN_AUTONOMOUS_ATTEMPT_RATE:-0.50}"
 MIN_AUTONOMOUS_SUCCESS_OVER_ATTEMPT_RATE="${MIN_AUTONOMOUS_SUCCESS_OVER_ATTEMPT_RATE:-0.70}"
 
 echo "[slo-guard] running autonomous SLO guard"
-echo "[slo-guard] limit=${LIMIT} min_sample=${MIN_SAMPLE} max_fallback_rate=${MAX_FALLBACK_RATE}"
+echo "[slo-guard] limit=${LIMIT} days=${DAYS} min_sample=${MIN_SAMPLE} max_fallback_rate=${MAX_FALLBACK_RATE}"
 
 cd "${ROOT_DIR}"
 if [[ -f ".venv/bin/activate" ]]; then
@@ -29,6 +30,7 @@ PYTHONPATH=. python scripts/check_supabase_connectivity.py --timeout-sec 5
 
 python scripts/eval_agent_quality.py \
   --limit "${LIMIT}" \
+  --days "${DAYS}" \
   --min-sample "${MIN_SAMPLE}" \
   --target-autonomous-success "${TARGET_AUTONOMOUS_SUCCESS}" \
   --max-fallback-rate "${MAX_FALLBACK_RATE}" \

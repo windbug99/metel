@@ -49,6 +49,13 @@ def test_evaluate_when_supports_in_operator():
     assert evaluate_when('$n1.state == "done"', artifacts=artifacts) is False
 
 
+def test_evaluate_when_supports_right_hand_ref():
+    artifacts = {"n1": {"count": 2}, "n2": {"count": 2}}
+    assert evaluate_when("$n1.count == $n2.count", artifacts=artifacts) is True
+    artifacts["n2"]["count"] = 3
+    assert evaluate_when("$n1.count == $n2.count", artifacts=artifacts) is False
+
+
 def test_execute_pipeline_dag_skill_chain():
     calls: list[tuple[str, dict]] = []
 
@@ -171,6 +178,78 @@ def test_execute_pipeline_dag_for_each_with_verify():
     assert result["status"] == "succeeded"
     assert result["artifacts"]["n2"]["item_count"] == 2
     assert len(result["artifacts"]["n2"]["item_results"]) == 2
+
+
+def test_execute_pipeline_dag_aggregate_calendar_todo():
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_skill(user_id: str, skill_name: str, payload: dict) -> dict:
+        _ = user_id
+        calls.append((skill_name, payload))
+        if skill_name == "google_calendar.list_today":
+            return {
+                "ok": True,
+                "data": {
+                    "events": [
+                        {"id": "evt-1", "title": "Daily Standup", "description": "팀 상태 공유"},
+                        {"id": "evt-2", "title": "Sprint Planning", "description": "스프린트 계획"},
+                    ],
+                    "event_count": 2,
+                },
+            }
+        if skill_name == "notion.page_create":
+            assert "todo_items" in payload
+            assert payload["todo_items"] == ["Daily Standup", "Sprint Planning"]
+            return {"ok": True, "data": {"id": "page-1", "url": "https://notion.so/page-1"}}
+        raise AssertionError(f"unexpected skill {skill_name}")
+
+    async def _fake_transform(user_id: str, payload: dict, output_schema: dict) -> dict:
+        _ = (user_id, payload, output_schema)
+        return {}
+
+    pipeline = _base_pipeline()
+    pipeline["nodes"] = [
+        {"id": "n1", "type": "skill", "name": "google_calendar.list_today", "depends_on": [], "input": {}, "timeout_sec": 20},
+        {
+            "id": "n2",
+            "type": "aggregate",
+            "name": "aggregate_calendar_events_to_todo",
+            "depends_on": ["n1"],
+            "input": {"mode": "calendar_todo"},
+            "source_ref": "$n1.events",
+            "timeout_sec": 20,
+        },
+        {
+            "id": "n3",
+            "type": "skill",
+            "name": "notion.page_create",
+            "depends_on": ["n2"],
+            "input": {"title": "$n2.page_title", "todo_items": "$n2.todo_items"},
+            "timeout_sec": 20,
+        },
+        {
+            "id": "n4",
+            "type": "verify",
+            "name": "count_verify",
+            "depends_on": ["n2", "n3"],
+            "input": {},
+            "rules": ["$n2.todo_count == $n1.event_count"],
+            "timeout_sec": 20,
+        },
+    ]
+
+    result = asyncio.run(
+        execute_pipeline_dag(
+            user_id="u1",
+            pipeline=pipeline,
+            ctx={"user_timezone": "Asia/Seoul"},
+            execute_skill=_fake_skill,
+            execute_llm_transform=_fake_transform,
+        )
+    )
+    assert result["status"] == "succeeded"
+    assert result["artifacts"]["n2"]["todo_count"] == 2
+    assert calls[1][0] == "notion.page_create"
 
 
 def test_execute_pipeline_dag_retries_llm_transform_autofill_failure():

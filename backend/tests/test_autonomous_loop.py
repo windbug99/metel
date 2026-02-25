@@ -534,6 +534,129 @@ def test_autonomous_blocks_duplicate_validation_error_call(monkeypatch):
     assert any(step.detail == "duplicate_validation_error_call_blocked" for step in result.steps)
 
 
+def test_autonomous_returns_clarification_required_on_repeated_required_slot(monkeypatch):
+    def _settings_validation():
+        return SimpleNamespace(
+            llm_autonomous_enabled=True,
+            llm_autonomous_max_turns=5,
+            llm_autonomous_max_tool_calls=5,
+            llm_autonomous_timeout_sec=30,
+            llm_autonomous_replan_limit=1,
+            llm_autonomous_strict_tool_scope=False,
+        )
+
+    sequence = iter(
+        [
+            (
+                {
+                    "action": "tool_call",
+                    "tool_name": "notion_search",
+                    "tool_input": {},
+                },
+                None,
+            ),
+            (
+                {
+                    "action": "tool_call",
+                    "tool_name": "notion_search",
+                    "tool_input": {},
+                },
+                None,
+            ),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        raise HTTPException(status_code=400, detail=f"{tool_name}:VALIDATION_REQUIRED:query")
+
+    from fastapi import HTTPException
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings_validation)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+
+    result = asyncio.run(run_autonomous_loop("user-1", _plan("노션에서 최근 페이지 조회해줘")))
+
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "clarification_required"
+    assert result.artifacts.get("slot_action") == "notion_search"
+    assert result.artifacts.get("missing_slot") == "query"
+
+
+def test_autonomous_verifier_blocks_scope_violation(monkeypatch):
+    sequence = iter(
+        [
+            ({"action": "tool_call", "tool_name": "notion_create_page", "tool_input": {"title": "회의 노트"}}, None),
+            ({"action": "final", "final_response": "완료"}, None),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        return {"ok": True, "data": {"id": "page-1", "title": payload.get("title", "")}}
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="오늘 일정 중 회의만 리니어 이슈 생성",
+        requirements=[AgentRequirement(summary="생성")],
+        target_services=["notion"],
+        selected_tools=["notion_create_page"],
+        workflow_steps=[],
+        notes=["target_scope=linear_only"],
+    )
+    result = asyncio.run(run_autonomous_loop("user-1", plan))
+
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "verification_failed"
+    assert result.artifacts.get("verifier_failed_rule") == "target_scope_linear_only_violation"
+    assert result.artifacts.get("verifier_remediation_type") == "scope_violation"
+
+
+def test_autonomous_verifier_blocks_include_keyword_violation(monkeypatch):
+    sequence = iter(
+        [
+            ({"action": "tool_call", "tool_name": "notion_create_page", "tool_input": {"title": "점심 정리"}}, None),
+            ({"action": "final", "final_response": "완료"}, None),
+        ]
+    )
+
+    async def _fake_choose(**kwargs):
+        return next(sequence)
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        return {"ok": True, "data": {"id": "page-1", "title": payload.get("title", "")}}
+
+    monkeypatch.setattr("agent.autonomous.get_settings", _settings)
+    monkeypatch.setattr("agent.autonomous.load_registry", _registry)
+    monkeypatch.setattr("agent.autonomous._choose_next_action", _fake_choose)
+    monkeypatch.setattr("agent.autonomous.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="오늘 일정 중 회의만 노션 페이지 생성",
+        requirements=[AgentRequirement(summary="생성")],
+        target_services=["notion"],
+        selected_tools=["notion_create_page"],
+        workflow_steps=[],
+        notes=["target_scope=notion_only", "event_filter_include=회의"],
+    )
+    result = asyncio.run(run_autonomous_loop("user-1", plan))
+
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "verification_failed"
+    assert str(result.artifacts.get("verifier_failed_rule", "")).startswith("include_keyword_not_satisfied:")
+    assert result.artifacts.get("verifier_remediation_type") == "filter_include_missing"
+
+
 def test_autonomous_llm_verifier_rejects_final_response(monkeypatch):
     def _settings_with_verifier():
         return SimpleNamespace(

@@ -15,6 +15,11 @@ from app.core.config import get_settings
 
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 GEMINI_GENERATE_CONTENT_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+TARGET_SCOPE_TO_SERVICES = {
+    "linear_only": {"linear"},
+    "notion_only": {"notion"},
+    "notion_and_linear": {"notion", "linear"},
+}
 
 
 def _is_gemini_provider(provider: str) -> bool:
@@ -82,6 +87,30 @@ def _normalize_tasks(value: object) -> list[AgentTask]:
     return tasks
 
 
+def _tool_service_name(tool_name: str) -> str | None:
+    token = str(tool_name or "").strip().lower()
+    if "_" not in token:
+        return None
+    return token.split("_", 1)[0] or None
+
+
+def _normalize_target_scope(raw: object) -> str | None:
+    value = str(raw or "").strip().lower()
+    if value in TARGET_SCOPE_TO_SERVICES:
+        return value
+    return None
+
+
+def _normalize_keyword_filter(raw: object) -> tuple[list[str], list[str]]:
+    if not isinstance(raw, dict):
+        return [], []
+    include_raw = raw.get("keyword_include") or []
+    exclude_raw = raw.get("keyword_exclude") or []
+    include = [str(item).strip() for item in include_raw if str(item).strip()] if isinstance(include_raw, list) else []
+    exclude = [str(item).strip() for item in exclude_raw if str(item).strip()] if isinstance(exclude_raw, list) else []
+    return include, exclude
+
+
 def _validate_task_contract(
     *,
     tasks: list[AgentTask],
@@ -146,14 +175,29 @@ def _to_agent_plan(
     available_tool_names = {tool.tool_name for tool in available_tools}
     available_services = {tool.service for tool in available_tools}
 
+    target_scope = _normalize_target_scope(payload.get("target_scope"))
+    scoped_allowed = set(TARGET_SCOPE_TO_SERVICES.get(target_scope, set()))
+
     target_services = [svc.lower().strip() for svc in _normalize_list(payload.get("target_services"))]
     target_services = [svc for svc in target_services if svc in connected_set and svc in available_services]
+    if scoped_allowed:
+        target_services = [svc for svc in target_services if svc in scoped_allowed]
     if not target_services:
-        # If LLM misses service selection, fallback to rule resolver result.
-        return build_agent_plan(user_text=user_text, connected_services=connected_services)
+        if scoped_allowed:
+            scoped_candidates = [
+                svc for svc in sorted(scoped_allowed) if svc in connected_set and svc in available_services
+            ]
+            if scoped_candidates:
+                target_services = scoped_candidates
+        if not target_services:
+            # If LLM misses service selection, fallback to rule resolver result.
+            return build_agent_plan(user_text=user_text, connected_services=connected_services)
 
     selected_tools = _normalize_list(payload.get("selected_tools"))
     selected_tools = [tool for tool in selected_tools if tool in available_tool_names]
+    if target_services:
+        target_set = {svc.lower().strip() for svc in target_services}
+        selected_tools = [tool for tool in selected_tools if (_tool_service_name(tool) or "") in target_set]
     if not selected_tools:
         selected_tools = [tool.tool_name for tool in available_tools if tool.service in target_services][:5]
 
@@ -165,6 +209,13 @@ def _to_agent_plan(
     workflow_steps = _normalize_list(payload.get("workflow_steps")) or _default_workflow_steps(selected_tools)
     notes = _normalize_list(payload.get("notes"))
     notes.append("planner=llm")
+    if target_scope:
+        notes.append(f"target_scope={target_scope}")
+    include_keywords, exclude_keywords = _normalize_keyword_filter(payload.get("event_filter"))
+    if include_keywords:
+        notes.append(f"event_filter_include={','.join(include_keywords)}")
+    if exclude_keywords:
+        notes.append(f"event_filter_exclude={','.join(exclude_keywords)}")
     tasks = _normalize_tasks(payload.get("tasks"))
     synthesized_tasks = build_execution_tasks(
         user_text=user_text,

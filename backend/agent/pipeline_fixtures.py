@@ -98,3 +98,61 @@ def build_google_calendar_to_notion_linear_pipeline(*, user_text: str) -> dict:
             },
         ],
     }
+
+
+def build_google_calendar_to_notion_todo_pipeline(*, user_text: str) -> dict:
+    _ = user_text
+    return {
+        "pipeline_id": "google_calendar_to_notion_todo_v1",
+        "version": "1.0",
+        "limits": {
+            "max_nodes": 5,
+            "max_fanout": 50,
+            "max_tool_calls": 120,
+            "pipeline_timeout_sec": 240,
+        },
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "skill",
+                "name": "google.list_today",
+                "depends_on": [],
+                "input": {"calendar_id": "primary", "max_results": 50},
+                "when": "$ctx.enabled == true",
+                "retry": {"max_attempts": 2, "backoff_ms": 500},
+                "timeout_sec": 45,
+            },
+            {
+                "id": "n2",
+                "type": "aggregate",
+                "name": "aggregate_calendar_events_to_todo",
+                "depends_on": ["n1"],
+                "input": {"mode": "calendar_todo", "page_title_suffix": " 일정 할일 목록"},
+                "source_ref": "$n1.events",
+                "timeout_sec": 60,
+            },
+            {
+                "id": "n3",
+                "type": "skill",
+                "name": "notion.page_create",
+                "depends_on": ["n2"],
+                "input": {
+                    "title": "$n2.page_title",
+                    "body": "$n2.body",
+                    "todo_items": "$n2.todo_items",
+                    "todo_intro": "Google Calendar 오늘 일정 기반 체크리스트",
+                },
+                "retry": {"max_attempts": 2, "backoff_ms": 500},
+                "timeout_sec": 45,
+            },
+            {
+                "id": "n4",
+                "type": "verify",
+                "name": "verify_counts",
+                "depends_on": ["n2", "n3"],
+                "input": {},
+                "rules": ["$n2.todo_count == $n1.event_count"],
+                "timeout_sec": 30,
+            },
+        ],
+    }

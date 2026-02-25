@@ -219,9 +219,117 @@ def _verify_completion(plan: AgentPlan, history: list[dict[str, Any]], final_res
         return False, "mutation_requires_mutation_tool"
     if _plan_needs_new_artifact(plan) and not _has_new_artifact_reference(history):
         return False, "creation_requires_artifact_reference"
+    intent_constraints = _extract_intent_constraints(plan)
+    target_scope = str(intent_constraints.get("target_scope") or "").strip().lower()
+    include_keywords = [str(item).strip() for item in (intent_constraints.get("keyword_include") or []) if str(item).strip()]
+    exclude_keywords = [str(item).strip() for item in (intent_constraints.get("keyword_exclude") or []) if str(item).strip()]
+
+    if target_scope == "linear_only" and _has_cross_scope_mutation(history, blocked_service="notion"):
+        return False, "target_scope_linear_only_violation"
+    if target_scope == "notion_only" and _has_cross_scope_mutation(history, blocked_service="linear"):
+        return False, "target_scope_notion_only_violation"
+
+    mutation_evidence = _mutation_text_evidence(history)
+    if include_keywords and mutation_evidence:
+        joined = " ".join(mutation_evidence).lower()
+        for keyword in include_keywords:
+            if keyword.lower() not in joined:
+                return False, f"include_keyword_not_satisfied:{keyword}"
+    if exclude_keywords and mutation_evidence:
+        joined = " ".join(mutation_evidence).lower()
+        for keyword in exclude_keywords:
+            if keyword.lower() in joined:
+                return False, f"exclude_keyword_violated:{keyword}"
     if not final_response.strip():
         return False, "empty_final_response"
     return True, "ok"
+
+
+def _extract_intent_constraints(plan: AgentPlan) -> dict[str, Any]:
+    constraints: dict[str, Any] = {
+        "target_scope": "",
+        "keyword_include": [],
+        "keyword_exclude": [],
+    }
+    for note in list(plan.notes or []):
+        text = str(note or "").strip()
+        if text.startswith("target_scope="):
+            constraints["target_scope"] = text.split("=", 1)[1].strip().lower()
+        elif text.startswith("event_filter_include="):
+            raw = text.split("=", 1)[1].strip()
+            constraints["keyword_include"] = [item.strip() for item in raw.split(",") if item.strip()]
+        elif text.startswith("event_filter_exclude="):
+            raw = text.split("=", 1)[1].strip()
+            constraints["keyword_exclude"] = [item.strip() for item in raw.split(",") if item.strip()]
+
+    user_text = str(plan.user_text or "")
+    lower = user_text.lower()
+    if not constraints["keyword_include"] and ("회의만" in user_text or "meetings only" in lower or "only meetings" in lower):
+        constraints["keyword_include"] = ["회의"]
+    if not constraints["keyword_exclude"] and ("회의 제외" in user_text or "exclude meetings" in lower):
+        constraints["keyword_exclude"] = ["회의"]
+    return constraints
+
+
+def _is_mutation_tool_name_with_prefix(tool_name: str) -> bool:
+    lower = str(tool_name or "").strip().lower()
+    if not lower:
+        return False
+    return any(token in lower for token in ("create", "append", "update", "delete", "archive"))
+
+
+def _has_cross_scope_mutation(history: list[dict[str, Any]], *, blocked_service: str) -> bool:
+    blocked = str(blocked_service or "").strip().lower()
+    for item in history:
+        if item.get("action") != "tool_call" or item.get("status") != "success":
+            continue
+        tool_name = str(item.get("tool_name") or "").strip().lower()
+        if not tool_name.startswith(f"{blocked}_"):
+            continue
+        if _is_mutation_tool_name_with_prefix(tool_name):
+            return True
+    return False
+
+
+def _mutation_text_evidence(history: list[dict[str, Any]]) -> list[str]:
+    evidence: list[str] = []
+    for item in history:
+        if item.get("action") != "tool_call" or item.get("status") != "success":
+            continue
+        tool_name = str(item.get("tool_name") or "").strip()
+        if not _is_mutation_tool_name_with_prefix(tool_name):
+            continue
+        tool_input = item.get("tool_input")
+        if isinstance(tool_input, dict):
+            for key in ("title", "name", "query", "description", "content"):
+                value = tool_input.get(key)
+                if isinstance(value, str) and value.strip():
+                    evidence.append(value.strip())
+        result = item.get("tool_result")
+        if isinstance(result, dict):
+            for key in ("title", "name", "summary"):
+                value = result.get(key)
+                if isinstance(value, str) and value.strip():
+                    evidence.append(value.strip())
+    return evidence
+
+
+def _verification_remediation(reason: str) -> tuple[str, str]:
+    normalized = str(reason or "").strip()
+    if normalized.startswith("target_scope_"):
+        return "scope_violation", "요청 범위를 벗어난 서비스 쓰기 작업을 제거하고 대상 서비스만 실행하세요."
+    if normalized.startswith("include_keyword_not_satisfied:"):
+        keyword = normalized.split(":", 1)[1].strip()
+        return "filter_include_missing", f"생성 대상을 `{keyword}` 조건으로 재필터링한 뒤 다시 실행하세요."
+    if normalized.startswith("exclude_keyword_violated:"):
+        keyword = normalized.split(":", 1)[1].strip()
+        return "filter_exclude_violated", f"`{keyword}` 키워드가 포함된 대상을 제외하고 다시 실행하세요."
+    mapping = {
+        "append_requires_append_block_children": ("missing_required_tool_call", "append_block_children 호출을 포함해 다시 실행하세요."),
+        "lookup_requires_tool_call": ("missing_required_tool_call", "조회 도구(search/retrieve) 호출을 최소 1회 수행하세요."),
+        "creation_requires_artifact_reference": ("insufficient_evidence", "생성 결과의 id/url을 확보한 뒤 최종 응답에 포함하세요."),
+    }
+    return mapping.get(normalized, ("retry_with_constraints", "검증 실패 사유를 반영해 누락된 단계부터 재실행하세요."))
 
 
 def _has_successful_tool(history: list[dict[str, Any]], *tokens: str) -> bool:
@@ -302,6 +410,46 @@ def _has_same_failed_validation_call(
         if prev == needle:
             return True
     return False
+
+
+def _extract_missing_slot_from_validation_error(error_detail: str) -> str | None:
+    detail = str(error_detail or "").strip()
+    matched = re.search(r"VALIDATION_REQUIRED:([a-zA-Z0-9_]+)", detail)
+    if not matched:
+        return None
+    slot = str(matched.group(1) or "").strip()
+    return slot or None
+
+
+def _find_repeated_validation_missing_slot(
+    history: list[dict[str, Any]],
+    *,
+    tool_name: str,
+    tool_input: dict[str, Any],
+) -> str | None:
+    try:
+        needle = json.dumps(tool_input, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        needle = str(tool_input)
+
+    for item in reversed(history):
+        if item.get("action") != "tool_call" or item.get("status") != "error":
+            continue
+        if item.get("tool_name") != tool_name:
+            continue
+        err = str(item.get("error", "") or "")
+        if "VALIDATION_REQUIRED:" not in err:
+            continue
+        try:
+            prev = json.dumps(item.get("tool_input", {}), ensure_ascii=False, sort_keys=True)
+        except TypeError:
+            prev = str(item.get("tool_input", {}))
+        if prev != needle:
+            continue
+        slot = _extract_missing_slot_from_validation_error(err)
+        if slot:
+            return slot
+    return None
 
 
 def _plan_needs_move(plan: AgentPlan) -> bool:
@@ -763,6 +911,9 @@ async def run_autonomous_loop(
                     artifacts={
                         "error_code": "verification_failed",
                         "verification_reason": verify_reason,
+                        "verifier_failed_rule": verify_reason,
+                        "verifier_remediation_type": _verification_remediation(verify_reason)[0],
+                        "verifier_remediation_hint": _verification_remediation(verify_reason)[1],
                         "autonomous": "true",
                         "llm_provider": llm_provider or "",
                         "llm_model": llm_model or "",
@@ -789,6 +940,9 @@ async def run_autonomous_loop(
                     artifacts={
                         "error_code": "verification_failed",
                         "verification_reason": verify_reason,
+                        "verifier_failed_rule": verify_reason,
+                        "verifier_remediation_type": _verification_remediation(verify_reason)[0],
+                        "verifier_remediation_hint": _verification_remediation(verify_reason)[1],
                         "autonomous": "true",
                         "llm_provider": llm_provider or "",
                         "llm_model": llm_model or "",
@@ -879,6 +1033,39 @@ async def run_autonomous_loop(
         tool_input = _normalize_tool_input_for_today_query(plan, tool_name, tool_input)
 
         if _has_same_failed_validation_call(history, tool_name=tool_name, tool_input=tool_input):
+            repeated_missing_slot = _find_repeated_validation_missing_slot(
+                history,
+                tool_name=tool_name,
+                tool_input=tool_input,
+            )
+            if repeated_missing_slot:
+                steps.append(
+                    AgentExecutionStep(
+                        name=f"turn_{turn}_tool:{tool_name}",
+                        status="error",
+                        detail=f"clarification_required:{repeated_missing_slot}",
+                    )
+                )
+                return AgentExecutionResult(
+                    success=False,
+                    summary="추가 입력이 필요합니다.",
+                    user_message=(
+                        f"`{repeated_missing_slot}` 값이 필요합니다.\n"
+                        f"예: {repeated_missing_slot}: \"값\""
+                    ),
+                    artifacts={
+                        "error_code": "clarification_required",
+                        "slot_action": tool_name,
+                        "slot_task_id": tool_name,
+                        "missing_slot": repeated_missing_slot,
+                        "missing_slots": repeated_missing_slot,
+                        "slot_payload_json": json.dumps(tool_input, ensure_ascii=False),
+                        "autonomous": "true",
+                        "llm_provider": llm_provider or "",
+                        "llm_model": llm_model or "",
+                    },
+                    steps=steps,
+                )
             steps.append(
                 AgentExecutionStep(
                     name=f"turn_{turn}_tool:{tool_name}",

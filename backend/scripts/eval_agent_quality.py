@@ -4,6 +4,7 @@ import argparse
 import json
 import pathlib
 import sys
+from datetime import datetime, timedelta, timezone
 
 from supabase import create_client
 
@@ -39,8 +40,83 @@ def _pct(numerator: int, denominator: int) -> float:
     return numerator / denominator
 
 
+def _window_start_iso_utc(days: int, now: datetime | None = None) -> str:
+    if int(days) <= 0:
+        return ""
+    base = now.astimezone(timezone.utc) if now is not None else datetime.now(timezone.utc)
+    since = base - timedelta(days=int(days))
+    return since.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _top_items(items: dict[str, int], limit: int = 5) -> list[tuple[str, int]]:
     return sorted(items.items(), key=lambda item: item[1], reverse=True)[:limit]
+
+
+def _parse_detail_pairs(detail: str | None) -> dict[str, str]:
+    raw = str(detail or "").strip()
+    if not raw:
+        return {}
+    out: dict[str, str] = {}
+    for token in raw.split(";"):
+        token = token.strip()
+        if not token or "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        out[key.strip()] = value.strip()
+    return out
+
+
+def _parse_detail_json(detail_pairs: dict[str, str], key: str) -> dict:
+    value = str(detail_pairs.get(key) or "").strip()
+    if not value:
+        return {}
+    try:
+        payload = json.loads(value)
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _status_priority(row: dict) -> int:
+    status = str(row.get("status") or "").strip().lower()
+    fallback_reason = str(row.get("autonomous_fallback_reason") or "").strip()
+    autonomous_meta = row.get("_autonomous_json")
+    fallback = bool(fallback_reason)
+    if isinstance(autonomous_meta, dict):
+        fallback = fallback or bool(autonomous_meta.get("fallback"))
+    if status == "success":
+        return 3
+    if fallback:
+        return 2
+    return 1
+
+
+def _dedupe_rows_by_request_id(rows: list[dict]) -> list[dict]:
+    buckets: dict[str, dict] = {}
+    for idx, row in enumerate(rows):
+        detail_pairs = _parse_detail_pairs(row.get("detail"))
+        row["_detail_pairs"] = detail_pairs
+        row["_intent_json"] = _parse_detail_json(detail_pairs, "intent_json")
+        row["_autonomous_json"] = _parse_detail_json(detail_pairs, "autonomous_json")
+        row["_verifier_json"] = _parse_detail_json(detail_pairs, "verifier_json")
+        request_id = str(detail_pairs.get("request_id") or "").strip()
+        if not request_id:
+            request_id = f"fallback_row_{idx}"
+        previous = buckets.get(request_id)
+        if previous is None:
+            buckets[request_id] = row
+            continue
+        if _status_priority(row) > _status_priority(previous):
+            buckets[request_id] = row
+            continue
+        if _status_priority(row) == _status_priority(previous):
+            prev_created = str(previous.get("created_at") or "")
+            cur_created = str(row.get("created_at") or "")
+            if cur_created > prev_created:
+                buckets[request_id] = row
+    return list(buckets.values())
 
 
 def _build_tuning_hints(
@@ -372,6 +448,12 @@ def main() -> int:
         action="store_true",
         help="Fail gate when sample size is below min-sample",
     )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=0,
+        help="Optional UTC day window filter (created_at >= now-days). 0 disables the filter.",
+    )
     parser.add_argument("--output", type=str, default="", help="Optional markdown output path")
     parser.add_argument("--output-json", type=str, default="", help="Optional JSON output path")
     args = parser.parse_args()
@@ -379,17 +461,22 @@ def main() -> int:
     settings = get_settings()
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
 
+    day_window = max(0, int(args.days or 0))
+    window_start_utc = _window_start_iso_utc(day_window) if day_window > 0 else ""
+
     try:
-        result = (
+        query = (
             supabase.table("command_logs")
             .select(
-                "status, execution_mode, plan_source, autonomous_fallback_reason, verification_reason, error_code, created_at"
+                "status, execution_mode, plan_source, autonomous_fallback_reason, verification_reason, error_code, detail, created_at"
             )
             .eq("command", "agent_plan")
             .order("created_at", desc=True)
             .limit(max(1, args.limit))
-            .execute()
         )
+        if window_start_utc:
+            query = query.gte("created_at", window_start_utc)
+        result = query.execute()
     except Exception as exc:
         _print_data_source_error(settings, exc)
         if args.output_json:
@@ -398,6 +485,8 @@ def main() -> int:
                     {
                         "sample_size": 0,
                         "min_sample": int(args.min_sample),
+                        "window_days": day_window,
+                        "window_start_utc": window_start_utc or None,
                         "verdict": "FAIL",
                         "gate_reasons": [f"data_source_error:{type(exc).__name__}"],
                     },
@@ -406,14 +495,24 @@ def main() -> int:
                     indent=2,
                 )
         return 1
-    rows = result.data or []
+    rows = _dedupe_rows_by_request_id(list(result.data or []))
     total = len(rows)
     autonomous_rows = [row for row in rows if row.get("execution_mode") == "autonomous"]
     autonomous_count = len(autonomous_rows)
     autonomous_success = len([row for row in autonomous_rows if row.get("status") == "success"])
-    fallback_count = len([row for row in rows if row.get("autonomous_fallback_reason")])
+    fallback_count = 0
+    for row in rows:
+        fallback_reason = str(row.get("autonomous_fallback_reason") or "").strip()
+        autonomous_meta = row.get("_autonomous_json")
+        fallback_by_meta = isinstance(autonomous_meta, dict) and bool(autonomous_meta.get("fallback"))
+        if fallback_reason or fallback_by_meta:
+            fallback_count += 1
     autonomous_attempt_rows = [
-        row for row in rows if row.get("execution_mode") == "autonomous" or (row.get("autonomous_fallback_reason") or "").strip()
+        row
+        for row in rows
+        if row.get("execution_mode") == "autonomous"
+        or (row.get("autonomous_fallback_reason") or "").strip()
+        or (isinstance(row.get("_autonomous_json"), dict) and bool(row.get("_autonomous_json", {}).get("attempted")))
     ]
     autonomous_attempt_count = len(autonomous_attempt_rows)
 
@@ -432,15 +531,23 @@ def main() -> int:
     guardrail_degrade_reason_count: dict[str, int] = {}
     plan_source_count: dict[str, int] = {}
     execution_mode_count: dict[str, int] = {}
+    slot_missing_count: dict[str, int] = {}
+    verifier_failed_rule_count: dict[str, int] = {}
     for row in rows:
         fallback_reason = (row.get("autonomous_fallback_reason") or "").strip()
         if fallback_reason:
             fallback_reason_count[fallback_reason] = fallback_reason_count.get(fallback_reason, 0) + 1
             if fallback_reason in {"cross_service_blocks", "tool_error_rate", "replan_ratio"}:
                 guardrail_degrade_reason_count[fallback_reason] = guardrail_degrade_reason_count.get(fallback_reason, 0) + 1
-        verification_reason = (row.get("verification_reason") or "").strip()
+        verifier_meta = row.get("_verifier_json")
+        verifier_failed_rule = ""
+        if isinstance(verifier_meta, dict):
+            verifier_failed_rule = str(verifier_meta.get("failed_rule") or "").strip()
+        verification_reason = verifier_failed_rule or (row.get("verification_reason") or "").strip()
         if verification_reason:
             verification_reason_count[verification_reason] = verification_reason_count.get(verification_reason, 0) + 1
+        if verifier_failed_rule:
+            verifier_failed_rule_count[verifier_failed_rule] = verifier_failed_rule_count.get(verifier_failed_rule, 0) + 1
         error_code = (row.get("error_code") or "").strip()
         if error_code:
             error_code_count[error_code] = error_code_count.get(error_code, 0) + 1
@@ -448,6 +555,11 @@ def main() -> int:
         plan_source_count[plan_source] = plan_source_count.get(plan_source, 0) + 1
         execution_mode = (row.get("execution_mode") or "").strip() or "unknown"
         execution_mode_count[execution_mode] = execution_mode_count.get(execution_mode, 0) + 1
+        intent_meta = row.get("_intent_json")
+        if isinstance(intent_meta, dict):
+            missing_slot = str(intent_meta.get("missing_slot") or "").strip()
+            if missing_slot:
+                slot_missing_count[missing_slot] = slot_missing_count.get(missing_slot, 0) + 1
 
     top_fallback = _top_items(fallback_reason_count)
     top_verification = _top_items(verification_reason_count)
@@ -455,6 +567,8 @@ def main() -> int:
     top_guardrail_degrade = _top_items(guardrail_degrade_reason_count)
     top_plan_source = _top_items(plan_source_count)
     top_execution_mode = _top_items(execution_mode_count)
+    top_slot_missing = _top_items(slot_missing_count)
+    top_verifier_failed_rule = _top_items(verifier_failed_rule_count)
     tuning_hints = _build_tuning_hints(
         top_fallback=top_fallback,
         top_verification=top_verification,
@@ -467,6 +581,8 @@ def main() -> int:
     )
 
     print("[Agent Quality Evaluation]")
+    if window_start_utc:
+        print(f"- window: last {day_window} day(s) (UTC, since {window_start_utc})")
     print(f"- sample size: {total} (min required: {args.min_sample})")
     print(
         f"- autonomous success rate: {autonomous_success_rate * 100:.1f}% "
@@ -512,6 +628,14 @@ def main() -> int:
         print("- top guardrail degrade reasons:")
         for reason, count in top_guardrail_degrade:
             print(f"  - {reason}: {count}")
+    if top_verifier_failed_rule:
+        print("- top verifier failed rules:")
+        for reason, count in top_verifier_failed_rule:
+            print(f"  - {reason}: {count}")
+    if top_slot_missing:
+        print("- top missing slots:")
+        for slot, count in top_slot_missing:
+            print(f"  - {slot}: {count}")
     if tuning_hints:
         print("- tuning hints:")
         for hint in tuning_hints:
@@ -590,6 +714,8 @@ def main() -> int:
                     {
                         "sample_size": total,
                         "min_sample": args.min_sample,
+                        "window_days": day_window,
+                        "window_start_utc": window_start_utc or None,
                         "autonomous_success": autonomous_success,
                         "autonomous_count": autonomous_count,
                         "autonomous_success_rate": autonomous_success_rate,
@@ -607,7 +733,10 @@ def main() -> int:
                         "top_fallback": top_fallback,
                         "top_verification": top_verification,
                         "top_error_codes": top_error_codes,
+                        "error_code_counts": error_code_count,
                         "top_guardrail_degrade": top_guardrail_degrade,
+                        "top_verifier_failed_rule": top_verifier_failed_rule,
+                        "top_slot_missing": top_slot_missing,
                         "top_plan_source": top_plan_source,
                         "top_execution_mode": top_execution_mode,
                         "tuning_hints": tuning_hints,
@@ -663,6 +792,8 @@ def main() -> int:
                 {
                     "sample_size": total,
                     "min_sample": args.min_sample,
+                    "window_days": day_window,
+                    "window_start_utc": window_start_utc or None,
                     "autonomous_success": autonomous_success,
                     "autonomous_count": autonomous_count,
                     "autonomous_success_rate": autonomous_success_rate,
@@ -680,7 +811,10 @@ def main() -> int:
                     "top_fallback": top_fallback,
                     "top_verification": top_verification,
                     "top_error_codes": top_error_codes,
+                    "error_code_counts": error_code_count,
                     "top_guardrail_degrade": top_guardrail_degrade,
+                    "top_verifier_failed_rule": top_verifier_failed_rule,
+                    "top_slot_missing": top_slot_missing,
                     "top_plan_source": top_plan_source,
                     "top_execution_mode": top_execution_mode,
                     "tuning_hints": tuning_hints,

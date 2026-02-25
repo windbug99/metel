@@ -17,13 +17,16 @@ from agent.intent_keywords import (
 )
 from agent.pending_action import PendingActionStorageError, clear_pending_action, get_pending_action, set_pending_action
 from agent.orchestrator_v2 import try_run_v2_orchestration
-from agent.pipeline_fixtures import build_google_calendar_to_notion_linear_pipeline
+from agent.pipeline_fixtures import (
+    build_google_calendar_to_notion_linear_pipeline,
+    build_google_calendar_to_notion_todo_pipeline,
+)
 from agent.plan_contract import validate_plan_contract
 from agent.planner import build_agent_plan
 from agent.planner_llm import try_build_agent_plan_with_llm
 from agent.registry import load_registry
 from agent.slot_collector import collect_slots_from_user_reply, slot_prompt_example
-from agent.slot_schema import get_action_slot_schema
+from agent.slot_schema import get_action_slot_schema, validate_slots
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRequirement, AgentRunResult, AgentTask
 from app.core.config import get_settings
 
@@ -44,6 +47,10 @@ def _v2_rollout_hit(*, user_id: str, percent: int) -> bool:
     digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
     bucket = int(digest[:8], 16) % 100
     return bucket < bounded
+
+
+def _autonomous_rollout_hit(*, user_id: str, percent: int) -> bool:
+    return _v2_rollout_hit(user_id=user_id, percent=percent)
 
 
 def _should_run_v2(*, settings, user_id: str) -> tuple[bool, str]:
@@ -135,6 +142,23 @@ def _is_calendar_linear_issue_intent(user_text: str, connected_services: list[st
     return has_linear and (not has_notion) and has_issue_create and is_create_intent(text)
 
 
+def _is_calendar_notion_todo_intent(user_text: str, connected_services: list[str]) -> bool:
+    connected = {item.strip().lower() for item in connected_services if item and item.strip()}
+    if not {"google", "notion"}.issubset(connected):
+        return False
+    text = user_text or ""
+    lower = text.lower()
+    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "일정"))
+    if not has_calendar:
+        return False
+    if not _mentions_service(text, "notion"):
+        return False
+    if _mentions_service(text, "linear"):
+        return False
+    has_todo = any(token in text or token in lower for token in ("할일", "할 일", "to-do", "todo", "체크리스트", "목록"))
+    return has_todo and is_create_intent(text)
+
+
 def _build_calendar_pipeline_plan(user_text: str) -> AgentPlan:
     pipeline = build_google_calendar_to_notion_linear_pipeline(user_text=user_text)
     return AgentPlan(
@@ -173,6 +197,31 @@ def _build_calendar_linear_issue_plan(user_text: str) -> AgentPlan:
         ],
         tasks=[],
         notes=["planner=loop", "router_mode=RULE_PIPELINE", "plan_source=calendar_linear_template"],
+    )
+
+
+def _build_calendar_notion_todo_plan(user_text: str) -> AgentPlan:
+    pipeline = build_google_calendar_to_notion_todo_pipeline(user_text=user_text)
+    return AgentPlan(
+        user_text=user_text,
+        requirements=[AgentRequirement(summary="calendar_notion_todo_pipeline")],
+        target_services=["google", "notion"],
+        selected_tools=["google_calendar_list_events", "notion_create_page"],
+        workflow_steps=[
+            "1. Google Calendar 오늘 일정 조회",
+            "2. 일정 제목을 한 페이지 체크리스트로 집계",
+            "3. Notion 페이지 1개 생성",
+            "4. 집계/생성 결과 검증",
+        ],
+        tasks=[
+            AgentTask(
+                id="task_pipeline_dag_calendar_notion_todo",
+                title="calendar->notion(todo) DAG",
+                task_type="PIPELINE_DAG",
+                payload={"pipeline": pipeline, "ctx": {"enabled": True}},
+            )
+        ],
+        notes=["planner=loop", "router_mode=PIPELINE_DAG", "plan_source=dag_template"],
     )
 
 
@@ -321,6 +370,7 @@ def _build_retry_overrides(
     base_tool_calls = int(getattr(settings, "llm_autonomous_max_tool_calls", 8))
     base_timeout = int(getattr(settings, "llm_autonomous_timeout_sec", 45))
     base_replan = int(getattr(settings, "llm_autonomous_replan_limit", 1))
+    normalized_error = str(error_code or "").strip().lower()
 
     is_mutation = _is_mutation_intent(user_text)
     is_multi_target = _is_multi_target_intent(user_text)
@@ -338,13 +388,16 @@ def _build_retry_overrides(
         tool_bonus += 3
         timeout_bonus += 10
 
-    if error_code in {"tool_call_limit", "turn_limit"}:
+    if normalized_error in {"tool_call_limit", "turn_limit"}:
         tool_bonus += 2
-    if error_code in {"timeout"}:
+    if normalized_error in {"timeout", "tool_timeout"}:
         timeout_bonus += 20
-    if error_code in {"replan_limit"}:
-        replan_bonus += 1
-    if error_code == "verification_failed":
+    if normalized_error in {"replan_limit"}:
+        # replan_limit은 같은 경로 재실패 비중이 높아 turn/tool/replan 예산을 추가로 부여.
+        turn_bonus += 1
+        tool_bonus += 1
+        replan_bonus += 2
+    if normalized_error == "verification_failed":
         # Verification 실패는 한 번 더 재검증 기회를 주기 위해 replan/tool 예산을 확대.
         tool_bonus += 2
         replan_bonus += 1
@@ -447,6 +500,37 @@ def _autonomous_successful_tool_calls(autonomous: AgentExecutionResult | None) -
     return count
 
 
+def _is_autonomous_retryable_error(error_code: str) -> bool:
+    code = str(error_code or "").strip()
+    normalized = code.lower()
+    if normalized in {
+        "turn_limit",
+        "tool_call_limit",
+        "replan_limit",
+        "timeout",
+        "verification_failed",
+        "unsupported_action",
+    }:
+        return True
+    if code in {"TOOL_TIMEOUT", "TOOL_CALL_LIMIT", "TURN_LIMIT"}:
+        return True
+    return False
+
+
+def _should_hold_autonomous_for_verifier_failure(
+    autonomous: AgentExecutionResult | None,
+) -> tuple[bool, str]:
+    if autonomous is None:
+        return False, ""
+    error_code = str(autonomous.artifacts.get("error_code", "") or "").strip()
+    if error_code != "verification_failed":
+        return False, ""
+    remediation_type = str(autonomous.artifacts.get("verifier_remediation_type", "") or "").strip()
+    if remediation_type in {"scope_violation", "filter_include_missing", "filter_exclude_violated"}:
+        return True, remediation_type
+    return False, ""
+
+
 def _autonomous_metrics(autonomous: AgentExecutionResult, plan) -> dict[str, float]:
     steps = autonomous.steps or []
     turn_actions = sum(1 for step in steps if "_action" in step.name)
@@ -471,6 +555,7 @@ def _autonomous_metrics(autonomous: AgentExecutionResult, plan) -> dict[str, flo
         "tool_error_rate": tool_error_rate,
         "replan_ratio": replan_ratio,
         "cross_service_blocks": float(cross_service_blocks),
+        "tool_step_count": float(len(tool_steps)),
     }
 
 
@@ -480,10 +565,12 @@ def _autonomous_guardrail_degrade_reason(settings, metrics: dict[str, float]) ->
     tool_error_rate_threshold = float(getattr(settings, "llm_autonomous_guardrail_tool_error_rate_threshold", 0.6))
     replan_ratio_threshold = float(getattr(settings, "llm_autonomous_guardrail_replan_ratio_threshold", 0.5))
     cross_service_threshold = int(getattr(settings, "llm_autonomous_guardrail_cross_service_block_threshold", 1))
+    min_tool_samples = max(1, int(getattr(settings, "llm_autonomous_guardrail_min_tool_samples", 2)))
 
     if int(metrics.get("cross_service_blocks", 0.0)) >= cross_service_threshold:
         return "cross_service_blocks"
-    if float(metrics.get("tool_error_rate", 0.0)) >= tool_error_rate_threshold:
+    tool_samples = int(metrics.get("tool_step_count", 0.0))
+    if tool_samples >= min_tool_samples and float(metrics.get("tool_error_rate", 0.0)) >= tool_error_rate_threshold:
         return "tool_error_rate"
     if float(metrics.get("replan_ratio", 0.0)) >= replan_ratio_threshold:
         return "replan_ratio"
@@ -606,6 +693,60 @@ def _is_slot_loop_enabled(settings, user_id: str) -> bool:
     key = (user_id or "").strip().encode("utf-8")
     bucket = sum(key) % 100 if key else 0
     return bucket < rollout
+
+
+def _precheck_plan_slots_for_policy(plan: AgentPlan) -> tuple[dict[str, str] | None, list[str]]:
+    notes: list[str] = []
+    tasks = list(plan.tasks or [])
+    for task in tasks:
+        if str(task.task_type or "").strip().upper() != "TOOL":
+            continue
+        # Only validate tasks that can run immediately; dependent task inputs can be produced by upstream outputs.
+        if list(task.depends_on or []):
+            continue
+        action = str(task.tool_name or "").strip()
+        if not action:
+            continue
+        schema = get_action_slot_schema(action)
+        if schema is None:
+            continue
+        payload = dict(task.payload or {})
+        normalized, missing_slots, validation_errors = validate_slots(action, payload)
+        task.payload = dict(normalized)
+
+        if validation_errors:
+            return (
+                {
+                    "slot_action": action,
+                    "slot_task_id": str(task.id or action),
+                    "missing_slot": "",
+                    "missing_slots": "",
+                    "slot_payload_json": json.dumps(normalized, ensure_ascii=False),
+                    "validation_error": validation_errors[0],
+                },
+                notes,
+            )
+
+        if not missing_slots:
+            continue
+        auto_fill = set(schema.auto_fill_slots or ())
+        blocking = [slot for slot in missing_slots if slot not in auto_fill]
+        non_blocking = [slot for slot in missing_slots if slot in auto_fill]
+        if non_blocking:
+            notes.append(f"slot_policy_non_blocking_autofill:{action}:{','.join(non_blocking)}")
+        if blocking:
+            return (
+                {
+                    "slot_action": action,
+                    "slot_task_id": str(task.id or action),
+                    "missing_slot": blocking[0],
+                    "missing_slots": ",".join(blocking),
+                    "slot_payload_json": json.dumps(normalized, ensure_ascii=False),
+                    "validation_error": "",
+                },
+                notes,
+            )
+    return None, notes
 
 
 def _looks_like_identifier_value(value: object) -> bool:
@@ -821,7 +962,8 @@ def _apply_slot_loop_from_validation_error(
 ) -> None:
     if not enabled:
         return
-    if execution.success or execution.artifacts.get("error_code") != "validation_error":
+    error_code = str(execution.artifacts.get("error_code") or "").strip()
+    if execution.success or error_code not in {"validation_error", "clarification_required"}:
         return
     action = str(execution.artifacts.get("slot_action", "") or "").strip()
     missing_slot = str(execution.artifacts.get("missing_slot", "") or "").strip()
@@ -1222,6 +1364,23 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             plan_source="calendar_linear_template",
         )
 
+    if _is_calendar_notion_todo_intent(user_text, connected_services):
+        notion_todo_plan = _build_calendar_notion_todo_plan(user_text)
+        execution = await execute_agent_plan(user_id=user_id, plan=notion_todo_plan)
+        finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
+        execution.user_message = finalized_message
+        if finalizer_mode != "disabled":
+            notion_todo_plan.notes.append(f"response_finalizer={finalizer_mode}")
+        notion_todo_plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+        return AgentRunResult(
+            ok=execution.success,
+            stage="execution",
+            plan=notion_todo_plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="dag_template",
+        )
+
     pre_notes: list[str] = []
     v2_enabled = bool(getattr(settings, "skill_router_v2_enabled", False)) and bool(
         getattr(settings, "skill_runner_v2_enabled", False)
@@ -1432,8 +1591,95 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
                 plan_source=plan_source,
             )
 
+    slot_policy_violation, slot_policy_notes = _precheck_plan_slots_for_policy(plan)
+    if slot_policy_notes:
+        plan.notes.extend(slot_policy_notes)
+    if slot_policy_violation:
+        slot_action = str(slot_policy_violation.get("slot_action") or "").strip()
+        slot_task_id = str(slot_policy_violation.get("slot_task_id") or slot_action).strip()
+        missing_slot = str(slot_policy_violation.get("missing_slot") or "").strip()
+        missing_slots = str(slot_policy_violation.get("missing_slots") or "").strip()
+        payload_json = str(slot_policy_violation.get("slot_payload_json") or "{}").strip()
+        validation_error = str(slot_policy_violation.get("validation_error") or "").strip()
+        if missing_slot and slot_loop_enabled:
+            try:
+                set_pending_action(
+                    user_id=user_id,
+                    intent=slot_action,
+                    action=slot_action,
+                    task_id=slot_task_id,
+                    plan=plan,
+                    plan_source=plan_source,
+                    collected_slots=json.loads(payload_json) if payload_json else {},
+                    missing_slots=[slot for slot in missing_slots.split(",") if slot] or [missing_slot],
+                )
+            except PendingActionStorageError:
+                return _pending_persistence_error_result(plan=plan, plan_source=plan_source, stage="validation")
+            plan.notes.append("slot_policy_blocking_precheck")
+            execution = AgentExecutionResult(
+                success=False,
+                summary="추가 입력이 필요합니다.",
+                user_message=(
+                    f"{_build_slot_question_message(slot_action, missing_slot)}\n\n"
+                    f"{_build_validation_guide_message(slot_action, missing_slot)}"
+                ),
+                artifacts={
+                    "error_code": "validation_error",
+                    "slot_action": slot_action,
+                    "slot_task_id": slot_task_id,
+                    "missing_slot": missing_slot,
+                    "missing_slots": missing_slots or missing_slot,
+                    "slot_payload_json": payload_json,
+                    "next_action": "provide_slot_value",
+                },
+                steps=[AgentExecutionStep(name="slot_policy_blocking", status="error", detail=f"missing_slot:{missing_slot}")],
+            )
+            return AgentRunResult(
+                ok=False,
+                stage="validation",
+                plan=plan,
+                result_summary=execution.summary,
+                execution=execution,
+                plan_source=plan_source,
+            )
+        if validation_error:
+            detail = validation_error
+        elif missing_slot:
+            detail = f"missing_slot:{missing_slot}"
+        else:
+            detail = "slot_policy_blocking_precheck"
+        execution = AgentExecutionResult(
+            success=False,
+            summary="실행 전 입력 검증에 실패했습니다.",
+            user_message=(
+                "실행 전 입력 검증에서 필수 항목을 확인하지 못했습니다.\n"
+                f"- action: {slot_action or 'unknown'}\n"
+                f"- detail: {detail}"
+            ),
+            artifacts={
+                "error_code": "validation_error",
+                "slot_action": slot_action,
+                "slot_task_id": slot_task_id,
+                "missing_slot": missing_slot,
+                "missing_slots": missing_slots,
+                "slot_payload_json": payload_json,
+            },
+            steps=[AgentExecutionStep(name="slot_policy_blocking", status="error", detail=detail)],
+        )
+        return AgentRunResult(
+            ok=False,
+            stage="validation",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source=plan_source,
+        )
+
     execution = None
     autonomous_enabled = bool(getattr(settings, "llm_autonomous_enabled", False))
+    autonomous_traffic_percent = max(0, min(100, int(getattr(settings, "llm_autonomous_traffic_percent", 100))))
+    autonomous_shadow_mode = bool(getattr(settings, "llm_autonomous_shadow_mode", False))
+    autonomous_rollout_enabled = _autonomous_rollout_hit(user_id=user_id, percent=autonomous_traffic_percent)
     hybrid_executor_first = bool(getattr(settings, "llm_hybrid_executor_first", False))
     autonomous_strict = bool(getattr(settings, "llm_autonomous_strict", False))
     autonomous_retry_once = bool(getattr(settings, "llm_autonomous_limit_retry_once", True))
@@ -1445,8 +1691,11 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
         getattr(settings, "llm_autonomous_progressive_no_fallback_enabled", True)
     )
     autonomous: AgentExecutionResult | None = None
+    plan.notes.append(f"autonomous_traffic_percent={autonomous_traffic_percent}")
+    plan.notes.append(f"autonomous_rollout_hit={1 if autonomous_rollout_enabled else 0}")
+    plan.notes.append(f"autonomous_shadow_mode={1 if autonomous_shadow_mode else 0}")
 
-    if autonomous_enabled and not hybrid_executor_first:
+    if autonomous_enabled and not hybrid_executor_first and autonomous_rollout_enabled:
         try:
             autonomous = await run_autonomous_loop(user_id=user_id, plan=plan)
         except Exception as exc:
@@ -1475,15 +1724,7 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             if guardrail_reason:
                 plan.notes.append(f"autonomous_guardrail_degrade:{guardrail_reason}")
 
-            retryable_errors = {
-                "turn_limit",
-                "tool_call_limit",
-                "replan_limit",
-                "timeout",
-                "verification_failed",
-                "unsupported_action",
-            }
-            if autonomous_retry_once and error_code in retryable_errors and not guardrail_reason:
+            if autonomous_retry_once and _is_autonomous_retryable_error(error_code) and not guardrail_reason:
                 plan.notes.append("autonomous_retry=1")
                 verification_reason = str(autonomous.artifacts.get("verification_reason", "") or "").strip() or None
                 plan.notes.append(f"autonomous_retry_tuning_rule={_retry_tuning_rule(error_code, verification_reason)}")
@@ -1535,6 +1776,10 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
                     error_code = str(retry.artifacts.get("error_code", error_code))
                     plan.notes.append(f"autonomous_retry_error={error_code}")
 
+            if execution is None and error_code == "clarification_required":
+                execution = autonomous
+                plan.notes.append("execution=autonomous_clarification_required")
+
             if execution is None and autonomous_strict:
                 execution = autonomous
                 plan.notes.append("execution=autonomous_strict")
@@ -1551,6 +1796,12 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             ):
                 execution = autonomous
                 plan.notes.append("execution=autonomous_no_rule_fallback_mutation")
+
+            if execution is None and autonomous is not None:
+                hold_autonomous, hold_reason = _should_hold_autonomous_for_verifier_failure(autonomous)
+                if hold_autonomous:
+                    execution = autonomous
+                    plan.notes.append(f"execution=autonomous_verifier_block:{hold_reason or 'verification_failed'}")
 
             if execution is None and autonomous is not None and autonomous_progressive_no_fallback_enabled:
                 error_code = str(autonomous.artifacts.get("error_code", "unknown"))
@@ -1570,6 +1821,23 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
                 plan.notes.append("execution=autonomous_fallback")
     elif hybrid_executor_first:
         plan.notes.append("execution=deterministic_first")
+    elif autonomous_enabled and not autonomous_rollout_enabled:
+        plan.notes.append("execution=autonomous_rollout_miss")
+        if autonomous_shadow_mode:
+            try:
+                shadow = await run_autonomous_loop(user_id=user_id, plan=plan)
+            except Exception as exc:
+                plan.notes.append("autonomous_shadow_executed=1")
+                plan.notes.append("autonomous_shadow_ok=0")
+                plan.notes.append(f"autonomous_shadow_exception={exc.__class__.__name__}")
+            else:
+                shadow_error = str(shadow.artifacts.get("error_code", "unknown"))
+                plan.notes.append("autonomous_shadow_executed=1")
+                plan.notes.append(f"autonomous_shadow_ok={1 if shadow.success else 0}")
+                if not shadow.success:
+                    plan.notes.append(f"autonomous_shadow_error={shadow_error}")
+        else:
+            plan.notes.append("autonomous_shadow_executed=0")
 
     if execution is None:
         execution = await execute_agent_plan(user_id=user_id, plan=plan)

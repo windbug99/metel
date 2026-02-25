@@ -57,7 +57,7 @@
         },
         "type": {
           "type": "string",
-          "enum": ["skill", "llm_transform", "for_each", "verify"]
+          "enum": ["skill", "llm_transform", "for_each", "aggregate", "verify"]
         },
         "name": {
           "type": "string",

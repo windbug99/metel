@@ -63,6 +63,63 @@ class RouterDecision:
         self.arguments = arguments or {}
 
 
+def _infer_target_scope_from_decision(decision: RouterDecision) -> str | None:
+    services = {str(item or "").strip().lower() for item in (decision.target_services or []) if str(item).strip()}
+    if not services:
+        skill_service = service_for_skill(decision.skill_name or "")
+        if skill_service:
+            services.add(skill_service)
+    if services == {"linear"}:
+        return "linear_only"
+    if services == {"notion"}:
+        return "notion_only"
+    if {"linear", "notion"}.issubset(services):
+        return "notion_and_linear"
+    return None
+
+
+def _infer_time_scope_from_user_text(user_text: str) -> str | None:
+    text = str(user_text or "").strip()
+    lower = text.lower()
+    if "오늘" in text or "today" in lower:
+        return "today"
+    if "내일" in text or "tomorrow" in lower:
+        return "explicit_date"
+    if "이번 주" in text or "this week" in lower or "다음 주" in text or "next week" in lower:
+        return "date_range"
+    return None
+
+
+def _infer_event_filter_from_user_text(user_text: str) -> dict[str, list[str]]:
+    text = str(user_text or "").strip()
+    lower = text.lower()
+    include: list[str] = []
+    exclude: list[str] = []
+    if "회의만" in text or "meetings only" in lower or "only meetings" in lower:
+        include.append("회의")
+    if "회의 제외" in text or "exclude meetings" in lower:
+        exclude.append("회의")
+    return {
+        "keyword_include": include,
+        "keyword_exclude": exclude,
+    }
+
+
+def _infer_result_limit_from_decision(decision: RouterDecision) -> int | None:
+    args = dict(decision.arguments or {})
+    candidates = (
+        args.get("linear_first"),
+        args.get("notion_page_size"),
+        args.get("max_results"),
+        args.get("result_limit"),
+    )
+    for value in candidates:
+        if value is None:
+            continue
+        return intent_normalizer.safe_int(value, default=5, minimum=1, maximum=100)
+    return None
+
+
 def _decision_for_skill(
     *,
     mode: str,
@@ -2330,12 +2387,17 @@ async def build_intent_json(
     )
 
     payload = {
+        "schema_version": str(getattr(settings, "llm_intent_schema_version", "v1") or "v1").strip().lower(),
         "mode": decision.mode,
         "skill_name": decision.skill_name,
         "arguments": dict(decision.arguments or {}),
         "missing_fields": [],
         "confidence": 1.0 if router_source == "llm" else 0.9,
         "decision_reason": decision.reason or "intent_decision",
+        "time_scope": _infer_time_scope_from_user_text(user_text),
+        "event_filter": _infer_event_filter_from_user_text(user_text),
+        "target_scope": _infer_target_scope_from_decision(decision),
+        "result_limit": _infer_result_limit_from_decision(decision),
     }
     intent = validate_intent_json(payload, connected_services=connected_services)
     metadata = {

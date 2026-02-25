@@ -278,6 +278,7 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
         context = {}
     context.setdefault("user_text", plan.user_text)
     user_timezone = _load_user_timezone(user_id)
+    context.setdefault("user_timezone", user_timezone)
 
     async def _execute_skill_for_dag(run_user_id: str, skill_name: str, payload: dict) -> dict:
         runtime_tools = runtime_tools_for_skill(skill_name)
@@ -322,6 +323,46 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                         },
                     }
                 ]
+            todo_items = normalized_payload.pop("todo_items", None)
+            if isinstance(todo_items, list) and todo_items and "children" not in normalized_payload:
+                children: list[dict] = []
+                intro_text = str(normalized_payload.pop("todo_intro", "") or "").strip()
+                if intro_text:
+                    children.append(
+                        {
+                            "object": "block",
+                            "type": "paragraph",
+                            "paragraph": {
+                                "rich_text": [
+                                    {
+                                        "type": "text",
+                                        "text": {"content": intro_text[:1800]},
+                                    }
+                                ]
+                            },
+                        }
+                    )
+                for raw_item in todo_items[:80]:
+                    text = str(raw_item or "").strip()
+                    if not text:
+                        continue
+                    children.append(
+                        {
+                            "object": "block",
+                            "type": "to_do",
+                            "to_do": {
+                                "rich_text": [
+                                    {
+                                        "type": "text",
+                                        "text": {"content": text[:1800]},
+                                    }
+                                ],
+                                "checked": False,
+                            },
+                        }
+                    )
+                if children:
+                    normalized_payload["children"] = children
         if skill_name == "linear.issue_create":
             team_ref = str(normalized_payload.get("team_ref") or "").strip()
             team_id = str(normalized_payload.get("team_id") or "").strip()
@@ -402,7 +443,7 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                         normalized["description"] = ""
                     events.append(normalized)
             normalized_raw = dict(raw)
-            normalized_raw["data"] = {"events": events}
+            normalized_raw["data"] = {"events": events, "event_count": len(events)}
             return normalized_raw
         return raw
 
@@ -474,12 +515,25 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
             artifacts=dag_result.get("artifacts") or {},
         )
         links_saved = persist_pipeline_links(links=pipeline_links)
-        notion_urls, linear_urls = _extract_dag_created_links(dag_result.get("artifacts") or {})
-        user_message = "요청한 DAG 파이프라인 실행을 완료했습니다."
+        dag_artifacts = dag_result.get("artifacts") or {}
+        notion_urls, linear_urls = _extract_dag_created_links(dag_artifacts)
+        processed_count = _extract_dag_processed_count(dag_artifacts, notion_urls, linear_urls)
+        result_lines = ["작업결과", "- DAG 파이프라인 실행을 완료했습니다."]
+        result_lines.append(f"- 처리된 항목: {processed_count}건")
         if notion_urls:
-            user_message += "\n- Notion 페이지:\n" + "\n".join(notion_urls[:5])
+            result_lines.append(f"- 생성된 Notion 페이지: {len(notion_urls)}건")
         if linear_urls:
-            user_message += "\n- Linear 이슈:\n" + "\n".join(linear_urls[:5])
+            result_lines.append(f"- 생성된 Linear 이슈: {len(linear_urls)}건")
+        link_lines = ["링크"]
+        if notion_urls:
+            for url in notion_urls[:10]:
+                link_lines.append(f"- Notion: {url}")
+        if linear_urls:
+            for url in linear_urls[:10]:
+                link_lines.append(f"- Linear: {url}")
+        if not notion_urls and not linear_urls:
+            link_lines.append("- 생성 링크 없음")
+        user_message = "\n".join(result_lines) + "\n\n" + "\n".join(link_lines)
         artifacts = {
             "pipeline_id": str(dag_result.get("pipeline_id") or ""),
             "pipeline_run_id": str(dag_result.get("pipeline_run_id") or ""),
@@ -492,6 +546,7 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
             "pipeline_links_persisted": "1" if links_saved else "0",
             "created_notion_urls_json": json.dumps(notion_urls, ensure_ascii=False),
             "created_linear_urls_json": json.dumps(linear_urls, ensure_ascii=False),
+            "processed_count": str(processed_count),
         }
         return AgentExecutionResult(
             success=True,
@@ -610,37 +665,41 @@ def _extract_dag_created_links(artifacts: dict[str, Any]) -> tuple[list[str], li
     linear_urls: list[str] = []
     if not isinstance(artifacts, dict):
         return notion_urls, linear_urls
+
+    def _collect_from_payload(payload: dict[str, Any]) -> None:
+        if not isinstance(payload, dict):
+            return
+        payload_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        notion_url = str(payload.get("url") or payload_data.get("url") or "").strip()
+        if notion_url:
+            notion_urls.append(notion_url)
+        issue_create = payload.get("issueCreate") if isinstance(payload.get("issueCreate"), dict) else {}
+        data_issue_create = payload_data.get("issueCreate") if isinstance(payload_data.get("issueCreate"), dict) else {}
+        issue = issue_create.get("issue") if isinstance(issue_create.get("issue"), dict) else {}
+        data_issue = data_issue_create.get("issue") if isinstance(data_issue_create.get("issue"), dict) else {}
+        linear_url = str(
+            issue.get("url")
+            or data_issue.get("url")
+            or ((payload.get("issue") or {}).get("url") if isinstance(payload.get("issue"), dict) else "")
+            or ((payload_data.get("issue") or {}).get("url") if isinstance(payload_data.get("issue"), dict) else "")
+            or ""
+        ).strip()
+        if linear_url:
+            linear_urls.append(linear_url)
+
     for value in artifacts.values():
         if not isinstance(value, dict):
             continue
+        _collect_from_payload(value)
         item_results = value.get("item_results")
         if not isinstance(item_results, list):
             continue
         for item in item_results:
             if not isinstance(item, dict):
                 continue
-            notion = item.get("n2_2") if isinstance(item.get("n2_2"), dict) else {}
-            linear = item.get("n2_3") if isinstance(item.get("n2_3"), dict) else {}
-            notion_data = notion.get("data") if isinstance(notion.get("data"), dict) else {}
-            linear_data = linear.get("data") if isinstance(linear.get("data"), dict) else {}
-
-            notion_url = str(notion.get("url") or notion_data.get("url") or "").strip()
-            if notion_url:
-                notion_urls.append(notion_url)
-
-            issue_create = linear.get("issueCreate") if isinstance(linear.get("issueCreate"), dict) else {}
-            data_issue_create = linear_data.get("issueCreate") if isinstance(linear_data.get("issueCreate"), dict) else {}
-            issue = issue_create.get("issue") if isinstance(issue_create.get("issue"), dict) else {}
-            data_issue = data_issue_create.get("issue") if isinstance(data_issue_create.get("issue"), dict) else {}
-            linear_url = str(
-                issue.get("url")
-                or data_issue.get("url")
-                or ((linear.get("issue") or {}).get("url") if isinstance(linear.get("issue"), dict) else "")
-                or ((linear_data.get("issue") or {}).get("url") if isinstance(linear_data.get("issue"), dict) else "")
-                or ""
-            ).strip()
-            if linear_url:
-                linear_urls.append(linear_url)
+            for node_output in item.values():
+                if isinstance(node_output, dict):
+                    _collect_from_payload(node_output)
 
     def _dedupe_keep_order(values: list[str]) -> list[str]:
         seen: set[str] = set()
@@ -653,6 +712,26 @@ def _extract_dag_created_links(artifacts: dict[str, Any]) -> tuple[list[str], li
         return out
 
     return _dedupe_keep_order(notion_urls), _dedupe_keep_order(linear_urls)
+
+
+def _extract_dag_processed_count(artifacts: dict[str, Any], notion_urls: list[str], linear_urls: list[str]) -> int:
+    if not isinstance(artifacts, dict):
+        return max(len(notion_urls), len(linear_urls))
+    count = 0
+    for value in artifacts.values():
+        if not isinstance(value, dict):
+            continue
+        todo_count = value.get("todo_count")
+        source_count = value.get("source_count")
+        item_count = value.get("item_count")
+        event_count = value.get("event_count")
+        for candidate in (todo_count, source_count, item_count, event_count):
+            try:
+                parsed = int(candidate)
+            except Exception:
+                continue
+            count = max(count, parsed)
+    return max(count, len(notion_urls), len(linear_urls))
 
 
 def _is_explicit_delete_request(text: str) -> bool:

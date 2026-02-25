@@ -383,3 +383,107 @@ def test_try_build_agent_plan_with_llm_applies_keyed_slot_fallback(monkeypatch):
     assert task.payload.get("team_id") == "플랫폼"
     assert task.payload.get("priority") == 2
     assert any(note == "keyed_slots_fallback_applied:linear_create_issue" for note in plan.notes)
+
+
+def test_try_build_agent_plan_with_llm_enforces_target_scope(monkeypatch):
+    async def _fake_request_plan(**kwargs):
+        _ = kwargs
+        return {
+            "requirements": ["오늘 일정 중 회의만 이슈 생성"],
+            "target_scope": "linear_only",
+            "target_services": ["notion", "linear"],
+            "selected_tools": ["notion_search", "linear_create_issue"],
+            "tasks": [
+                {
+                    "id": "task_notion_search",
+                    "title": "노션 조회",
+                    "task_type": "TOOL",
+                    "service": "notion",
+                    "tool_name": "notion_search",
+                    "depends_on": [],
+                    "payload": {"query": "회의"},
+                    "output_schema": {"type": "tool_result", "service": "notion", "tool": "notion_search"},
+                },
+                {
+                    "id": "task_linear_create",
+                    "title": "리니어 생성",
+                    "task_type": "TOOL",
+                    "service": "linear",
+                    "tool_name": "linear_create_issue",
+                    "depends_on": [],
+                    "payload": {"title": "회의 후속 작업"},
+                    "output_schema": {"type": "tool_result", "service": "linear", "tool": "linear_create_issue"},
+                },
+            ],
+            "workflow_steps": ["조회", "생성"],
+            "notes": [],
+        }, None
+
+    async def _fake_request_structured(**kwargs):
+        _ = kwargs
+        return {"intent": "create", "slots": {}}, None
+
+    monkeypatch.setattr("agent.planner_llm.get_settings", lambda: _settings())
+    monkeypatch.setattr("agent.planner_llm._request_plan_with_provider", _fake_request_plan)
+    monkeypatch.setattr("agent.planner_llm._request_structured_parse_with_provider", _fake_request_structured)
+
+    plan, err = asyncio.run(
+        try_build_agent_plan_with_llm(
+            user_text="오늘 일정 중 회의만 리니어 이슈 생성",
+            connected_services=["notion", "linear"],
+        )
+    )
+    assert err is None
+    assert plan is not None
+    assert plan.target_services == ["linear"]
+    assert plan.selected_tools == ["linear_create_issue"]
+    assert all((task.service or "") == "linear" for task in plan.tasks if task.task_type == "TOOL")
+    assert any(note == "target_scope=linear_only" for note in plan.notes)
+
+
+def test_try_build_agent_plan_with_llm_propagates_event_filter_notes(monkeypatch):
+    async def _fake_request_plan(**kwargs):
+        _ = kwargs
+        return {
+            "requirements": ["오늘 일정 중 회의만 노션 페이지 생성"],
+            "target_scope": "notion_only",
+            "target_services": ["notion"],
+            "selected_tools": ["notion_create_page"],
+            "event_filter": {
+                "keyword_include": ["회의"],
+                "keyword_exclude": ["점심"],
+            },
+            "tasks": [
+                {
+                    "id": "task_notion_create",
+                    "title": "노션 생성",
+                    "task_type": "TOOL",
+                    "service": "notion",
+                    "tool_name": "notion_create_page",
+                    "depends_on": [],
+                    "payload": {"title": "회의 노트"},
+                    "output_schema": {"type": "tool_result", "service": "notion", "tool": "notion_create_page"},
+                }
+            ],
+            "workflow_steps": ["생성"],
+            "notes": [],
+        }, None
+
+    async def _fake_request_structured(**kwargs):
+        _ = kwargs
+        return {"intent": "create", "slots": {}}, None
+
+    monkeypatch.setattr("agent.planner_llm.get_settings", lambda: _settings())
+    monkeypatch.setattr("agent.planner_llm._request_plan_with_provider", _fake_request_plan)
+    monkeypatch.setattr("agent.planner_llm._request_structured_parse_with_provider", _fake_request_structured)
+
+    plan, err = asyncio.run(
+        try_build_agent_plan_with_llm(
+            user_text="오늘 일정 중 회의만 노션 페이지 생성",
+            connected_services=["notion"],
+        )
+    )
+    assert err is None
+    assert plan is not None
+    assert any(note == "event_filter_include=회의" for note in plan.notes)
+    assert any(note == "event_filter_exclude=점심" for note in plan.notes)

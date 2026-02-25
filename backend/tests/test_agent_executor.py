@@ -1135,3 +1135,188 @@ def test_execute_agent_plan_google_calendar_to_linear_issue_meeting_only_no_matc
     result = asyncio.run(execute_agent_plan("user-1", plan))
     assert result.success is False
     assert result.artifacts.get("error_code") == "not_found"
+
+
+def test_execute_agent_plan_google_calendar_to_notion_todo_success(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, payload))
+        if tool_name == "google_calendar_list_events":
+            return {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {"summary": "Metel DAG 설계", "id": "evt-1", "start": {"dateTime": "2026-02-25T08:00:00Z"}},
+                        {"summary": "MCP 접목", "id": "evt-2", "start": {"dateTime": "2026-02-25T11:00:00Z"}},
+                    ]
+                },
+            }
+        if tool_name == "notion_create_page":
+            title = str((((payload.get("properties") or {}).get("title") or {}).get("title") or [{}])[0].get("text", {}).get("content", ""))
+            assert "일정 할일 목록" in title
+            children = payload.get("children") or []
+            todo_texts = []
+            for block in children:
+                if not isinstance(block, dict) or block.get("type") != "to_do":
+                    continue
+                text = str((((block.get("to_do") or {}).get("rich_text") or [{}])[0].get("text") or {}).get("content") or "")
+                if text:
+                    todo_texts.append(text)
+            assert "Metel DAG 설계" in todo_texts
+            assert "MCP 접목" in todo_texts
+            return {"ok": True, "data": {"id": "page-todo", "url": "https://notion.so/page-todo"}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._validate_dag_policy_guards", lambda **kwargs: (True, None, None, None))
+
+    pipeline = {
+        "pipeline_id": "google_calendar_to_notion_todo_v1",
+        "version": "1.0",
+        "limits": {"max_nodes": 5, "max_fanout": 50, "max_tool_calls": 120, "pipeline_timeout_sec": 240},
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "skill",
+                "name": "google.list_today",
+                "depends_on": [],
+                "input": {"calendar_id": "primary", "max_results": 50},
+                "when": "$ctx.enabled == true",
+                "retry": {"max_attempts": 2, "backoff_ms": 100},
+                "timeout_sec": 30,
+            },
+            {
+                "id": "n2",
+                "type": "aggregate",
+                "name": "aggregate_calendar_events_to_todo",
+                "depends_on": ["n1"],
+                "input": {"mode": "calendar_todo"},
+                "source_ref": "$n1.events",
+                "timeout_sec": 30,
+            },
+            {
+                "id": "n3",
+                "type": "skill",
+                "name": "notion.page_create",
+                "depends_on": ["n2"],
+                "input": {"title": "$n2.page_title", "body": "$n2.body", "todo_items": "$n2.todo_items"},
+                "retry": {"max_attempts": 2, "backoff_ms": 100},
+                "timeout_sec": 30,
+            },
+            {
+                "id": "n4",
+                "type": "verify",
+                "name": "verify_counts",
+                "depends_on": ["n2", "n3"],
+                "input": {},
+                "rules": ["$n2.todo_count == $n1.event_count"],
+                "timeout_sec": 30,
+            },
+        ],
+    }
+    plan = AgentPlan(
+        user_text="구글캘린더에서 오늘 일정을 노션에 할일 목록으로 생성하세요",
+        requirements=[AgentRequirement(summary="calendar_notion_todo_pipeline_dag")],
+        target_services=["google", "notion"],
+        selected_tools=["google_calendar_list_events", "notion_create_page"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_pipeline_dag_calendar_notion_todo",
+                title="calendar->notion(todo) DAG",
+                task_type="PIPELINE_DAG",
+                payload={"pipeline": pipeline, "ctx": {"enabled": True}},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert result.artifacts.get("processed_count") == "2"
+    assert "작업결과" in result.user_message
+    assert "링크" in result.user_message
+    assert "https://notion.so/page-todo" in result.user_message
+    assert [name for name, _ in calls].count("notion_create_page") == 1
+
+
+def test_execute_agent_plan_google_calendar_to_notion_todo_uses_default_title_when_summary_missing(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, payload)
+        if tool_name == "google_calendar_list_events":
+            return {"ok": True, "data": {"items": [{"summary": "", "id": "evt-1"}]}}
+        if tool_name == "notion_create_page":
+            title = str((((payload.get("properties") or {}).get("title") or {}).get("title") or [{}])[0].get("text", {}).get("content", ""))
+            assert "일정 할일 목록" in title
+            children = payload.get("children") or []
+            todo_texts = []
+            for block in children:
+                if not isinstance(block, dict) or block.get("type") != "to_do":
+                    continue
+                text = str((((block.get("to_do") or {}).get("rich_text") or [{}])[0].get("text") or {}).get("content") or "")
+                if text:
+                    todo_texts.append(text)
+            assert any("제목 없음 회의" in text for text in todo_texts)
+            return {"ok": True, "data": {"id": "page-1", "url": "https://notion.so/page-1"}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._validate_dag_policy_guards", lambda **kwargs: (True, None, None, None))
+
+    pipeline = {
+        "pipeline_id": "google_calendar_to_notion_todo_v1",
+        "version": "1.0",
+        "limits": {"max_nodes": 5, "max_fanout": 50, "max_tool_calls": 120, "pipeline_timeout_sec": 240},
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "skill",
+                "name": "google.list_today",
+                "depends_on": [],
+                "input": {"calendar_id": "primary", "max_results": 50},
+                "when": "$ctx.enabled == true",
+                "retry": {"max_attempts": 2, "backoff_ms": 100},
+                "timeout_sec": 30,
+            },
+            {
+                "id": "n2",
+                "type": "aggregate",
+                "name": "aggregate_calendar_events_to_todo",
+                "depends_on": ["n1"],
+                "input": {"mode": "calendar_todo"},
+                "source_ref": "$n1.events",
+                "timeout_sec": 30,
+            },
+            {
+                "id": "n3",
+                "type": "skill",
+                "name": "notion.page_create",
+                "depends_on": ["n2"],
+                "input": {"title": "$n2.page_title", "todo_items": "$n2.todo_items"},
+                "retry": {"max_attempts": 2, "backoff_ms": 100},
+                "timeout_sec": 30,
+            },
+        ],
+    }
+
+    plan = AgentPlan(
+        user_text="구글캘린더 오늘 일정을 노션 할일 목록으로 생성해줘",
+        requirements=[AgentRequirement(summary="calendar_notion_todo_pipeline_dag")],
+        target_services=["google", "notion"],
+        selected_tools=["google_calendar_list_events", "notion_create_page"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_pipeline_dag_calendar_notion_todo",
+                title="calendar->notion(todo) DAG",
+                task_type="PIPELINE_DAG",
+                payload={"pipeline": pipeline, "ctx": {"enabled": True}},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True

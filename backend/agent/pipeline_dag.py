@@ -8,8 +8,10 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent.pipeline_error_codes import PipelineErrorCode, is_retryable_pipeline_error
 
@@ -146,7 +148,11 @@ def evaluate_when(
         )
     left_ref, operator, raw_right = match.groups()
     left = resolve_ref(left_ref, artifacts=artifacts, item=item, ctx=ctx)
-    right = _parse_literal(raw_right)
+    right_text = str(raw_right or "").strip()
+    if right_text.startswith("$"):
+        right = resolve_ref(right_text, artifacts=artifacts, item=item, ctx=ctx)
+    else:
+        right = _parse_literal(right_text)
     if operator == "==":
         return left == right
     if operator == "!=":
@@ -199,6 +205,46 @@ def _validate_minimum_output_schema(output: dict[str, Any], output_schema: dict[
         if value is None or value == "":
             missing.append(key)
     return missing
+
+
+def _build_aggregate_calendar_todo_payload(
+    *,
+    source_items: list[Any],
+    ctx: dict[str, Any] | None,
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    timezone_name = str((ctx or {}).get("user_timezone") or "UTC").strip() or "UTC"
+    try:
+        tzinfo = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        tzinfo = timezone.utc
+    now_local = datetime.now(tzinfo)
+    date_label = f"{now_local.year}년 {now_local.month}월 {now_local.day}일"
+    page_title_suffix = str((input_payload or {}).get("page_title_suffix") or " 일정 할일 목록").strip() or " 일정 할일 목록"
+    page_title = f"{date_label}{page_title_suffix}"
+    empty_placeholder = str((input_payload or {}).get("empty_placeholder") or "오늘 일정이 없습니다.").strip() or "오늘 일정이 없습니다."
+
+    todo_items: list[str] = []
+    for raw in source_items:
+        if not isinstance(raw, dict):
+            continue
+        title = str(raw.get("title") or raw.get("summary") or "").strip()
+        if not title:
+            title = "제목 없음 회의"
+        todo_items.append(title[:200])
+
+    if not todo_items:
+        body = empty_placeholder
+    else:
+        body = "\n".join(f"- [ ] {title}" for title in todo_items[:80])
+
+    return {
+        "page_title": page_title[:100],
+        "todo_items": todo_items[:80],
+        "todo_count": len(todo_items),
+        "source_count": len([item for item in source_items if isinstance(item, dict)]),
+        "body": body[:7800],
+    }
 
 
 def _topological_order(nodes: list[dict[str, Any]]) -> list[str]:
@@ -312,7 +358,7 @@ def validate_pipeline_dsl(
     for node in nodes:
         node_id = str(node.get("id") or "")
         node_type = node.get("type")
-        if node_type not in {"skill", "llm_transform", "for_each", "verify"}:
+        if node_type not in {"skill", "llm_transform", "for_each", "aggregate", "verify"}:
             errors.append(f"{node_id}:invalid_node_type")
             continue
 
@@ -348,6 +394,13 @@ def validate_pipeline_dsl(
             for item_node_id in item_nodes:
                 if item_node_id not in id_set:
                     errors.append(f"{node_id}:unknown_item_node:{item_node_id}")
+        elif node_type == "aggregate":
+            source_ref = str(node.get("source_ref") or "")
+            if not _REF_PATTERN.match(source_ref):
+                errors.append(f"{node_id}:invalid_source_ref")
+            mode = str((node.get("input") or {}).get("mode") or "").strip()
+            if mode != "calendar_todo":
+                errors.append(f"{node_id}:unsupported_aggregate_mode")
         elif node_type == "verify":
             rules = node.get("rules")
             if not isinstance(rules, list) or not rules:
@@ -592,6 +645,43 @@ async def execute_pipeline_dag(
                         }
                     )
                     return {"pass": True, "reason": "ok"}
+                if node["type"] == "aggregate":
+                    started = time.monotonic()
+                    source_ref = str(node.get("source_ref") or "")
+                    source_items = resolve_ref(source_ref, artifacts=scoped_artifacts, item=item, ctx=ctx or {})
+                    if not isinstance(source_items, list):
+                        raise PipelineExecutionError(
+                            code=PipelineErrorCode.DSL_VALIDATION_FAILED,
+                            reason=f"aggregate_source_not_array:{node['id']}",
+                            failed_step=node["id"],
+                            pipeline_run_id=pipeline_run_id,
+                        )
+                    mode = str((node_input or {}).get("mode") or "").strip()
+                    if mode != "calendar_todo":
+                        raise PipelineExecutionError(
+                            code=PipelineErrorCode.DSL_VALIDATION_FAILED,
+                            reason=f"unsupported_aggregate_mode:{mode or 'empty'}",
+                            failed_step=node["id"],
+                            pipeline_run_id=pipeline_run_id,
+                        )
+                    aggregated = _build_aggregate_calendar_todo_payload(
+                        source_items=source_items,
+                        ctx=ctx,
+                        input_payload=node_input,
+                    )
+                    duration_ms = max(0, int((time.monotonic() - started) * 1000))
+                    node_runs.append(
+                        {
+                            "pipeline_run_id": pipeline_run_id,
+                            "node_id": node["id"],
+                            "node_type": node["type"],
+                            "status": "success",
+                            "attempt": attempt,
+                            "duration_ms": duration_ms,
+                            "external_ref": _extract_external_ref(item),
+                        }
+                    )
+                    return aggregated
                 raise PipelineExecutionError(
                     code=PipelineErrorCode.DSL_VALIDATION_FAILED,
                     reason=f"unsupported_node_type:{node['type']}",

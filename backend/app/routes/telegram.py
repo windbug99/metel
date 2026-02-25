@@ -5,6 +5,7 @@ import hmac
 import re
 import time
 import uuid
+import json
 from json import JSONDecodeError
 from datetime import datetime, timezone
 
@@ -490,6 +491,123 @@ def _record_command_log(
         logger.exception("failed to record command log: %s", exc)
 
 
+def _parse_detail_pairs(detail: str | None) -> dict[str, str]:
+    raw = str(detail or "").strip()
+    if not raw:
+        return {}
+    out: dict[str, str] = {}
+    for token in raw.split(";"):
+        token = token.strip()
+        if not token or "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        out[key.strip()] = value.strip()
+    return out
+
+
+def _note_value(notes: list[str], prefix: str) -> str:
+    for note in notes:
+        text = str(note or "").strip()
+        if text.startswith(prefix):
+            return text.split("=", 1)[1].strip()
+    return ""
+
+
+def _build_structured_intent_log(*, notes: list[str], missing_slot: str | None, slot_action: str | None) -> dict:
+    include_raw = _note_value(notes, "event_filter_include=")
+    exclude_raw = _note_value(notes, "event_filter_exclude=")
+    include = [item.strip() for item in include_raw.split(",") if item.strip()] if include_raw else []
+    exclude = [item.strip() for item in exclude_raw.split(",") if item.strip()] if exclude_raw else []
+    target_scope = _note_value(notes, "target_scope=")
+    time_scope = _note_value(notes, "time_scope=")
+    result_limit_raw = _note_value(notes, "result_limit=")
+    result_limit = None
+    if result_limit_raw:
+        try:
+            result_limit = int(result_limit_raw)
+        except Exception:
+            result_limit = None
+    payload = {
+        "time_scope": time_scope or None,
+        "target_scope": target_scope or None,
+        "filter_include": include,
+        "filter_exclude": exclude,
+        "result_limit": result_limit,
+        "missing_slot": str(missing_slot or "").strip() or None,
+        "slot_action": str(slot_action or "").strip() or None,
+    }
+    return payload
+
+
+def _build_structured_autonomous_log(
+    *,
+    notes: list[str],
+    execution_mode: str,
+    autonomous_fallback_reason: str | None,
+    analysis_ok: bool,
+) -> dict:
+    shadow_executed = any(str(note).strip() == "autonomous_shadow_executed=1" for note in notes)
+    shadow_ok = any(str(note).strip() == "autonomous_shadow_ok=1" for note in notes)
+    retry_count = 1 if any(str(note).strip() == "autonomous_retry=1" for note in notes) else 0
+    replan_hist: dict[str, int] = {}
+    tuning_rule = _note_value(notes, "autonomous_retry_tuning_rule=")
+    if tuning_rule:
+        replan_hist[tuning_rule] = replan_hist.get(tuning_rule, 0) + 1
+    fallback_reason = str(autonomous_fallback_reason or "").strip()
+    if fallback_reason:
+        replan_hist[fallback_reason] = replan_hist.get(fallback_reason, 0) + 1
+    attempted = (
+        execution_mode == "autonomous"
+        or shadow_executed
+        or bool(fallback_reason)
+        or any(str(note).strip().startswith("autonomous_error=") for note in notes)
+    )
+    success = (execution_mode == "autonomous" and bool(analysis_ok)) or (shadow_executed and shadow_ok)
+    fallback = execution_mode == "rule" and bool(fallback_reason)
+    return {
+        "attempted": bool(attempted),
+        "success": bool(success),
+        "fallback": bool(fallback),
+        "shadow_executed": bool(shadow_executed),
+        "shadow_ok": bool(shadow_ok),
+        "replan_reason_histogram": replan_hist,
+        "retry_count": retry_count,
+    }
+
+
+def _build_structured_verifier_log(
+    *,
+    execution_error_code: str | None,
+    verification_reason: str | None,
+    verifier_failed_rule: str | None,
+    verifier_remediation_type: str | None,
+) -> dict:
+    failed_rule = str(verifier_failed_rule or "").strip() or str(verification_reason or "").strip() or None
+    remediation_type = str(verifier_remediation_type or "").strip() or None
+    if not remediation_type and (execution_error_code or "") == "verification_failed":
+        remediation_type = "retry_with_constraints"
+    return {
+        "failed_rule": failed_rule,
+        "remediation_type": remediation_type,
+    }
+
+
+def _append_structured_log_detail(
+    *,
+    base_detail: str,
+    request_id: str,
+    intent_payload: dict,
+    autonomous_payload: dict,
+    verifier_payload: dict,
+) -> str:
+    pairs = _parse_detail_pairs(base_detail)
+    pairs["request_id"] = request_id
+    pairs["intent_json"] = json.dumps(intent_payload, ensure_ascii=False, separators=(",", ":"))
+    pairs["autonomous_json"] = json.dumps(autonomous_payload, ensure_ascii=False, separators=(",", ":"))
+    pairs["verifier_json"] = json.dumps(verifier_payload, ensure_ascii=False, separators=(",", ":"))
+    return ";".join(f"{key}={value}" for key, value in pairs.items())
+
+
 @router.get("/status")
 async def telegram_status(request: Request):
     try:
@@ -570,6 +688,8 @@ async def telegram_webhook(
     from_user = message.get("from", {})
     text = (message.get("text") or "").strip()
     chat_id = chat.get("id")
+    message_id = message.get("message_id")
+    update_id = update.get("update_id")
 
     logger.info("telegram webhook received chat_id=%s has_text=%s", chat_id, bool(text))
 
@@ -820,6 +940,80 @@ async def telegram_webhook(
             dag_pipeline = dag_mode or bool(pipeline_run_id) or analysis.plan_source == "dag_template"
             dag_failed_step = str(exec_artifacts.get("failed_step") or "").strip()
             dag_reason = str(exec_artifacts.get("reason") or "").strip()
+            verifier_failed_rule = str(exec_artifacts.get("verifier_failed_rule") or "").strip() or None
+            verifier_remediation_type = str(exec_artifacts.get("verifier_remediation_type") or "").strip() or None
+
+            request_id = ""
+            if update_id is not None:
+                request_id = f"tg_update:{update_id}"
+            elif chat_id is not None and message_id is not None:
+                request_id = f"tg_message:{chat_id}:{message_id}"
+            elif chat_id is not None:
+                request_id = f"tg_chat:{chat_id}:{int(time.time())}"
+
+            base_detail = (
+                (
+                    f"services={services_text}"
+                    if not metrics_enabled
+                    else (
+                        f"services={services_text};"
+                        f"slot_loop_enabled={slot_loop_enabled};"
+                        f"slot_loop_started={slot_loop_started};"
+                        f"slot_loop_completed={slot_loop_completed};"
+                        f"slot_loop_turns={slot_loop_turns}"
+                    )
+                )
+                + (
+                    f";missing_slot={missing_slot};slot_action={slot_action}"
+                    if missing_slot and slot_action
+                    else ""
+                )
+                + (
+                    f";validation_error={analysis.execution.artifacts.get('validation_error')}"
+                    if analysis.execution and analysis.execution.artifacts.get("validation_error")
+                    else ""
+                )
+                + (
+                    f";validated_payloads={analysis.execution.artifacts.get('validated_payloads_json')}"
+                    if analysis.execution and analysis.execution.artifacts.get("validated_payloads_json")
+                    else ""
+                )
+                + (f";skill_v2_rollout={v2_rollout_reason}" if v2_rollout_reason else "")
+                + (f";skill_v2_shadow_mode={v2_shadow_mode}" if v2_shadow_mode is not None else "")
+                + (f";skill_v2_shadow_executed={v2_shadow_executed}" if v2_shadow_executed is not None else "")
+                + (f";skill_v2_shadow_ok={v2_shadow_ok}" if v2_shadow_ok is not None else "")
+                + (f";router_source={router_source}" if router_source else "")
+                + (f";dag_pipeline=1" if dag_pipeline else "")
+                + (f";pipeline_run_id={pipeline_run_id}" if pipeline_run_id else "")
+                + (f";dag_failed_step={dag_failed_step}" if dag_failed_step else "")
+                + (f";dag_reason={dag_reason}" if dag_reason else "")
+                + (f";idempotent_success_reuse_count={dag_idempotent_reuse}" if dag_idempotent_reuse else "")
+                + f";analysis_latency_ms={analysis_latency_ms}"
+            )
+            structured_intent = _build_structured_intent_log(
+                notes=notes,
+                missing_slot=missing_slot,
+                slot_action=slot_action,
+            )
+            structured_autonomous = _build_structured_autonomous_log(
+                notes=notes,
+                execution_mode=execution_mode,
+                autonomous_fallback_reason=autonomous_fallback_reason,
+                analysis_ok=analysis.ok,
+            )
+            structured_verifier = _build_structured_verifier_log(
+                execution_error_code=execution_error_code,
+                verification_reason=verification_reason,
+                verifier_failed_rule=verifier_failed_rule,
+                verifier_remediation_type=verifier_remediation_type,
+            )
+            structured_detail = _append_structured_log_detail(
+                base_detail=base_detail,
+                request_id=request_id,
+                intent_payload=structured_intent,
+                autonomous_payload=structured_autonomous,
+                verifier_payload=structured_verifier,
+            )
 
             _record_command_log(
                 user_id=user_id,
@@ -827,45 +1021,7 @@ async def telegram_webhook(
                 command="agent_plan",
                 status="success" if analysis.ok else "error",
                 error_code=None if analysis.ok else (execution_error_code or "execution_failed"),
-                detail=_clip_log_detail(
-                    (
-                        f"services={services_text}"
-                        if not metrics_enabled
-                        else (
-                            f"services={services_text};"
-                            f"slot_loop_enabled={slot_loop_enabled};"
-                            f"slot_loop_started={slot_loop_started};"
-                            f"slot_loop_completed={slot_loop_completed};"
-                            f"slot_loop_turns={slot_loop_turns}"
-                        )
-                    )
-                    + (
-                        f";missing_slot={missing_slot};slot_action={slot_action}"
-                        if missing_slot and slot_action
-                        else ""
-                    )
-                    + (
-                        f";validation_error={analysis.execution.artifacts.get('validation_error')}"
-                        if analysis.execution and analysis.execution.artifacts.get("validation_error")
-                        else ""
-                    )
-                    + (
-                        f";validated_payloads={analysis.execution.artifacts.get('validated_payloads_json')}"
-                        if analysis.execution and analysis.execution.artifacts.get("validated_payloads_json")
-                        else ""
-                    )
-                    + (f";skill_v2_rollout={v2_rollout_reason}" if v2_rollout_reason else "")
-                    + (f";skill_v2_shadow_mode={v2_shadow_mode}" if v2_shadow_mode is not None else "")
-                    + (f";skill_v2_shadow_executed={v2_shadow_executed}" if v2_shadow_executed is not None else "")
-                    + (f";skill_v2_shadow_ok={v2_shadow_ok}" if v2_shadow_ok is not None else "")
-                    + (f";router_source={router_source}" if router_source else "")
-                    + (f";dag_pipeline=1" if dag_pipeline else "")
-                    + (f";pipeline_run_id={pipeline_run_id}" if pipeline_run_id else "")
-                    + (f";dag_failed_step={dag_failed_step}" if dag_failed_step else "")
-                    + (f";dag_reason={dag_reason}" if dag_reason else "")
-                    + (f";idempotent_success_reuse_count={dag_idempotent_reuse}" if dag_idempotent_reuse else "")
-                    + f";analysis_latency_ms={analysis_latency_ms}"
-                ),
+                detail=_clip_log_detail(structured_detail),
                 plan_source=analysis.plan_source,
                 execution_mode=execution_mode,
                 autonomous_fallback_reason=autonomous_fallback_reason,

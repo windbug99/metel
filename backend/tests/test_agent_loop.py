@@ -57,6 +57,48 @@ def test_run_agent_analysis_calendar_pipeline_uses_dag_template(monkeypatch):
     assert result.execution.artifacts.get("router_mode") == "PIPELINE_DAG"
 
 
+def test_run_agent_analysis_calendar_notion_todo_uses_dag_template(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        slot_loop_enabled = False
+        slot_loop_rollout_percent = 0
+
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        assert user_id == "user-todo"
+        assert plan.tasks
+        assert plan.tasks[0].task_type == "PIPELINE_DAG"
+        assert plan.tasks[0].title == "calendar->notion(todo) DAG"
+        assert plan.selected_tools == ["google_calendar_list_events", "notion_create_page"]
+        return AgentExecutionResult(
+            success=True,
+            user_message="작업결과\n- 생성 완료\n\n링크\n- Notion: https://notion.so/page-1",
+            summary="calendar notion todo done",
+            artifacts={"router_mode": "PIPELINE_DAG", "pipeline_run_id": "prun_todo"},
+            steps=[AgentExecutionStep(name="calendar_notion_todo", status="success", detail="done")],
+        )
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(
+        run_agent_analysis(
+            "구글캘린더에서 오늘 일정을 노션에 할일 목록으로 생성하세요",
+            ["google", "notion"],
+            "user-todo",
+        )
+    )
+    assert result.ok is True
+    assert result.plan_source == "dag_template"
+    assert result.execution is not None
+    assert result.execution.artifacts.get("router_mode") == "PIPELINE_DAG"
+
+
 def test_run_agent_analysis_slot_question_and_resume(monkeypatch):
     clear_pending_action("user-slot")
     llm_plan = AgentPlan(
@@ -98,20 +140,6 @@ def test_run_agent_analysis_slot_question_and_resume(monkeypatch):
     async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
         calls["count"] += 1
         if calls["count"] == 1:
-            return AgentExecutionResult(
-                success=False,
-                user_message="title missing",
-                summary="validation",
-                artifacts={
-                    "error_code": "validation_error",
-                    "slot_action": "linear_create_issue",
-                    "slot_task_id": "task_linear_create_issue",
-                    "missing_slot": "title",
-                    "missing_slots": "title",
-                    "slot_payload_json": "{}",
-                },
-            )
-        if calls["count"] == 2:
             task = plan.tasks[0]
             assert task.payload.get("title") == "로그인 오류 수정"
             return AgentExecutionResult(
@@ -182,28 +210,14 @@ def test_run_agent_analysis_accepts_plain_slot_answer_without_key_prefix(monkeyp
     class _Settings:
         llm_autonomous_enabled = False
 
-    calls = {"count": 0}
-    pending_store: dict[str, object] = {}
-
     async def _fake_try_build(**kwargs):
         return llm_plan, None
 
+    calls = {"count": 0}
+    pending_store: dict[str, object] = {}
+
     async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
         calls["count"] += 1
-        if calls["count"] == 1:
-            return AgentExecutionResult(
-                success=False,
-                user_message="title missing",
-                summary="validation",
-                artifacts={
-                    "error_code": "validation_error",
-                    "slot_action": "linear_create_issue",
-                    "slot_task_id": "task_linear_create_issue",
-                    "missing_slot": "title",
-                    "missing_slots": "title",
-                    "slot_payload_json": "{}",
-                },
-            )
         task = plan.tasks[0]
         assert task.payload.get("title") == "로그인 오류 수정"
         return AgentExecutionResult(success=True, user_message="ok", summary="done")
@@ -236,6 +250,104 @@ def test_run_agent_analysis_accepts_plain_slot_answer_without_key_prefix(monkeyp
     assert second.result_summary == "done"
     assert "user-low-confidence" not in pending_store
     clear_pending_action("user-low-confidence")
+
+
+def test_run_agent_analysis_blocks_execution_on_precheck_blocking_slot(monkeypatch):
+    clear_pending_action("user-precheck-block")
+    llm_plan = AgentPlan(
+        user_text="Linear 이슈 생성해줘",
+        requirements=[AgentRequirement(summary="Linear 이슈 생성")],
+        target_services=["linear"],
+        selected_tools=["linear_create_issue"],
+        workflow_steps=["1. create"],
+        tasks=[
+            AgentTask(
+                id="task_linear_create_issue",
+                title="Linear 이슈 생성",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_create_issue",
+                payload={},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        slot_loop_enabled = True
+        slot_loop_rollout_percent = 100
+
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan):
+        raise AssertionError("autonomous should not run when blocking slot is missing at precheck")
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        raise AssertionError("executor should not run when blocking slot is missing at precheck")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("Linear 이슈 생성해줘", ["linear"], "user-precheck-block"))
+
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("error_code") == "validation_error"
+    assert result.execution.artifacts.get("missing_slot") == "title"
+    assert any(item == "slot_policy_blocking_precheck" for item in result.plan.notes)
+    assert get_pending_action("user-precheck-block") is not None
+    clear_pending_action("user-precheck-block")
+
+
+def test_run_agent_analysis_allows_non_blocking_precheck_slot(monkeypatch):
+    llm_plan = AgentPlan(
+        user_text="Linear 최근 이슈 조회",
+        requirements=[AgentRequirement(summary="Linear 이슈 조회")],
+        target_services=["linear"],
+        selected_tools=["linear_search_issues"],
+        workflow_steps=["1. search"],
+        tasks=[
+            AgentTask(
+                id="task_linear_search_issues",
+                title="Linear 이슈 조회",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_search_issues",
+                payload={},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    class _Settings:
+        llm_autonomous_enabled = False
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        return AgentExecutionResult(success=True, user_message="ok", summary="done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("Linear 최근 이슈 조회", ["linear"], "user-precheck-non-block"))
+
+    assert result.ok is True
+    assert any(item.startswith("slot_policy_non_blocking_autofill:linear_search_issues") for item in result.plan.notes)
 
 
 def test_run_agent_analysis_accepts_plain_id_for_action_without_slot_schema(monkeypatch):
@@ -1273,6 +1385,136 @@ def test_run_agent_analysis_prefers_autonomous_when_enabled(monkeypatch):
     assert any(item == "execution=autonomous" for item in result.plan.notes)
 
 
+def test_run_agent_analysis_skips_autonomous_when_rollout_miss(monkeypatch):
+    llm_plan = _sample_plan()
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        llm_autonomous_traffic_percent = 0
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan):
+        raise AssertionError("autonomous should not be called when rollout percent is 0")
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        return AgentExecutionResult(success=True, user_message="det-ok", summary="det-done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("text", ["notion"], "user-rollout-miss"))
+    assert result.ok is True
+    assert result.result_summary == "det-done"
+    assert any(item == "execution=autonomous_rollout_miss" for item in result.plan.notes)
+
+
+def test_run_agent_analysis_runs_autonomous_shadow_when_rollout_miss(monkeypatch):
+    llm_plan = _sample_plan()
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        llm_autonomous_traffic_percent = 0
+        llm_autonomous_shadow_mode = True
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    shadow_calls = {"count": 0}
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan):
+        shadow_calls["count"] += 1
+        return AgentExecutionResult(success=True, user_message="shadow-ok", summary="shadow-done", artifacts={"autonomous": "true"})
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        return AgentExecutionResult(success=True, user_message="det-ok", summary="det-done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("text", ["notion"], "user-shadow-rollout-miss"))
+    assert result.ok is True
+    assert result.result_summary == "det-done"
+    assert shadow_calls["count"] == 1
+    assert any(item == "execution=autonomous_rollout_miss" for item in result.plan.notes)
+    assert any(item == "autonomous_shadow_executed=1" for item in result.plan.notes)
+    assert any(item == "autonomous_shadow_ok=1" for item in result.plan.notes)
+
+
+def test_run_agent_analysis_autonomous_clarification_required_starts_slot_loop(monkeypatch):
+    clear_pending_action("user-auto-clarify")
+    llm_plan = AgentPlan(
+        user_text="노션 최근 페이지 조회",
+        requirements=[AgentRequirement(summary="조회")],
+        target_services=["notion"],
+        selected_tools=["notion_search"],
+        workflow_steps=["1. search"],
+        tasks=[
+            AgentTask(
+                id="task_notion_search",
+                title="검색",
+                task_type="TOOL",
+                service="notion",
+                tool_name="notion_search",
+                payload={"query": "metel"},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        slot_loop_enabled = True
+        slot_loop_rollout_percent = 100
+
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan):
+        return AgentExecutionResult(
+            success=False,
+            user_message="query 값이 필요합니다.",
+            summary="clarification",
+            artifacts={
+                "error_code": "clarification_required",
+                "slot_action": "notion_search",
+                "slot_task_id": "task_notion_search",
+                "missing_slot": "query",
+                "missing_slots": "query",
+                "slot_payload_json": "{}",
+            },
+        )
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        raise AssertionError("executor should not run for clarification_required")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("노션 최근 페이지 조회", ["notion"], "user-auto-clarify"))
+
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("error_code") == "clarification_required"
+    assert any(item == "execution=autonomous_clarification_required" for item in result.plan.notes)
+    assert get_pending_action("user-auto-clarify") is not None
+    clear_pending_action("user-auto-clarify")
+
+
 def test_run_agent_analysis_uses_deterministic_first_when_enabled(monkeypatch):
     llm_plan = _sample_plan()
 
@@ -1552,6 +1794,8 @@ def test_run_agent_analysis_progress_guard_disabled_allows_rule_fallback(monkeyp
         llm_autonomous_rule_fallback_enabled = True
         llm_autonomous_rule_fallback_mutation_enabled = True
         llm_autonomous_progressive_no_fallback_enabled = False
+        slot_loop_enabled = False
+        slot_loop_enabled = False
 
     async def _fake_try_build(**kwargs):
         return llm_plan, None
@@ -1582,6 +1826,46 @@ def test_run_agent_analysis_progress_guard_disabled_allows_rule_fallback(monkeyp
     result = asyncio.run(run_agent_analysis("노션 최근 페이지 3개 조회해줘", ["notion"], "user-1"))
     assert result.ok is True
     assert any(item == "execution=autonomous_fallback" for item in result.plan.notes)
+
+
+def test_run_agent_analysis_verifier_scope_violation_blocks_rule_fallback(monkeypatch):
+    llm_plan = _sample_plan()
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        llm_autonomous_strict = False
+        llm_autonomous_limit_retry_once = False
+        llm_autonomous_rule_fallback_enabled = True
+        llm_autonomous_rule_fallback_mutation_enabled = True
+        llm_autonomous_progressive_no_fallback_enabled = False
+        slot_loop_enabled = False
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan, **kwargs):
+        return AgentExecutionResult(
+            success=False,
+            user_message="auto-scope-violation",
+            summary="auto-scope-violation",
+            artifacts={
+                "error_code": "verification_failed",
+                "verifier_failed_rule": "target_scope_linear_only_violation",
+                "verifier_remediation_type": "scope_violation",
+            },
+        )
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        raise AssertionError("executor should not be called for verifier scope violation")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("노션 최근 페이지 3개 조회해줘", ["notion"], "user-1"))
+    assert result.ok is False
+    assert any(item == "execution=autonomous_verifier_block:scope_violation" for item in result.plan.notes)
 
 
 def test_run_agent_analysis_validates_data_source_id_early(monkeypatch):
@@ -1773,6 +2057,7 @@ def test_run_agent_analysis_guardrail_degrades_before_retry(monkeypatch):
         llm_autonomous_progressive_no_fallback_enabled = False
         llm_autonomous_guardrail_enabled = True
         llm_autonomous_guardrail_tool_error_rate_threshold = 0.5
+        llm_autonomous_guardrail_min_tool_samples = 1
         llm_autonomous_guardrail_replan_ratio_threshold = 1.0
         llm_autonomous_guardrail_cross_service_block_threshold = 99
 
@@ -1861,6 +2146,55 @@ def test_run_agent_analysis_retries_on_verification_failed(monkeypatch):
         item == "autonomous_retry_tuning_rule=verification:append_requires_append_block_children"
         for item in result.plan.notes
     )
+
+
+def test_run_agent_analysis_retries_on_tool_timeout_code(monkeypatch):
+    llm_plan = _sample_plan()
+    calls = {"count": 0}
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        llm_autonomous_strict = False
+        llm_autonomous_limit_retry_once = True
+        llm_autonomous_max_turns = 6
+        llm_autonomous_max_tool_calls = 8
+        llm_autonomous_timeout_sec = 45
+        llm_autonomous_replan_limit = 1
+        llm_autonomous_guardrail_enabled = False
+        slot_loop_enabled = False
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_autonomous_loop(user_id: str, plan: AgentPlan, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return AgentExecutionResult(
+                success=False,
+                user_message="tool-timeout",
+                summary="tool-timeout",
+                artifacts={"error_code": "TOOL_TIMEOUT"},
+            )
+        return AgentExecutionResult(
+            success=True,
+            user_message="retry-ok",
+            summary="retry-ok",
+            artifacts={"autonomous": "true"},
+        )
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        raise AssertionError("executor should not be called after retry success")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("노션 최근 페이지 3개 조회해줘", ["notion"], "user-1"))
+    assert result.ok is True
+    assert result.result_summary == "retry-ok"
+    assert calls["count"] == 2
+    assert any(item == "autonomous_retry_tuning_rule=error:TOOL_TIMEOUT" for item in result.plan.notes)
 
 
 def test_run_agent_analysis_retry_overrides_expand_for_mutation(monkeypatch):

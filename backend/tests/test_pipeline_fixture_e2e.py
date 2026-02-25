@@ -1,7 +1,10 @@
 import asyncio
 
 from agent.executor import execute_agent_plan
-from agent.pipeline_fixtures import build_google_calendar_to_notion_linear_pipeline
+from agent.pipeline_fixtures import (
+    build_google_calendar_to_notion_linear_pipeline,
+    build_google_calendar_to_notion_todo_pipeline,
+)
 from agent.types import AgentPlan, AgentRequirement, AgentTask
 
 
@@ -59,3 +62,55 @@ def test_google_calendar_to_notion_linear_fixture_e2e(monkeypatch):
     assert tool_names.count("google_calendar_list_events") == 1
     assert tool_names.count("notion_create_page") == 2
     assert tool_names.count("linear_create_issue") == 2
+
+
+def test_google_calendar_to_notion_todo_fixture_e2e(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict) -> dict:
+        _ = user_id
+        calls.append((tool_name, payload))
+        if tool_name == "google_calendar_list_events":
+            return {
+                "ok": True,
+                "data": {
+                    "events": [
+                        {"id": "evt-1", "title": "Daily Standup", "description": "팀 상태 공유"},
+                        {"id": "evt-2", "title": "Sprint Planning", "description": "다음 스프린트 계획"},
+                    ]
+                },
+            }
+        if tool_name == "notion_create_page":
+            todo_items = payload.get("todo_items") or []
+            assert todo_items == ["Daily Standup", "Sprint Planning"]
+            return {"ok": True, "data": {"id": "page-1", "url": "https://notion.so/page-1"}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._validate_dag_policy_guards", lambda **kwargs: (True, None, None, None))
+
+    pipeline = build_google_calendar_to_notion_todo_pipeline(user_text="구글캘린더 오늘 일정을 노션 할일 목록으로 생성")
+    plan = AgentPlan(
+        user_text="구글캘린더 오늘 일정을 노션 할일 목록으로 생성",
+        requirements=[AgentRequirement(summary="calendar_notion_todo_fixture")],
+        target_services=["google", "notion"],
+        selected_tools=["google_calendar_list_events", "notion_create_page"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_pipeline_dag_todo_fixture",
+                title="fixture dag todo",
+                task_type="PIPELINE_DAG",
+                payload={"pipeline": pipeline, "ctx": {"enabled": True}},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert result.summary == "DAG 파이프라인 실행 완료"
+    assert result.artifacts.get("processed_count") == "2"
+    tool_names = [name for name, _ in calls]
+    assert tool_names.count("google_calendar_list_events") == 1
+    assert tool_names.count("notion_create_page") == 1
