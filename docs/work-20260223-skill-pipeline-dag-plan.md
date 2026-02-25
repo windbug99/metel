@@ -45,6 +45,7 @@
   - `docs/sql/009_create_pipeline_links_table.sql`
   - `docs/sql/010_add_pipeline_links_error_columns.sql`
   - `docs/sql/011_add_oauth_tokens_granted_scopes.sql`
+  - `docs/sql/012_add_users_timezone.sql`
 - [x] OAuth 기존 토큰 `granted_scopes` 백필 적용
   - dry-run: `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/backfill_oauth_granted_scopes.py --limit 1000`
   - apply: `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/backfill_oauth_granted_scopes.py --apply --limit 1000`

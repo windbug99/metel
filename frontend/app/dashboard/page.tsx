@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
-import { upsertUserProfile } from "../../lib/profile";
+import { detectBrowserTimezone, updateUserTimezone, upsertUserProfile } from "../../lib/profile";
 
 type UserProfile = {
   id: string;
   email: string | null;
   full_name: string | null;
   created_at: string;
+  timezone: string | null;
 } | null;
 
 type NotionStatus = {
@@ -85,6 +86,9 @@ export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<UserProfile>(null);
+  const [timezoneDraft, setTimezoneDraft] = useState("UTC");
+  const [timezoneSaving, setTimezoneSaving] = useState(false);
+  const [timezoneMessage, setTimezoneMessage] = useState<string | null>(null);
   const [notionStatus, setNotionStatus] = useState<NotionStatus>(null);
   const [notionStatusError, setNotionStatusError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -113,6 +117,36 @@ export default function DashboardPage() {
   const telegramPollTimeoutRef = useRef<number | null>(null);
 
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  const browserTimezone = useMemo(() => detectBrowserTimezone(), []);
+
+  const timezoneOptions = useMemo(() => {
+    try {
+      const supported = Intl.supportedValuesOf?.("timeZone");
+      if (Array.isArray(supported) && supported.length > 0) {
+        return supported;
+      }
+    } catch {
+      // ignore
+    }
+    return [
+      "UTC",
+      "Asia/Seoul",
+      "Asia/Tokyo",
+      "Asia/Singapore",
+      "Europe/London",
+      "Europe/Paris",
+      "America/New_York",
+      "America/Chicago",
+      "America/Denver",
+      "America/Los_Angeles",
+    ];
+  }, []);
+  const timezoneOptionValues = useMemo(() => {
+    if (!timezoneDraft || timezoneOptions.includes(timezoneDraft)) {
+      return timezoneOptions;
+    }
+    return [timezoneDraft, ...timezoneOptions];
+  }, [timezoneDraft, timezoneOptions]);
 
   const getAuthHeaders = useCallback(async () => {
     const {
@@ -398,7 +432,7 @@ export default function DashboardPage() {
 
         const { data } = await supabase
           .from("users")
-          .select("id, email, full_name, created_at")
+          .select("id, email, full_name, created_at, timezone")
           .eq("id", user.id)
           .single();
 
@@ -408,7 +442,7 @@ export default function DashboardPage() {
 
         const { data: refreshed } = await supabase
           .from("users")
-          .select("id, email, full_name, created_at")
+          .select("id, email, full_name, created_at,timezone")
           .eq("id", user.id)
           .single();
 
@@ -422,7 +456,9 @@ export default function DashboardPage() {
           return;
         }
 
-        setProfile(refreshed ?? data ?? null);
+        const loaded = (refreshed ?? data ?? null) as UserProfile;
+        setProfile(loaded);
+        setTimezoneDraft(loaded?.timezone ?? browserTimezone);
       } finally {
         if (mounted) {
           setLoading(false);
@@ -436,6 +472,51 @@ export default function DashboardPage() {
       mounted = false;
     };
   }, [router, fetchNotionStatus, fetchLinearStatus, fetchGoogleStatus, fetchTelegramStatus, fetchCommandLogs]);
+
+  useEffect(() => {
+    if (!profile?.id) {
+      return;
+    }
+    if (profile.timezone) {
+      return;
+    }
+    const defaultTimezone = browserTimezone || "UTC";
+    let cancelled = false;
+    const applyDefaultTimezone = async () => {
+      const { error } = await updateUserTimezone(defaultTimezone);
+      if (cancelled || error) {
+        return;
+      }
+      setProfile((prev) => (prev ? { ...prev, timezone: defaultTimezone } : prev));
+      setTimezoneDraft(defaultTimezone);
+    };
+    void applyDefaultTimezone();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.id, profile?.timezone, browserTimezone]);
+
+  const handleSaveTimezone = useCallback(async () => {
+    if (!profile?.id || timezoneSaving) {
+      return;
+    }
+    const value = timezoneDraft.trim() || "UTC";
+    setTimezoneSaving(true);
+    setTimezoneMessage(null);
+    try {
+      const { error } = await updateUserTimezone(value);
+      if (error) {
+        setTimezoneMessage("Failed to save timezone.");
+        return;
+      }
+      setProfile((prev) => (prev ? { ...prev, timezone: value } : prev));
+      setTimezoneMessage("Timezone saved.");
+    } catch {
+      setTimezoneMessage("Network error while saving timezone.");
+    } finally {
+      setTimezoneSaving(false);
+    }
+  }, [profile?.id, timezoneDraft, timezoneSaving]);
 
   const handleDisconnectNotion = async () => {
     if (!apiBaseUrl || !profile?.id || disconnecting) {
@@ -723,7 +804,7 @@ export default function DashboardPage() {
             {loggingOut ? "Logging out..." : "Logout"}
           </button>
         </div>
-        <div className="mt-4 grid gap-4 sm:grid-cols-3">
+        <div className="mt-4 grid gap-4 sm:grid-cols-4">
           <div>
             <p className="text-xs text-[#8d96a8]">Email</p>
             <p className="mt-1 text-sm text-[#edf0f5]">{profile?.email ?? "-"}</p>
@@ -737,6 +818,37 @@ export default function DashboardPage() {
             <p className="mt-1 text-sm text-[#edf0f5]">
               {profile?.created_at ? new Date(profile.created_at).toLocaleString() : "-"}
             </p>
+          </div>
+          <div>
+            <p className="text-xs text-[#8d96a8]">Timezone</p>
+            <div className="mt-1 flex items-center gap-2">
+              <select
+                value={timezoneDraft}
+                onChange={(event) => {
+                  setTimezoneDraft(event.target.value);
+                  setTimezoneMessage(null);
+                }}
+                className="w-full rounded-md border border-[#353540] bg-[#0f1015] px-2 py-2 text-sm text-[#edf0f5]"
+              >
+                {timezoneOptionValues.map((timezone) => (
+                  <option key={timezone} value={timezone}>
+                    {timezone}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleSaveTimezone();
+                }}
+                disabled={timezoneSaving || !profile?.id || timezoneDraft === (profile?.timezone ?? browserTimezone)}
+                className="rounded-md border border-[#353540] px-3 py-2 text-xs font-medium text-[#edf0f5] disabled:opacity-50"
+              >
+                {timezoneSaving ? "Saving..." : "Save"}
+              </button>
+            </div>
+            <p className="mt-1 text-xs text-[#8d96a8]">Default: browser timezone ({browserTimezone})</p>
+            {timezoneMessage ? <p className="mt-1 text-xs text-[#a5adbc]">{timezoneMessage}</p> : null}
           </div>
         </div>
       </section>

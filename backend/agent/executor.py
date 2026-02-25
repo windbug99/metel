@@ -5,6 +5,7 @@ import re
 from html import unescape
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from fastapi import HTTPException
@@ -83,6 +84,37 @@ def _canonical_scope(provider: str, scope: str) -> str:
         return ""
     alias_map = _SCOPE_ALIASES.get(normalized_provider, {})
     return alias_map.get(value, value)
+
+
+def _normalize_timezone(value: str | None) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return "UTC"
+    try:
+        ZoneInfo(candidate)
+        return candidate
+    except Exception:
+        return "UTC"
+
+
+def _load_user_timezone(user_id: str) -> str:
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    try:
+        rows = (
+            supabase.table("users")
+            .select("timezone")
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return "UTC"
+    if not rows:
+        return "UTC"
+    return _normalize_timezone(str(rows[0].get("timezone") or "").strip())
 
 
 def _load_granted_scopes_map(user_id: str, providers: set[str]) -> dict[str, set[str]]:
@@ -1302,6 +1334,7 @@ def _build_task_tool_payload(
     plan: AgentPlan,
     task: AgentTask,
     task_outputs: dict[str, dict],
+    user_timezone: str = "UTC",
 ) -> dict:
     tool_name = (task.tool_name or "").strip()
     payload = dict(task.payload or {})
@@ -1349,10 +1382,11 @@ def _build_task_tool_payload(
         }
 
     if "google_calendar_list_events" in tool_name:
-        time_min, time_max = _today_utc_range()
+        time_min, time_max = _today_utc_range_for_timezone(user_timezone)
         payload.setdefault("calendar_id", "primary")
         payload.setdefault("time_min", time_min)
         payload.setdefault("time_max", time_max)
+        payload.setdefault("time_zone", user_timezone)
         payload.setdefault("single_events", True)
         payload.setdefault("order_by", "startTime")
         payload.setdefault("max_results", 100)
@@ -1810,6 +1844,7 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
     steps: list[AgentExecutionStep] = []
     slot_context: dict[str, str] = {}
     validated_payloads: list[dict[str, object]] = []
+    user_timezone = _load_user_timezone(user_id)
 
     for task in tasks:
         missing_deps = [dep for dep in task.depends_on if dep not in task_outputs]
@@ -1820,7 +1855,12 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
             tool_name = (task.tool_name or "").strip()
             if not tool_name:
                 return None
-            payload = _build_task_tool_payload(plan=plan, task=task, task_outputs=task_outputs)
+            payload = _build_task_tool_payload(
+                plan=plan,
+                task=task,
+                task_outputs=task_outputs,
+                user_timezone=user_timezone,
+            )
             payload = await _autofill_task_payload(
                 user_id=user_id,
                 plan=plan,
@@ -2647,10 +2687,16 @@ def _event_summary(event: dict) -> str:
     return "제목 없음 회의"
 
 
-def _today_utc_range() -> tuple[str, str]:
-    now_utc = datetime.now(timezone.utc)
-    day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timedelta(days=1)
+def _today_utc_range_for_timezone(tz_name: str) -> tuple[str, str]:
+    try:
+        tzinfo = ZoneInfo(_normalize_timezone(tz_name))
+    except ZoneInfoNotFoundError:
+        tzinfo = timezone.utc
+    now_local = datetime.now(tzinfo)
+    day_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end_local = day_start_local + timedelta(days=1)
+    day_start = day_start_local.astimezone(timezone.utc)
+    day_end = day_end_local.astimezone(timezone.utc)
     return (
         day_start.isoformat().replace("+00:00", "Z"),
         day_end.isoformat().replace("+00:00", "Z"),
@@ -2771,6 +2817,7 @@ async def _execute_google_calendar_to_notion_linear_flow(
     *,
     user_id: str,
     plan: AgentPlan,
+    user_timezone: str = "UTC",
 ) -> AgentExecutionResult | None:
     if not _is_google_calendar_to_notion_linear_request(plan):
         return None
@@ -2809,7 +2856,7 @@ async def _execute_google_calendar_to_notion_linear_flow(
         return compensation_errors
 
     try:
-        time_min, time_max = _today_utc_range()
+        time_min, time_max = _today_utc_range_for_timezone(user_timezone)
         calendar_result = await execute_tool(
             user_id=user_id,
             tool_name=_pick_service_tool(plan, "google", "list_events", "google_calendar_list_events"),
@@ -2817,6 +2864,7 @@ async def _execute_google_calendar_to_notion_linear_flow(
                 "calendar_id": "primary",
                 "time_min": time_min,
                 "time_max": time_max,
+                "time_zone": user_timezone,
                 "single_events": True,
                 "order_by": "startTime",
                 "max_results": 50,
@@ -3355,6 +3403,7 @@ async def _read_page_lines_or_summary(
 
 async def execute_agent_plan(user_id: str, plan: AgentPlan) -> AgentExecutionResult:
     try:
+        user_timezone = _load_user_timezone(user_id)
         if (
             not bool(getattr(get_settings(), "delete_operations_enabled", False))
             and _is_explicit_delete_request(plan.user_text)
@@ -3370,7 +3419,11 @@ async def execute_agent_plan(user_id: str, plan: AgentPlan) -> AgentExecutionRes
         if pipeline_result is not None:
             return pipeline_result
         plan = _ensure_common_tool_tasks(plan)
-        calendar_pipeline_result = await _execute_google_calendar_to_notion_linear_flow(user_id=user_id, plan=plan)
+        calendar_pipeline_result = await _execute_google_calendar_to_notion_linear_flow(
+            user_id=user_id,
+            plan=plan,
+            user_timezone=user_timezone,
+        )
         if calendar_pipeline_result is not None:
             return calendar_pipeline_result
         cross_copy_result = await _execute_cross_service_copy_flow(user_id=user_id, plan=plan)
