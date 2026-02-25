@@ -5,6 +5,8 @@ import logging
 import re
 from html import unescape
 from json import JSONDecodeError
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -29,6 +31,70 @@ _GOOGLE_QUERY_KEY_MAP = {
     "show_hidden": "showHidden",
     "page_token": "pageToken",
 }
+
+
+def _parse_utc_datetime(value: str | None) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _event_start_to_utc(event: dict[str, Any], *, fallback_tz: str) -> datetime | None:
+    start = event.get("start")
+    if not isinstance(start, dict):
+        return None
+    dt_text = str(start.get("dateTime") or "").strip()
+    if dt_text:
+        return _parse_utc_datetime(dt_text)
+    date_text = str(start.get("date") or "").strip()
+    if not date_text:
+        return None
+    try:
+        base = datetime.fromisoformat(date_text)
+    except ValueError:
+        return None
+    try:
+        tzinfo = ZoneInfo(fallback_tz)
+    except ZoneInfoNotFoundError:
+        tzinfo = timezone.utc
+    return base.replace(tzinfo=tzinfo).astimezone(timezone.utc)
+
+
+def _filter_google_events_by_time_range(
+    payload: dict[str, Any],
+    query_params: dict[str, Any],
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    items = data.get("items")
+    if not isinstance(items, list) or not items:
+        return data
+    time_min = _parse_utc_datetime(str(payload.get("time_min") or query_params.get("timeMin") or ""))
+    time_max = _parse_utc_datetime(str(payload.get("time_max") or query_params.get("timeMax") or ""))
+    if not time_min or not time_max:
+        return data
+    tz_name = str(payload.get("time_zone") or query_params.get("timeZone") or "UTC").strip() or "UTC"
+    filtered: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        started = _event_start_to_utc(item, fallback_tz=tz_name)
+        if started is None:
+            # Keep unknown-shape rows instead of dropping valid data accidentally.
+            filtered.append(item)
+            continue
+        if time_min <= started < time_max:
+            filtered.append(item)
+    data["items"] = filtered
+    return data
 
 
 def _load_oauth_access_token(user_id: str, provider: str) -> str:
@@ -618,7 +684,15 @@ async def _execute_generic_http(user_id: str, tool: ToolDefinition, payload: dic
     if response.status_code >= 400:
         mapped = tool.error_map.get(str(response.status_code), "TOOL_FAILED")
         raise HTTPException(status_code=400, detail=f"{tool.tool_name}:{mapped}")
-    return _parse_response_data(response)
+    parsed = _parse_response_data(response)
+    if (
+        tool.service == "google"
+        and tool.tool_name == "google_calendar_list_events"
+        and parsed.get("ok") is True
+        and isinstance(parsed.get("data"), dict)
+    ):
+        parsed["data"] = _filter_google_events_by_time_range(payload, body_or_query, dict(parsed["data"]))
+    return parsed
 
 
 async def _execute_notion_service(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:

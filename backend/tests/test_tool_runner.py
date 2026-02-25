@@ -253,6 +253,75 @@ def test_execute_tool_google_maps_snake_case_query_params(monkeypatch):
     assert _GOOGLE_QUERY_KEY_MAP["time_min"] == "timeMin"
 
 
+def test_execute_tool_google_filters_items_outside_time_range(monkeypatch):
+    tool = ToolDefinition(
+        service="google",
+        base_url="https://www.googleapis.com/calendar/v3",
+        tool_name="google_calendar_list_events",
+        description="list events",
+        method="GET",
+        path="/calendars/{calendar_id}/events",
+        adapter_function="google_calendar_list_events",
+        input_schema={
+            "type": "object",
+            "properties": {"calendar_id": {"type": "string"}},
+            "required": ["calendar_id"],
+        },
+        required_scopes=("https://www.googleapis.com/auth/calendar.readonly",),
+        idempotency_key_policy="none",
+        error_map={},
+    )
+
+    class _Registry:
+        def get_tool(self, tool_name: str):
+            assert tool_name == "google_calendar_list_events"
+            return tool
+
+    class _FakeResponse:
+        status_code = 200
+        text = '{"items":[]}'
+
+        def json(self):
+            return {
+                "items": [
+                    {"summary": "old", "start": {"dateTime": "2023-10-05T18:30:00+09:00"}},
+                    {"summary": "today", "start": {"dateTime": "2026-02-25T18:30:00+09:00"}},
+                ]
+            }
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, headers=None, params=None):
+            _ = (url, headers, params)
+            return _FakeResponse()
+
+        async def request(self, method, url, headers=None, json=None):
+            raise AssertionError("unexpected request call")
+
+        async def delete(self, url, headers=None):
+            raise AssertionError("unexpected delete call")
+
+    monkeypatch.setattr("agent.tool_runner.load_registry", lambda: _Registry())
+    monkeypatch.setattr("agent.tool_runner._load_oauth_access_token", lambda user_id, provider: "google-token")
+    monkeypatch.setattr("agent.tool_runner.httpx.AsyncClient", lambda *args, **kwargs: _FakeClient())
+
+    payload = {
+        "calendar_id": "primary",
+        "time_min": "2026-02-24T15:00:00Z",
+        "time_max": "2026-02-25T15:00:00Z",
+        "time_zone": "Asia/Seoul",
+    }
+    result = asyncio.run(execute_tool("user-1", "google_calendar_list_events", payload))
+    items = (result.get("data") or {}).get("items") or []
+    assert len(items) == 1
+    assert items[0]["summary"] == "today"
+
+
 def test_linear_query_and_variables_list_teams():
     query, variables = _linear_query_and_variables("linear_list_teams", {"first": 7})
     assert "query Teams" in query

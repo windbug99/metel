@@ -318,6 +318,61 @@ def test_build_task_tool_payload_autofills_google_calendar_list_events_defaults(
     assert payload["time_max"].endswith("Z")
 
 
+def test_build_task_tool_payload_forces_today_range_for_today_query():
+    plan = AgentPlan(
+        user_text="구글캘린더에서 오늘 일정 조회",
+        requirements=[AgentRequirement(summary="오늘 일정 조회")],
+        target_services=["google"],
+        selected_tools=["google_calendar_list_events"],
+        workflow_steps=[],
+        notes=[],
+    )
+    task = AgentTask(
+        id="task_google_events",
+        title="오늘 캘린더 이벤트 조회",
+        task_type="TOOL",
+        service="google",
+        tool_name="google_calendar_list_events",
+        payload={
+            "calendar_id": "primary",
+            "time_min": "2023-10-05T00:00:00Z",
+            "time_max": "2023-10-06T00:00:00Z",
+        },
+        depends_on=[],
+    )
+
+    payload = _build_task_tool_payload(plan=plan, task=task, task_outputs={}, user_timezone="Asia/Seoul")
+    assert payload["time_zone"] == "Asia/Seoul"
+    assert payload["time_min"] != "2023-10-05T00:00:00Z"
+    assert payload["time_max"] != "2023-10-06T00:00:00Z"
+    assert payload["time_min"].endswith("Z")
+    assert payload["time_max"].endswith("Z")
+
+
+def test_build_task_tool_payload_forces_single_events_for_today_query():
+    plan = AgentPlan(
+        user_text="구글캘린더에서 오늘 일정 조회",
+        requirements=[AgentRequirement(summary="오늘 일정 조회")],
+        target_services=["google"],
+        selected_tools=["google_calendar_list_events"],
+        workflow_steps=[],
+        notes=[],
+    )
+    task = AgentTask(
+        id="task_google_events",
+        title="오늘 캘린더 이벤트 조회",
+        task_type="TOOL",
+        service="google",
+        tool_name="google_calendar_list_events",
+        payload={"calendar_id": "primary", "single_events": False, "order_by": "updated"},
+        depends_on=[],
+    )
+
+    payload = _build_task_tool_payload(plan=plan, task=task, task_outputs={}, user_timezone="Asia/Seoul")
+    assert payload["single_events"] is True
+    assert payload["order_by"] == "startTime"
+
+
 def test_execute_agent_plan_google_calendar_list_events_includes_title_and_link(monkeypatch):
     async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
         _ = (user_id, payload)

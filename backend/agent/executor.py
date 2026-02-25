@@ -1383,12 +1383,24 @@ def _build_task_tool_payload(
 
     if "google_calendar_list_events" in tool_name:
         time_min, time_max = _today_utc_range_for_timezone(user_timezone)
-        payload.setdefault("calendar_id", "primary")
-        payload.setdefault("time_min", time_min)
-        payload.setdefault("time_max", time_max)
-        payload.setdefault("time_zone", user_timezone)
-        payload.setdefault("single_events", True)
-        payload.setdefault("order_by", "startTime")
+        text = (plan.user_text or "").lower()
+        is_today_query = ("오늘" in plan.user_text) or ("today" in text)
+        payload["calendar_id"] = str(payload.get("calendar_id") or "").strip() or "primary"
+        # If user asked "today", force today's local range to avoid stale/empty LLM slot values.
+        if is_today_query:
+            payload["time_min"] = time_min
+            payload["time_max"] = time_max
+        else:
+            payload["time_min"] = str(payload.get("time_min") or "").strip() or time_min
+            payload["time_max"] = str(payload.get("time_max") or "").strip() or time_max
+        payload["time_zone"] = str(payload.get("time_zone") or "").strip() or user_timezone
+        # For day-range lookups, recurring masters must be expanded into instances.
+        if is_today_query:
+            payload["single_events"] = True
+            payload["order_by"] = "startTime"
+        else:
+            payload["single_events"] = bool(payload.get("single_events", True))
+            payload["order_by"] = str(payload.get("order_by") or "").strip() or "startTime"
         payload.setdefault("max_results", 100)
         return payload
 
