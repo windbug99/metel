@@ -50,7 +50,9 @@ def _parse_detail_pairs(detail: str | None) -> dict[str, str]:
 def _find_latest_dag_row(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     for row in rows:
         detail_map = _parse_detail_pairs(row.get("detail"))
-        if detail_map.get("dag_pipeline") == "1" and detail_map.get("pipeline_run_id"):
+        if detail_map.get("dag_pipeline") == "1":
+            return row
+        if str(row.get("plan_source") or "").strip() == "dag_template":
             return row
     return None
 

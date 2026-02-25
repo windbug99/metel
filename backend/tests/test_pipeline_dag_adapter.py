@@ -1,6 +1,6 @@
 import asyncio
 
-from agent.executor import execute_agent_plan
+from agent.executor import _validate_dag_policy_guards, execute_agent_plan
 from agent.pipeline_error_codes import PipelineErrorCode
 from agent.types import AgentPlan, AgentRequirement, AgentTask
 
@@ -258,3 +258,25 @@ def test_execute_agent_plan_pipeline_dag_policy_guard_fails_closed(monkeypatch):
     assert result.success is False
     assert result.artifacts.get("error_code") == "TOOL_AUTH_ERROR"
     assert result.artifacts.get("failed_step") == "n1"
+
+
+def test_validate_dag_policy_guards_accepts_google_scope_alias(monkeypatch):
+    monkeypatch.setattr("agent.executor.required_scopes_for_skill", lambda _skill: ["calendar.read"])
+    monkeypatch.setattr("agent.executor.service_for_skill", lambda _skill: "google")
+    monkeypatch.setattr(
+        "agent.executor._load_granted_scopes_map",
+        lambda *_args, **_kwargs: {"google": {"https://www.googleapis.com/auth/calendar.readonly"}},
+    )
+
+    ok, reason, failed_step, code = _validate_dag_policy_guards(
+        user_id="u1",
+        pipeline={
+            "nodes": [
+                {"id": "n1", "type": "skill", "name": "google.list_today"},
+            ]
+        },
+    )
+    assert ok is True
+    assert reason is None
+    assert failed_step is None
+    assert code is None

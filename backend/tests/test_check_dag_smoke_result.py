@@ -13,12 +13,22 @@ def test_parse_detail_pairs():
 
 def test_find_latest_dag_row():
     rows = [
-        {"detail": "services=google;pipeline_run_id=prun_a"},
-        {"detail": "services=google;dag_pipeline=1;pipeline_run_id=prun_b"},
+        {"detail": "services=google;pipeline_run_id=prun_a", "plan_source": "llm"},
+        {"detail": "services=google;dag_pipeline=1;pipeline_run_id=prun_b", "plan_source": "dag_template"},
     ]
     row = _find_latest_dag_row(rows)
     assert row is not None
     assert "prun_b" in str(row.get("detail"))
+
+
+def test_find_latest_dag_row_with_dag_template_without_pipeline_run_id():
+    rows = [
+        {"detail": "services=google", "plan_source": "llm"},
+        {"detail": "services=google,notion,linear", "plan_source": "dag_template"},
+    ]
+    row = _find_latest_dag_row(rows)
+    assert row is not None
+    assert row.get("plan_source") == "dag_template"
 
 
 def test_evaluate_smoke_pass_and_fail():

@@ -33,6 +33,13 @@ from app.core.config import get_settings
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 GEMINI_GENERATE_CONTENT_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
+_SCOPE_ALIASES: dict[str, dict[str, str]] = {
+    "google": {
+        "https://www.googleapis.com/auth/calendar.readonly": "calendar.read",
+        "https://www.googleapis.com/auth/calendar": "calendar.read",
+    },
+}
+
 
 def _is_gemini_provider(provider: str) -> bool:
     return provider in {"gemini", "google"}
@@ -69,6 +76,15 @@ def _parse_write_skill_allowlist() -> set[str]:
     }
 
 
+def _canonical_scope(provider: str, scope: str) -> str:
+    normalized_provider = str(provider or "").strip().lower()
+    value = str(scope or "").strip()
+    if not value:
+        return ""
+    alias_map = _SCOPE_ALIASES.get(normalized_provider, {})
+    return alias_map.get(value, value)
+
+
 def _load_granted_scopes_map(user_id: str, providers: set[str]) -> dict[str, set[str]]:
     if not providers:
         return {}
@@ -89,9 +105,17 @@ def _load_granted_scopes_map(user_id: str, providers: set[str]) -> dict[str, set
         scopes_raw = row.get("granted_scopes")
         scopes: set[str] = set()
         if isinstance(scopes_raw, list):
-            scopes = {str(item).strip() for item in scopes_raw if str(item).strip()}
+            scopes = {
+                _canonical_scope(provider, str(item).strip())
+                for item in scopes_raw
+                if str(item).strip() and _canonical_scope(provider, str(item).strip())
+            }
         elif isinstance(scopes_raw, str):
-            scopes = {item.strip() for item in scopes_raw.split(" ") if item.strip()}
+            scopes = {
+                _canonical_scope(provider, item.strip())
+                for item in scopes_raw.split(" ")
+                if item.strip() and _canonical_scope(provider, item.strip())
+            }
         if provider:
             result[provider] = scopes
     return result
@@ -126,11 +150,15 @@ def _validate_dag_policy_guards(
             continue
         node_id = str(node.get("id") or "").strip() or None
         skill_name = str(node.get("name") or "").strip()
-        required = set(required_scopes_for_skill(skill_name))
+        provider = (service_for_skill(skill_name) or "").strip().lower()
+        required = {_canonical_scope(provider, value) for value in required_scopes_for_skill(skill_name) if value}
         if not required:
             continue
-        provider = (service_for_skill(skill_name) or "").strip().lower()
-        granted_scopes = granted.get(provider, set())
+        granted_scopes = {
+            _canonical_scope(provider, value)
+            for value in granted.get(provider, set())
+            if _canonical_scope(provider, value)
+        }
         if not granted_scopes:
             return False, f"oauth_scope_missing:{provider}", node_id, PipelineErrorCode.TOOL_AUTH_ERROR
         if not required.issubset(granted_scopes):
@@ -187,6 +215,7 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
             user_message="DAG 파이프라인 정의가 누락되었거나 형식이 잘못되었습니다.",
             artifacts={
                 "error_code": PipelineErrorCode.DSL_VALIDATION_FAILED.value,
+                "router_mode": "PIPELINE_DAG",
                 "failed_step": str(task.id or "pipeline_dag"),
                 "reason": "pipeline_payload_missing_or_invalid",
                 "retry_hint": _retry_hint_for_pipeline_error(PipelineErrorCode.DSL_VALIDATION_FAILED),
@@ -203,6 +232,7 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
             user_message=f"DAG 실행 전 정책 검증에 실패했습니다. ({resolved.value})",
             artifacts={
                 "error_code": resolved.value,
+                "router_mode": "PIPELINE_DAG",
                 "failed_step": str(failed_step or ""),
                 "reason": str(reason or "dag_policy_validation_failed"),
                 "retry_hint": _retry_hint_for_pipeline_error(resolved),
