@@ -28,6 +28,7 @@
 - [x] Supabase 연결 프리플라이트 스크립트 추가 (`backend/scripts/check_supabase_connectivity.py`)
 - [x] 품질 게이트 스크립트에 Supabase 프리체크 내장 (`run_autonomous_gate.sh`, `run_dag_quality_gate.sh`)
 - [x] 스테이징 스모크 자동 검증 스크립트 추가 (`backend/scripts/check_dag_smoke_result.py`)
+- [x] `agent.loop` 경로에 calendar->notion->linear DAG fast-path 연결 (`plan_source=dag_template`)
 
 ## 0.1) 배포 전 필수 체크리스트 (DAG)
 - [x] DB 마이그레이션 적용

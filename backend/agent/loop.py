@@ -17,13 +17,14 @@ from agent.intent_keywords import (
 )
 from agent.pending_action import PendingActionStorageError, clear_pending_action, get_pending_action, set_pending_action
 from agent.orchestrator_v2 import try_run_v2_orchestration
+from agent.pipeline_fixtures import build_google_calendar_to_notion_linear_pipeline
 from agent.plan_contract import validate_plan_contract
 from agent.planner import build_agent_plan
 from agent.planner_llm import try_build_agent_plan_with_llm
 from agent.registry import load_registry
 from agent.slot_collector import collect_slots_from_user_reply, slot_prompt_example
 from agent.slot_schema import get_action_slot_schema
-from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRunResult, AgentTask
+from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRequirement, AgentRunResult, AgentTask
 from app.core.config import get_settings
 
 
@@ -92,6 +93,56 @@ def _is_delete_intent(text: str) -> bool:
         r"(?i)\barchive\b",
     ]
     return _is_delete_intent_shared(text) or any(re.search(pattern, text) for pattern in patterns)
+
+
+def _mentions_service(text: str, service: str) -> bool:
+    lower = text.lower()
+    if service == "notion":
+        return ("notion" in lower) or ("노션" in text)
+    if service == "linear":
+        return ("linear" in lower) or ("리니어" in text)
+    return False
+
+
+def _is_calendar_pipeline_intent(user_text: str, connected_services: list[str]) -> bool:
+    connected = {item.strip().lower() for item in connected_services if item and item.strip()}
+    if not {"google", "notion", "linear"}.issubset(connected):
+        return False
+    text = user_text or ""
+    lower = text.lower()
+    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "회의", "일정"))
+    if not has_calendar:
+        return False
+    has_notion = _mentions_service(text, "notion")
+    has_linear = _mentions_service(text, "linear")
+    if not (has_notion and has_linear):
+        return False
+    return is_create_intent(text) or is_update_intent(text)
+
+
+def _build_calendar_pipeline_plan(user_text: str) -> AgentPlan:
+    pipeline = build_google_calendar_to_notion_linear_pipeline(user_text=user_text)
+    return AgentPlan(
+        user_text=user_text,
+        requirements=[AgentRequirement(summary="calendar_notion_linear_pipeline")],
+        target_services=["google", "notion", "linear"],
+        selected_tools=["google_calendar_list_events", "notion_create_page", "linear_create_issue"],
+        workflow_steps=[
+            "1. Google Calendar 조회",
+            "2. 각 회의를 Notion 페이지로 생성",
+            "3. 각 회의를 Linear 이슈로 생성",
+            "4. 개수 검증",
+        ],
+        tasks=[
+            AgentTask(
+                id="task_pipeline_dag_calendar_notion_linear",
+                title="calendar->notion->linear DAG",
+                task_type="PIPELINE_DAG",
+                payload={"pipeline": pipeline, "ctx": {"enabled": True}},
+            )
+        ],
+        notes=["planner=loop", "router_mode=PIPELINE_DAG", "plan_source=dag_template"],
+    )
 
 
 def _plan_consistency_reason(user_text: str, selected_tools: list[str]) -> str | None:
@@ -1104,6 +1155,23 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             result_summary=execution.summary,
             execution=execution,
             plan_source="rule",
+        )
+
+    if _is_calendar_pipeline_intent(user_text, connected_services):
+        dag_plan = _build_calendar_pipeline_plan(user_text)
+        execution = await execute_agent_plan(user_id=user_id, plan=dag_plan)
+        finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
+        execution.user_message = finalized_message
+        if finalizer_mode != "disabled":
+            dag_plan.notes.append(f"response_finalizer={finalizer_mode}")
+        dag_plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+        return AgentRunResult(
+            ok=execution.success,
+            stage="execution",
+            plan=dag_plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="dag_template",
         )
 
     pre_notes: list[str] = []
