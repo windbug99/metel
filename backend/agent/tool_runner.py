@@ -97,6 +97,86 @@ def _filter_google_events_by_time_range(
     return data
 
 
+async def _fetch_google_calendar_events_with_primary_fallback(
+    *,
+    client: httpx.AsyncClient,
+    tool: ToolDefinition,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    query_params: dict[str, Any],
+    parsed: dict[str, Any],
+) -> dict[str, Any]:
+    if parsed.get("ok") is not True or not isinstance(parsed.get("data"), dict):
+        return parsed
+    calendar_id = str(payload.get("calendar_id") or "").strip().lower()
+    if calendar_id != "primary":
+        return parsed
+    data = dict(parsed.get("data") or {})
+    items = data.get("items") or []
+    if isinstance(items, list) and items:
+        return parsed
+
+    # Fallback: primary is empty, so scan visible calendars and aggregate today's events.
+    list_url = f"{tool.base_url}/users/me/calendarList"
+    list_params = {"maxResults": 50, "showDeleted": False, "showHidden": False}
+    list_response = await client.get(list_url, headers=headers, params=list_params)
+    if list_response.status_code >= 400:
+        return parsed
+    listed = _parse_response_data(list_response)
+    listed_data = listed.get("data") if isinstance(listed, dict) else None
+    calendar_items = (listed_data or {}).get("items") if isinstance(listed_data, dict) else None
+    if not isinstance(calendar_items, list) or not calendar_items:
+        return parsed
+
+    merged: list[dict[str, Any]] = []
+    for cal in calendar_items[:10]:
+        if not isinstance(cal, dict):
+            continue
+        cal_id = str(cal.get("id") or "").strip()
+        if not cal_id or cal_id.lower() == "primary":
+            continue
+        selected = cal.get("selected")
+        if selected is False:
+            continue
+        path = _build_path(tool.path, {"calendar_id": cal_id})
+        url = f"{tool.base_url}{path}"
+        response = await client.get(url, headers=headers, params=query_params)
+        if response.status_code >= 400:
+            continue
+        extra = _parse_response_data(response)
+        if extra.get("ok") is not True or not isinstance(extra.get("data"), dict):
+            continue
+        filtered = _filter_google_events_by_time_range(payload, query_params, dict(extra.get("data") or {}))
+        sub_items = filtered.get("items") or []
+        if not isinstance(sub_items, list):
+            continue
+        for item in sub_items:
+            if isinstance(item, dict):
+                merged.append(item)
+
+    if not merged:
+        return parsed
+
+    def _dedupe_key(event: dict[str, Any]) -> tuple[str, str, str]:
+        event_id = str(event.get("id") or "").strip()
+        i_cal_uid = str(event.get("iCalUID") or "").strip()
+        start = event.get("start") if isinstance(event.get("start"), dict) else {}
+        start_text = str((start or {}).get("dateTime") or (start or {}).get("date") or "").strip()
+        return event_id, i_cal_uid, start_text
+
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for event in merged:
+        key = _dedupe_key(event)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(event)
+
+    data["items"] = deduped
+    return {"ok": True, "data": data}
+
+
 def _load_oauth_access_token(user_id: str, provider: str) -> str:
     settings = get_settings()
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
@@ -691,6 +771,16 @@ async def _execute_generic_http(user_id: str, tool: ToolDefinition, payload: dic
         and parsed.get("ok") is True
         and isinstance(parsed.get("data"), dict)
     ):
+        if method == "GET":
+            async with httpx.AsyncClient(timeout=20) as client:
+                parsed = await _fetch_google_calendar_events_with_primary_fallback(
+                    client=client,
+                    tool=tool,
+                    headers=headers,
+                    payload=payload,
+                    query_params=body_or_query,
+                    parsed=parsed,
+                )
         parsed["data"] = _filter_google_events_by_time_range(payload, body_or_query, dict(parsed["data"]))
     return parsed
 
