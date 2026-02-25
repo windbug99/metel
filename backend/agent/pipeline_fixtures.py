@@ -22,8 +22,8 @@ def build_google_calendar_to_notion_linear_pipeline(*, user_text: str) -> dict:
                 "depends_on": [],
                 "input": {},
                 "when": "$ctx.enabled == true",
-                "retry": {"max_attempts": 1, "backoff_ms": 300},
-                "timeout_sec": 20,
+                "retry": {"max_attempts": 2, "backoff_ms": 500},
+                "timeout_sec": 45,
             },
             {
                 "id": "n2",
@@ -33,7 +33,7 @@ def build_google_calendar_to_notion_linear_pipeline(*, user_text: str) -> dict:
                 "input": {},
                 "source_ref": "$n1.events",
                 "item_node_ids": ["n2_1", "n2_2", "n2_3"],
-                "timeout_sec": 20,
+                "timeout_sec": 60,
             },
             {
                 "id": "n2_1",
@@ -60,7 +60,7 @@ def build_google_calendar_to_notion_linear_pipeline(*, user_text: str) -> dict:
                     "additionalProperties": True,
                 },
                 "retry": {"max_attempts": 2, "backoff_ms": 200},
-                "timeout_sec": 20,
+                "timeout_sec": 30,
             },
             {
                 "id": "n2_2",
@@ -71,8 +71,8 @@ def build_google_calendar_to_notion_linear_pipeline(*, user_text: str) -> dict:
                     "title": "$n2_1.notion_title",
                     "body": "$n2_1.notion_body",
                 },
-                "retry": {"max_attempts": 1, "backoff_ms": 300},
-                "timeout_sec": 20,
+                "retry": {"max_attempts": 2, "backoff_ms": 500},
+                "timeout_sec": 45,
             },
             {
                 "id": "n2_3",
@@ -84,8 +84,8 @@ def build_google_calendar_to_notion_linear_pipeline(*, user_text: str) -> dict:
                     "title": "$n2_1.linear_title",
                     "description": "$n2_1.linear_description",
                 },
-                "retry": {"max_attempts": 1, "backoff_ms": 300},
-                "timeout_sec": 20,
+                "retry": {"max_attempts": 2, "backoff_ms": 500},
+                "timeout_sec": 45,
             },
             {
                 "id": "n3",
@@ -94,7 +94,7 @@ def build_google_calendar_to_notion_linear_pipeline(*, user_text: str) -> dict:
                 "depends_on": ["n2"],
                 "input": {},
                 "rules": ["$n2.item_count >= 0"],
-                "timeout_sec": 20,
+                "timeout_sec": 30,
             },
         ],
     }
