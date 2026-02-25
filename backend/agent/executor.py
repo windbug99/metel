@@ -254,7 +254,43 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                 code=PipelineErrorCode.DSL_VALIDATION_FAILED,
                 reason=f"runtime_tool_not_found:{skill_name}",
             )
-        raw = await execute_tool(run_user_id, tool_name, payload)
+        normalized_payload = dict(payload or {})
+        if skill_name == "notion.page_create":
+            # Skill contract uses title/body abstraction, while runtime tool requires
+            # Notion API shape parent/properties.
+            if "properties" not in normalized_payload:
+                title = str(normalized_payload.pop("title", "") or "").strip()
+                if title:
+                    normalized_payload["properties"] = {
+                        "title": {
+                            "title": [
+                                {
+                                    "type": "text",
+                                    "text": {"content": title},
+                                }
+                            ]
+                        }
+                    }
+            if "parent" not in normalized_payload:
+                normalized_payload["parent"] = {"workspace": True}
+            body = str(normalized_payload.pop("body", "") or "").strip()
+            if body and "children" not in normalized_payload:
+                normalized_payload["children"] = [
+                    {
+                        "object": "block",
+                        "type": "paragraph",
+                        "paragraph": {
+                            "rich_text": [
+                                {
+                                    "type": "text",
+                                    "text": {"content": body},
+                                }
+                            ]
+                        },
+                    }
+                ]
+
+        raw = await execute_tool(run_user_id, tool_name, normalized_payload)
         if not isinstance(raw, dict):
             return raw
         output = raw.get("data", {})

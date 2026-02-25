@@ -354,6 +354,44 @@ def test_execute_agent_plan_pipeline_accepts_google_items_without_description(mo
     assert result.artifacts.get("router_mode") == "PIPELINE_DAG"
 
 
+def test_execute_agent_plan_pipeline_maps_notion_page_create_payload(monkeypatch):
+    seen_payloads: list[dict] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict) -> dict:
+        _ = user_id
+        if tool_name == "notion_create_page":
+            seen_payloads.append(dict(payload))
+            return {"ok": True, "data": {"id": "page-1"}}
+        raise AssertionError(f"unexpected tool {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._validate_dag_policy_guards", lambda **kwargs: (True, None, None, None))
+    monkeypatch.setattr("agent.executor.persist_pipeline_links", lambda *, links: True)
+
+    pipeline = {
+        "pipeline_id": "p_notion_payload_map",
+        "version": "1.0",
+        "limits": {"max_nodes": 6, "max_fanout": 50, "max_tool_calls": 200, "pipeline_timeout_sec": 300},
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "skill",
+                "name": "notion.page_create",
+                "depends_on": [],
+                "input": {"title": "회의록", "body": "오늘 안건"},
+                "timeout_sec": 20,
+            }
+        ],
+    }
+    result = asyncio.run(execute_agent_plan("u1", _build_dag_plan(pipeline)))
+    assert result.success is True
+    assert seen_payloads
+    sent = seen_payloads[0]
+    assert "parent" in sent
+    assert "properties" in sent
+    assert sent["properties"]["title"]["title"][0]["text"]["content"] == "회의록"
+
+
 def test_validate_dag_policy_guards_accepts_google_scope_alias(monkeypatch):
     monkeypatch.setattr("agent.executor.required_scopes_for_skill", lambda _skill: ["calendar.read"])
     monkeypatch.setattr("agent.executor.service_for_skill", lambda _skill: "google")
