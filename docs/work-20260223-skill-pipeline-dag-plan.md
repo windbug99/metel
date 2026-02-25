@@ -1,5 +1,73 @@
 # Skill Pipeline DAG 에이전트화 작업 계획 (2026-02-23)
 
+## 0) 진행 체크리스트 (업데이트: 2026-02-25)
+- [x] 새 작업 브랜치 생성 (`feature-20260223-skill-pipeline-dag-impl`)
+- [x] Pipeline DSL 스키마/기본 제약 반영 (`backend/agent/pipeline_dsl_schema.json`)
+- [x] DAG 런타임 MVP 추가 (`backend/agent/pipeline_dag.py`)
+- [x] `when` 미니문법 평가기 추가 (`evaluate_when`)
+- [x] `$ref` resolver 추가 (`resolve_ref`)
+- [x] `for_each` 순차 fan-out + `verify` 노드 실행 지원
+- [x] executor에 `PIPELINE_DAG` 어댑터 연결 (`backend/agent/executor.py`)
+- [x] 실패 응답 계약 필드 1차 반영 (`failed_item_ref`, `failed_step`, `reason`, `retry_hint`, `compensation_status`)
+- [x] orchestrator에서 대표 시나리오를 DAG로 컴파일하는 진입 경로 추가
+- [x] Transform LLM JSON schema 보정 재시도(최대 2회) 구현
+- [x] Google Calendar -> Notion -> Linear 데모 파이프라인 fixture/E2E 연결
+- [x] all-or-nothing 보상 트랜잭션(Saga) 적용 (1차: item 실패 시 역순 보상 훅/상태 반영)
+- [x] write idempotency key 강제 및 중복 생성 차단 (1차: 동일 payload mutation 재호출 시 결과 재사용)
+- [x] DAG 품질 리포트/게이트 스크립트 추가 (`eval_dag_quality.py`, `run_dag_quality_gate.sh`)
+- [x] 운영 루프에 DAG 게이트 통합 및 정책 추천 병합 적용 (`run_hybrid_learning_loop.sh`, `apply_agent_policy_recommendations.py`)
+- [x] `pipeline_links` 영속 매핑 구현 (SQL + DAG 성공 시 upsert 연결)
+- [x] 실패/보상 상태를 `pipeline_links.status`로 동기화 (`failed|manual_required`)
+- [x] `pipeline_links` 실패 원인 컬럼 확장 (`error_code`, `compensation_status`) 및 저장 연동
+- [x] `pipeline_links` 조회 API 추가 (`GET /api/pipeline-links/recent`)
+- [x] `pipeline_links` 조회 API cursor pagination 추가 (`cursor_updated_at`, `next_cursor_updated_at`)
+- [x] `dag_quality`에 `pipeline_links.error_code` 분포 지표 추가
+- [x] DAG write allowlist + OAuth scope fail-closed 검증 추가 (`executor` policy guard, `oauth_tokens.granted_scopes`)
+- [x] OAuth `granted_scopes` 백필 스크립트 추가 (`backend/scripts/backfill_oauth_granted_scopes.py`)
+- [x] 게이트/백필 스크립트 데이터소스 오류 진단 출력 개선 (`SUPABASE_URL`, host, 네트워크 점검 힌트)
+- [x] Supabase 연결 프리플라이트 스크립트 추가 (`backend/scripts/check_supabase_connectivity.py`)
+- [x] 품질 게이트 스크립트에 Supabase 프리체크 내장 (`run_autonomous_gate.sh`, `run_dag_quality_gate.sh`)
+- [x] 스테이징 스모크 자동 검증 스크립트 추가 (`backend/scripts/check_dag_smoke_result.py`)
+
+## 0.1) 배포 전 필수 체크리스트 (DAG)
+- [x] DB 마이그레이션 적용
+  - `docs/sql/009_create_pipeline_links_table.sql`
+  - `docs/sql/010_add_pipeline_links_error_columns.sql`
+  - `docs/sql/011_add_oauth_tokens_granted_scopes.sql`
+- [x] OAuth 기존 토큰 `granted_scopes` 백필 적용
+  - dry-run: `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/backfill_oauth_granted_scopes.py --limit 1000`
+  - apply: `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/backfill_oauth_granted_scopes.py --apply --limit 1000`
+- [x] DAG 핵심 회귀 테스트 통과
+  - `cd backend && . .venv/bin/activate && PYTHONPATH=. pytest -q tests/test_pipeline_dag.py tests/test_pipeline_dag_adapter.py tests/test_pipeline_fixture_e2e.py tests/test_pipeline_links.py tests/test_pipeline_links_route.py tests/test_eval_dag_quality.py tests/test_apply_policy_recommendations.py`
+- [ ] 운영 품질 게이트 통과
+  - `cd backend && . .venv/bin/activate && ./scripts/run_autonomous_gate.sh`
+  - `cd backend && . .venv/bin/activate && ./scripts/run_dag_quality_gate.sh`
+- [x] Supabase 연결 프리체크 PASS
+  - `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/check_supabase_connectivity.py --timeout-sec 5`
+- [ ] 스테이징 스모크 시나리오 1회 수행
+  - 요청: `구글캘린더 오늘 회의를 notion 페이지로 만들고 linear 이슈로 등록해줘`
+  - 확인:
+    - `command_logs.detail`에 `dag_pipeline=1`, `pipeline_run_id`
+    - `pipeline_links`에 `status=succeeded` row 생성
+    - `docs/reports/dag_quality_latest.json` 생성 및 `verdict=PASS`
+  - 자동 검증: `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/check_dag_smoke_result.py --limit 100`
+- [x] 프리배포 자동 점검 스크립트 추가
+  - `backend/scripts/predeploy_dag_checklist.sh`
+  - 실행: `cd backend && . .venv/bin/activate && ./scripts/predeploy_dag_checklist.sh`
+
+### 실행 메모 (2026-02-25)
+- Supabase 연결 확인 완료
+  - `check_supabase_connectivity.py`: `dns=OK`, `http status=200`, `verdict=PASS`
+- OAuth `granted_scopes` 백필 적용 완료
+  - `scanned=5`, `candidates=3`, `updated=3`
+- 현재 남은 블로커
+  - `run_autonomous_gate.sh`: `verdict=FAIL`
+    - `autonomous_success_rate_below_target`
+    - `fallback_rate_above_target`
+    - `autonomous_attempt_rate_below_target`
+    - `autonomous_success_over_attempt_below_target`
+  - `run_dag_quality_gate.sh`: `verdict=FAIL` (`insufficient_sample:0<20`)
+
 ## 1) 배경과 목표
 - 목표: 연속적인 SKILL 사용 요청을 안정적으로 처리하는 에이전트 런타임 구축
 - 대표 시나리오:
@@ -250,11 +318,11 @@
 - `순차`로 확정
 
 ## 12) 즉시 실행 항목 (다음 작업)
-1. DSL 스키마 초안 작성(JSONSchema)
-2. `when` 미니문법(연산자/허용 함수) 확정
-3. ref 문법(`$node.path`)과 resolver 구현
-4. executor에 DSL adapter 계층 추가
-5. Google Calendar -> Notion -> Linear 데모 파이프라인 fixture 추가
+1. [x] DSL 스키마 초안 작성(JSONSchema)
+2. [x] `when` 미니문법(연산자/허용 함수) 확정
+3. [x] ref 문법(`$node.path`)과 resolver 구현
+4. [x] executor에 DSL adapter 계층 추가
+5. [x] Google Calendar -> Notion -> Linear 데모 파이프라인 fixture 추가
 
 ## 13) 구현 스펙 (DSL)
 ### 13.1 Pipeline DSL v1 (최소 스키마)

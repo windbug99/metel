@@ -24,6 +24,9 @@ if [[ -f ".venv/bin/activate" ]]; then
   source .venv/bin/activate
 fi
 
+echo "[gate] preflight: supabase connectivity"
+PYTHONPATH=. python scripts/check_supabase_connectivity.py --timeout-sec 5
+
 python scripts/eval_agent_quality.py \
   --limit "${LIMIT}" \
   --min-sample "${MIN_SAMPLE}" \

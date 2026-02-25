@@ -1,0 +1,95 @@
+{
+  "sample_size": 30,
+  "min_sample": 20,
+  "autonomous_success": 0,
+  "autonomous_count": 0,
+  "autonomous_success_rate": 0.0,
+  "autonomous_attempt_count": 13,
+  "autonomous_attempt_rate": 0.43333333333333335,
+  "autonomous_success_over_attempt_rate": 0.0,
+  "planner_failed_count": 0,
+  "planner_failed_rate": 0.0,
+  "verification_failed_count": 0,
+  "verification_failed_rate": 0.0,
+  "guardrail_degrade_count": 0,
+  "guardrail_degrade_rate": 0.0,
+  "fallback_count": 13,
+  "fallback_rate": 0.43333333333333335,
+  "top_fallback": [
+    [
+      "llm_unavailable",
+      6
+    ],
+    [
+      "auth_error",
+      3
+    ],
+    [
+      "calendar_pipeline_failed",
+      2
+    ],
+    [
+      "realtime_data_unavailable",
+      2
+    ]
+  ],
+  "top_verification": [],
+  "top_error_codes": [
+    [
+      "llm_unavailable",
+      6
+    ],
+    [
+      "auth_error",
+      3
+    ],
+    [
+      "calendar_pipeline_failed",
+      2
+    ],
+    [
+      "realtime_data_unavailable",
+      2
+    ]
+  ],
+  "top_guardrail_degrade": [],
+  "top_plan_source": [
+    [
+      "router_v2",
+      17
+    ],
+    [
+      "rule",
+      7
+    ],
+    [
+      "llm",
+      6
+    ]
+  ],
+  "top_execution_mode": [
+    [
+      "router_v2",
+      17
+    ],
+    [
+      "rule",
+      13
+    ]
+  ],
+  "tuning_hints": [],
+  "policy_recommendations": [
+    {
+      "env_key": "TOOL_SPECS_VALIDATE_ON_STARTUP",
+      "suggested_value": "true",
+      "reason": "초기 검증/구성 점검을 강화해 인증 관련 실패를 조기 탐지하세요."
+    }
+  ],
+  "gate_reasons": [
+    "autonomous_success_rate_below_target: 0.000 < 0.800",
+    "fallback_rate_above_target: 0.433 > 0.200",
+    "autonomous_attempt_rate_below_target: 0.433 < 0.500",
+    "autonomous_success_over_attempt_below_target: 0.000 < 0.700"
+  ],
+  "verdict": "FAIL"
+}

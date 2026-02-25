@@ -136,6 +136,24 @@ def runtime_tools_for_skill(skill_name: str) -> list[str]:
     return out
 
 
+def required_scopes_for_skill(skill_name: str) -> list[str]:
+    contract = load_contract_by_name(skill_name)
+    if not contract:
+        return []
+    provider = contract.get("provider")
+    if not isinstance(provider, dict):
+        return []
+    scopes = provider.get("scopes")
+    if not isinstance(scopes, list):
+        return []
+    out: list[str] = []
+    for scope in scopes:
+        value = str(scope or "").strip()
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
 def infer_skill_name_from_runtime_tools(selected_tools: list[str]) -> str | None:
     requested = [str(item or "").strip() for item in selected_tools if str(item or "").strip()]
     if not requested:

@@ -20,6 +20,7 @@ def test_contract_files_exist_for_core_skills():
     assert "linear_issue_search.json" in names
     assert "linear_issue_update.json" in names
     assert "linear_issue_delete.json" in names
+    assert "google_calendar_list_today.json" in names
     assert "web_url_fetch_text.json" in names
 
 
@@ -54,15 +55,18 @@ def test_load_contract_returns_dict_for_valid_file():
 def test_runtime_tools_for_services_uses_contracts():
     notion_tools = set(runtime_tools_for_services(["notion"]))
     linear_tools = set(runtime_tools_for_services(["linear"]))
+    google_tools = set(runtime_tools_for_services(["google"]))
     assert "notion_create_page" in notion_tools
     assert "notion_search" in notion_tools
     assert "linear_create_issue" in linear_tools
     assert "linear_search_issues" in linear_tools
+    assert "google_calendar_list_events" in google_tools
 
 
 def test_service_for_skill_reads_contract_provider():
     assert service_for_skill("notion.page_create") == "notion"
     assert service_for_skill("linear.issue_search") == "linear"
+    assert service_for_skill("google.list_today") == "google"
     assert service_for_skill("unknown.skill") is None
 
 

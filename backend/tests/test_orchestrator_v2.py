@@ -7,6 +7,7 @@ from agent.orchestrator_v2 import (
     MODE_LLM_ONLY,
     MODE_LLM_THEN_SKILL,
     MODE_SKILL_THEN_LLM,
+    _build_calendar_pipeline_plan,
     _extract_linear_update_description_text,
     _parse_router_payload,
     build_intent_json,
@@ -19,6 +20,57 @@ from agent.orchestrator_v2 import (
 def test_route_request_v2_defaults_to_llm_only():
     decision = route_request_v2("오늘 서울 날씨 알려줘", ["notion", "linear"])
     assert decision.mode == MODE_LLM_ONLY
+
+
+def test_build_calendar_pipeline_plan_contains_pipeline_dag_task():
+    plan = _build_calendar_pipeline_plan("구글캘린더 회의를 notion과 linear에 등록")
+    assert plan.tasks
+    assert plan.tasks[0].task_type == "PIPELINE_DAG"
+    payload = plan.tasks[0].payload
+    assert isinstance(payload.get("pipeline"), dict)
+    assert payload["pipeline"]["pipeline_id"] == "google_calendar_to_notion_linear_v1"
+
+
+def test_try_run_v2_orchestration_uses_pipeline_dag_path_when_enabled(monkeypatch):
+    class _Settings:
+        skill_runner_v2_enabled = True
+
+    async def _fake_execute_agent_plan(user_id: str, plan):
+        _ = user_id
+        assert plan.tasks[0].task_type == "PIPELINE_DAG"
+        return type(
+            "_Exec",
+            (),
+            {
+                "success": True,
+                "summary": "DAG 파이프라인 실행 완료",
+                "user_message": "ok",
+                "artifacts": {"router_mode": "PIPELINE_DAG"},
+                "steps": [],
+            },
+        )()
+
+    async def _forbidden_build_intent_json(**kwargs):
+        _ = kwargs
+        raise AssertionError("build_intent_json should not run on DAG fast-path")
+
+    monkeypatch.setattr("agent.orchestrator_v2.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.orchestrator_v2.validate_all_contracts", lambda: (9, {}))
+    monkeypatch.setattr("agent.orchestrator_v2.execute_agent_plan", _fake_execute_agent_plan)
+    monkeypatch.setattr("agent.orchestrator_v2.build_intent_json", _forbidden_build_intent_json)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="구글캘린더 오늘 회의를 notion 페이지로 만들고 linear 이슈로 등록해줘",
+            connected_services=["google", "notion", "linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert result.execution.artifacts.get("router_mode") == "PIPELINE_DAG"
 
 
 def test_parse_router_payload_accepts_valid_skill_mode():

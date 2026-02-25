@@ -14,10 +14,12 @@ from agent.skill_contracts import (
     service_for_skill,
     validate_all_contracts,
 )
+from agent.executor import execute_agent_plan
+from agent.pipeline_fixtures import build_google_calendar_to_notion_linear_pipeline
 from agent.intent_contract import IntentPayload, IntentValidationError, validate_intent_json
 from agent import intent_normalizer
 from agent.tool_runner import execute_tool
-from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRequirement, AgentRunResult
+from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRequirement, AgentRunResult, AgentTask
 from app.core.config import get_settings
 
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
@@ -289,6 +291,54 @@ def _is_analysis_intent(text: str) -> bool:
     lower = text.lower()
     tokens = ("정리", "요약", "해결", "방법", "분석", "explain", "how", "solve", "summar")
     return any(token in lower for token in tokens)
+
+
+def _is_calendar_pipeline_intent(user_text: str, connected_services: list[str]) -> bool:
+    connected = {item.strip().lower() for item in connected_services if item and item.strip()}
+    if not {"google", "notion", "linear"}.issubset(connected):
+        return False
+    text = user_text or ""
+    lower = text.lower()
+    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "회의", "일정"))
+    if not has_calendar:
+        return False
+    has_notion = _mentions_service(text, "notion")
+    has_linear = _mentions_service(text, "linear")
+    if not (has_notion and has_linear):
+        return False
+    return _is_create_intent(text) or _is_write_intent(text)
+
+
+def _build_calendar_pipeline_dag(user_text: str) -> dict:
+    return build_google_calendar_to_notion_linear_pipeline(user_text=user_text)
+
+
+def _build_calendar_pipeline_plan(user_text: str) -> AgentPlan:
+    pipeline = _build_calendar_pipeline_dag(user_text)
+    return AgentPlan(
+        user_text=user_text,
+        requirements=[AgentRequirement(summary="calendar_notion_linear_pipeline")],
+        target_services=["google", "notion", "linear"],
+        selected_tools=["google_calendar_list_events", "notion_create_page", "linear_create_issue"],
+        workflow_steps=[
+            "1. Google Calendar 조회",
+            "2. 각 회의를 Notion 페이지로 생성",
+            "3. 각 회의를 Linear 이슈로 생성",
+            "4. 개수 검증",
+        ],
+        tasks=[
+            AgentTask(
+                id="task_pipeline_dag_calendar_notion_linear",
+                title="calendar->notion->linear DAG",
+                task_type="PIPELINE_DAG",
+                payload={
+                    "pipeline": pipeline,
+                    "ctx": {"enabled": True},
+                },
+            )
+        ],
+        notes=["planner=router_v2", "router_mode=PIPELINE_DAG", "plan_source=dag_template"],
+    )
 
 
 def _extract_linear_issue_reference(text: str) -> str | None:
@@ -2333,6 +2383,22 @@ async def try_run_v2_orchestration(
             plan=fallback_plan,
             result_summary=execution.summary,
             execution=execution,
+            plan_source="router_v2",
+        )
+
+    settings = get_settings()
+    if bool(getattr(settings, "skill_runner_v2_enabled", False)) and _is_calendar_pipeline_intent(
+        user_text=user_text,
+        connected_services=connected_services,
+    ):
+        dag_plan = _build_calendar_pipeline_plan(user_text)
+        dag_execution = await execute_agent_plan(user_id, dag_plan)
+        return AgentRunResult(
+            ok=bool(dag_execution.success),
+            stage="execution",
+            plan=dag_plan,
+            result_summary=dag_execution.summary,
+            execution=dag_execution,
             plan_source="router_v2",
         )
 

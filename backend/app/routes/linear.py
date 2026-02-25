@@ -116,12 +116,15 @@ async def linear_oauth_callback(code: str, state: str):
         logger.warning("linear viewer query failed during oauth callback")
 
     encrypted = TokenVault(settings.notion_token_encryption_key).encrypt(access_token)
+    granted_scope_text = str(payload.get("scope") or "").strip()
+    granted_scopes = [item.strip() for item in granted_scope_text.split(" ") if item.strip()] or ["read", "write"]
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
     supabase.table("oauth_tokens").upsert(
         {
             "user_id": user_id,
             "provider": "linear",
             "access_token_encrypted": encrypted,
+            "granted_scopes": granted_scopes,
             "workspace_id": viewer_id,
             "workspace_name": viewer_name,
             "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -216,4 +219,3 @@ async def linear_issues_list(request: Request, first: int = Query(5, ge=1, le=20
         for node in nodes
     ]
     return {"ok": True, "count": len(issues), "issues": issues}
-

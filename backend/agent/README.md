@@ -16,6 +16,7 @@ This folder contains the LLM agent runtime contract for metel.
 - `service_resolver.py`: infer target services from user request
 - `guide_retriever.py`: load summarized guide snippets from `docs/api_guides`
 - `registry.py`: load/validate tool specs and dispatch adapter functions
+- `pipeline_dag.py`: validate/evaluate/execute Pipeline DSL DAG (`when`, `$ref`, `for_each`)
 - `loop.py`: tool-calling loop with verification and retry policy
 - `safety.py`: hard limits and guardrails
 - `observability.py`: step-level logs and request tracing
@@ -24,3 +25,12 @@ This folder contains the LLM agent runtime contract for metel.
 
 LLM must only call tools declared in `tool_specs/*.json`.
 Human-readable API guides are references for planning, not direct execution contracts.
+
+## DAG Ops Quickcheck
+
+- Supabase connectivity preflight:
+  - `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/check_supabase_connectivity.py --timeout-sec 5`
+- Agent quality gate (includes preflight):
+  - `cd backend && . .venv/bin/activate && ./scripts/run_autonomous_gate.sh`
+- DAG quality gate (includes preflight):
+  - `cd backend && . .venv/bin/activate && ./scripts/run_dag_quality_gate.sh`
