@@ -53,6 +53,7 @@
 - [ ] 운영 품질 게이트 통과
   - `cd backend && . .venv/bin/activate && ./scripts/run_autonomous_gate.sh`
   - `cd backend && . .venv/bin/activate && ./scripts/run_dag_quality_gate.sh`
+  - 현재 상태(2026-02-25): `autonomous=FAIL`, `dag=PASS`
 - [x] Supabase 연결 프리체크 PASS
   - `cd backend && . .venv/bin/activate && PYTHONPATH=. python scripts/check_supabase_connectivity.py --timeout-sec 5`
 - [x] 스테이징 스모크 시나리오 1회 수행
@@ -78,18 +79,27 @@
 - 스모크 자동화 보강 완료
   - `check_dag_smoke_result.py --since-iso` 추가로 과거 성공 로그 재사용 방지
   - `run_dag_smoke_cycle.sh`에 `AUTO_INJECT_WEBHOOK=1` 모드 추가(웹훅 텍스트 자동 주입)
-- 현재 남은 블로커
+- 요청문 다양성 자동화 보강 완료
+  - `run_dag_smoke_cycle.sh`: `SMOKE_TEXTS`/`SMOKE_TEXTS_FILE` 순환 주입 지원
+  - `scripts/smoke_prompts_10.txt`: 10종 요청문 세트 추가
+- 최신 게이트 결과 (2026-02-25)
+  - `run_dag_quality_gate.sh`: `verdict=PASS`
+    - sample size `53/20`
+    - `DSL_REF_NOT_FOUND rate=3.8%` (target `<=5%`)
+    - `COMPENSATION_FAILED rate=1.9%` (target `<=2%`)
+  - `check_dag_smoke_result.py --limit 100`: `verdict=PASS`
+    - `pipeline_run_id=prun_cb0c4f49000d4e1b`
+    - `succeeded_pipeline_links=1`
   - `run_autonomous_gate.sh`: `verdict=FAIL`
     - sample size `30/20`
-    - `autonomous_success_rate=0.0%` (target `>=80%`)
-    - `fallback_rate=63.3%` (target `<=20%`)
-    - `autonomous_success_over_attempt=0.0%` (target `>=70%`)
-    - top errors: `TOOL_TIMEOUT`, `calendar_pipeline_failed`, `auth_error`, `DSL_REF_NOT_FOUND`, `COMPENSATION_FAILED`
-  - `run_dag_quality_gate.sh`: `verdict=FAIL`
-    - sample size `14/20` (insufficient sample)
-    - `DSL_REF_NOT_FOUND rate=14.3%` (target `<=5%`)
-    - `COMPENSATION_FAILED rate=7.1%` (target `<=2%`)
-  - 운영 품질 게이트(체크리스트 2번)는 아직 미통과
+    - `autonomous_attempt_rate=0.0%` (0/30)
+    - `autonomous_success_rate=0.0%` (0/0)
+    - `autonomous_success_over_attempt=0.0%` (0/0)
+- 현재 남은 블로커
+  - `run_autonomous_gate.sh`: `verdict=FAIL`
+    - 최근 30건에서 autonomous 경로 시도 자체가 없음(`autonomous_attempt_rate=0.0%`)
+    - 게이트 실패는 품질 저하보다 "샘플 구성 불일치(autonomous 트래픽 부재)" 성격
+  - `운영 품질 게이트 통과` 체크박스는 autonomous 게이트 미통과로 인해 유지
 
 ## 1) 배경과 목표
 - 목표: 연속적인 SKILL 사용 요청을 안정적으로 처리하는 에이전트 런타임 구축

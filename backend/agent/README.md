@@ -38,3 +38,7 @@ Human-readable API guides are references for planning, not direct execution cont
   - `cd backend && . .venv/bin/activate && ATTEMPTS=8 SLEEP_SEC=15 ./scripts/run_dag_smoke_cycle.sh`
 - DAG smoke/gate cycle loop with auto webhook injection (no manual Telegram send):
   - `cd backend && . .venv/bin/activate && AUTO_INJECT_WEBHOOK=1 WEBHOOK_URL=https://<backend>/api/telegram/webhook CHAT_ID=<telegram_chat_id> ATTEMPTS=8 SLEEP_SEC=15 ./scripts/run_dag_smoke_cycle.sh`
+  - 여러 요청문 순환 주입(`SMOKE_TEXTS`, 구분자 `|||`):
+    - `cd backend && . .venv/bin/activate && AUTO_INJECT_WEBHOOK=1 WEBHOOK_URL=https://<backend>/api/telegram/webhook CHAT_ID=<telegram_chat_id> SMOKE_TEXTS='요청문A|||요청문B|||요청문C' ATTEMPTS=12 STOP_ON_PASS=0 ./scripts/run_dag_smoke_cycle.sh`
+  - 여러 요청문 파일 주입(줄 단위, `#` 주석/빈 줄 무시):
+    - `cd backend && . .venv/bin/activate && AUTO_INJECT_WEBHOOK=1 WEBHOOK_URL=https://<backend>/api/telegram/webhook CHAT_ID=<telegram_chat_id> SMOKE_TEXTS_FILE=./scripts/smoke_prompts.txt ATTEMPTS=12 STOP_ON_PASS=0 ./scripts/run_dag_smoke_cycle.sh`
