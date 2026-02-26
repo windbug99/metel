@@ -1554,6 +1554,8 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
         if finalizer_mode != "disabled":
             linear_plan.notes.append(f"response_finalizer={finalizer_mode}")
         linear_plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+        if skill_llm_pre_notes:
+            linear_plan.notes.extend(skill_llm_pre_notes)
         return AgentRunResult(
             ok=execution.success,
             stage="execution",
@@ -1571,6 +1573,8 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
         if finalizer_mode != "disabled":
             notion_todo_plan.notes.append(f"response_finalizer={finalizer_mode}")
         notion_todo_plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+        if skill_llm_pre_notes:
+            notion_todo_plan.notes.extend(skill_llm_pre_notes)
         return AgentRunResult(
             ok=execution.success,
             stage="execution",

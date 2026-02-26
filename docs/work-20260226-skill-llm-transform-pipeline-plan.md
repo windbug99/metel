@@ -234,11 +234,20 @@
   - DoD 관점 자동 검증 스크립트 추가(`run_skill_llm_transform_slo_guard.sh`).
   - SLO 가드에 `transform_error_rate`, `verify_fail_before_write_count`, `composed_pipeline_count` 임계치 반영.
   - `N건->N페이지`, `0건 성공형 응답` 불변식 E2E 테스트를 가드 실행에 포함.
+- 2026-02-26 (next step update)
+  - 다음 작업 계획으로 `llm_transform`의 실제 LLM API 호출 전환을 명시.
+  - 생성품질 개선은 프롬프트 대수정보다 모델/파라미터 튜닝과 shadow canary를 우선 적용.
 
 ## 15) 다음 고도화 후보
 - 다중 대상(`각 회의마다`, `각 프로젝트별`) fan-out/fan-in 노드 표준화
 - transform 결과 신뢰도(score) 기반 동적 검증 강도 조절
 - 서비스별 템플릿 라이브러리화(회의록/버그리포트/일일요약)
+- `llm_transform`를 deterministic contract에서 실제 LLM API 기반 변환으로 전환
+- LLM 생성품질 개선(모델 튜닝 우선)
+  - 1차: 후보 모델 A/B 오프라인 리플레이 평가
+  - 2차: `temperature/top_p/max_tokens` 표준 파라미터 고정
+  - 3차: shadow mode canary 후 점진 승격
+  - 4차: 실패 시 deterministic fallback 유지(fail-closed)
 
 ## 16) 구현 분해 (PR/티켓 단위)
 
