@@ -202,7 +202,7 @@
 - [ ] transform fallback률 10% 이하
 - [x] write 전 verify 누락 0건
 - [x] 기존 Stage6 핵심 회귀 테스트 전부 PASS
-- [x] rollback 없이 canary 100% 전환 완료
+- [ ] rollback 없이 canary 100% 전환 완료
 - [ ] 신규 서비스 1건을 하드코딩 분기 추가 없이 contract+pipeline만으로 온보딩 완료
 - [ ] 요청 이해 오류율 2주 이동평균 개선 확인
 - [x] N건 입력 시 N페이지 생성 정책이 E2E에서 일관되게 검증됨
