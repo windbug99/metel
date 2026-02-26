@@ -1,30 +1,30 @@
 {
-  "sample_size": 109,
+  "sample_size": 199,
   "min_sample": 30,
-  "window_days": 1,
-  "window_start_utc": "2026-02-25T11:15:35Z",
-  "autonomous_success": 35,
-  "autonomous_count": 36,
-  "autonomous_success_rate": 0.9722222222222222,
-  "autonomous_attempt_count": 74,
-  "autonomous_attempt_rate": 0.6788990825688074,
-  "autonomous_success_over_attempt_rate": 0.47297297297297297,
+  "window_days": 3,
+  "window_start_utc": "2026-02-23T11:13:37Z",
+  "autonomous_success": 104,
+  "autonomous_count": 111,
+  "autonomous_success_rate": 0.9369369369369369,
+  "autonomous_attempt_count": 159,
+  "autonomous_attempt_rate": 0.7989949748743719,
+  "autonomous_success_over_attempt_rate": 0.6540880503144654,
   "planner_failed_count": 0,
   "planner_failed_rate": 0.0,
   "verification_failed_count": 0,
   "verification_failed_rate": 0.0,
-  "guardrail_degrade_count": 15,
-  "guardrail_degrade_rate": 0.13761467889908258,
-  "fallback_count": 39,
-  "fallback_rate": 0.3577981651376147,
+  "guardrail_degrade_count": 23,
+  "guardrail_degrade_rate": 0.11557788944723618,
+  "fallback_count": 65,
+  "fallback_rate": 0.32663316582914576,
   "top_fallback": [
     [
-      "tool_error_rate",
-      15
+      "replan_limit",
+      24
     ],
     [
-      "replan_limit",
-      8
+      "tool_error_rate",
+      23
     ],
     [
       "TOOL_TIMEOUT",
@@ -39,11 +39,20 @@
       3
     ]
   ],
-  "top_verification": [],
+  "top_verification": [
+    [
+      "mutation_requires_mutation_tool",
+      1
+    ]
+  ],
   "top_error_codes": [
     [
       "auth_error",
-      18
+      23
+    ],
+    [
+      "replan_limit",
+      7
     ],
     [
       "TOOL_TIMEOUT",
@@ -51,30 +60,27 @@
     ],
     [
       "validation_error",
-      3
-    ],
-    [
-      "COMPENSATION_FAILED",
-      3
+      5
     ],
     [
       "execution_failed",
-      3
+      5
     ]
   ],
   "error_code_counts": {
     "unsupported_capability": 1,
     "TOOL_TIMEOUT": 5,
-    "auth_error": 18,
-    "validation_error": 3,
+    "auth_error": 23,
+    "validation_error": 5,
     "COMPENSATION_FAILED": 3,
-    "execution_failed": 3,
-    "replan_limit": 1
+    "execution_failed": 5,
+    "replan_limit": 7,
+    "service_not_connected": 1
   },
   "top_guardrail_degrade": [
     [
       "tool_error_rate",
-      15
+      23
     ]
   ],
   "top_verifier_failed_rule": [],
@@ -92,15 +98,15 @@
   "top_plan_source": [
     [
       "llm",
-      62
+      121
     ],
     [
       "rule",
-      22
+      50
     ],
     [
       "dag_template",
-      17
+      20
     ],
     [
       "calendar_linear_template",
@@ -113,28 +119,28 @@
   ],
   "top_execution_mode": [
     [
-      "rule",
-      73
+      "autonomous",
+      111
     ],
     [
-      "autonomous",
-      36
+      "rule",
+      88
     ]
   ],
   "tuning_hints": [
-    "도구 오류율 기반 강등이 잦습니다. payload 정규화와 스키마 자동보정 정책을 강화하세요.",
-    "replan_limit 비중이 높습니다. replan 조건을 줄이고 초기 tool ranking 품질을 먼저 개선하세요."
+    "replan_limit 비중이 높습니다. replan 조건을 줄이고 초기 tool ranking 품질을 먼저 개선하세요.",
+    "도구 오류율 기반 강등이 잦습니다. payload 정규화와 스키마 자동보정 정책을 강화하세요."
   ],
   "policy_recommendations": [
-    {
-      "env_key": "LLM_HYBRID_EXECUTOR_FIRST",
-      "suggested_value": "true",
-      "reason": "가드레일 강등 비중이 높아 안정 구간에서 deterministic-first 운용이 필요합니다."
-    },
     {
       "env_key": "LLM_AUTONOMOUS_REPLAN_LIMIT",
       "suggested_value": "2",
       "reason": "replan_limit 비중이 높아 재계획 허용 횟수 상향이 필요합니다."
+    },
+    {
+      "env_key": "LLM_HYBRID_EXECUTOR_FIRST",
+      "suggested_value": "true",
+      "reason": "가드레일 강등 비중이 높아 안정 구간에서 deterministic-first 운용이 필요합니다."
     },
     {
       "env_key": "TOOL_SPECS_VALIDATE_ON_STARTUP",
@@ -143,8 +149,8 @@
     }
   ],
   "gate_reasons": [
-    "fallback_rate_above_target: 0.358 > 0.100",
-    "autonomous_success_over_attempt_below_target: 0.473 < 0.700"
+    "fallback_rate_above_target: 0.327 > 0.100",
+    "autonomous_success_over_attempt_below_target: 0.654 < 0.700"
   ],
   "verdict": "FAIL"
 }

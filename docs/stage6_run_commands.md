@@ -241,3 +241,56 @@ DAYS=3 LIMIT=200 MIN_SAMPLE=30 ./scripts/run_skill_llm_transform_slo_guard.sh
 출력 파일:
 - `docs/reports/skill_llm_transform_slo_latest.md`
 - `docs/reports/skill_llm_transform_slo_latest.json`
+
+## 13) Skill+LLM Transform DoD 자동 판정 (신규)
+
+SLO/rollout 리포트 기반으로 DoD 체크리스트를 자동 산출:
+
+```bash
+cd backend
+. .venv/bin/activate
+python scripts/eval_skill_llm_transform_dod.py \
+  --rollout-report ../docs/reports/skill_llm_transform_rollout_latest.json \
+  --slo-report ../docs/reports/skill_llm_transform_slo_latest.json \
+  --stage6-core-pass \
+  --n_to_n_e2e_pass \
+  --zero_match_e2e_pass \
+  --output-json ../docs/reports/skill_llm_transform_dod_latest.json
+```
+
+출력 파일:
+- `docs/reports/skill_llm_transform_dod_latest.json`
+
+## 14) Skill+LLM Transform DoD 문서 체크박스 동기화 (신규)
+
+자동 판정 JSON을 계획 문서 체크박스에 반영:
+
+```bash
+cd backend
+. .venv/bin/activate
+python scripts/update_skill_llm_transform_dod_md.py \
+  --dod-json ../docs/reports/skill_llm_transform_dod_latest.json \
+  --plan-md ../docs/work-20260226-skill-llm-transform-pipeline-plan.md
+```
+
+## 15) Skill+LLM Transform DoD 누적/재평가 사이클 (신규)
+
+롤아웃 + SLO + DoD 평가 + 문서 동기화 + 스냅샷 아카이브를 1회 실행:
+
+```bash
+cd backend
+DAYS=3 LIMIT=200 MIN_SAMPLE=30 CURRENT_PERCENT=100 \
+STAGE6_CORE_PASS=true N_TO_N_E2E_PASS=true ZERO_MATCH_E2E_PASS=true \
+./scripts/run_skill_llm_transform_dod_cycle.sh
+```
+
+생성/누적 파일:
+- `docs/reports/skill_llm_transform_dod_latest.json`
+- `docs/reports/skill_llm_transform_dod_history.jsonl`
+- `docs/reports/archive/skill_llm_transform/<UTC_TIMESTAMP>/...`
+
+주기 실행 예시(cron, UTC 1시간마다):
+
+```bash
+0 * * * * cd /Users/tomato/cursor/metel/backend && DAYS=3 LIMIT=200 MIN_SAMPLE=30 CURRENT_PERCENT=100 ./scripts/run_skill_llm_transform_dod_cycle.sh >> /tmp/skill_llm_transform_dod_cycle.log 2>&1
+```
