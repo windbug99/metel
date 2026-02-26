@@ -455,6 +455,7 @@ def main() -> int:
         default=0,
         help="Optional UTC day window filter (created_at >= now-days). 0 disables the filter.",
     )
+    parser.add_argument("--since", type=str, default="", help="Optional UTC ISO cutoff (overrides --days).")
     parser.add_argument("--output", type=str, default="", help="Optional markdown output path")
     parser.add_argument("--output-json", type=str, default="", help="Optional JSON output path")
     args = parser.parse_args()
@@ -463,7 +464,9 @@ def main() -> int:
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
 
     day_window = max(0, int(args.days or 0))
-    window_start_utc = _window_start_iso_utc(day_window) if day_window > 0 else ""
+    window_start_utc = str(args.since or "").strip()
+    if not window_start_utc and day_window > 0:
+        window_start_utc = _window_start_iso_utc(day_window)
 
     try:
         query = (

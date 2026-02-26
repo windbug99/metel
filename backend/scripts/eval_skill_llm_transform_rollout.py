@@ -69,6 +69,9 @@ def _is_compiled_target(detail: dict[str, str]) -> bool:
 
 def _is_served_by_compiled(detail: dict[str, str]) -> bool:
     rollout = str(detail.get("skill_llm_transform_rollout") or "").strip()
+    # Served traffic includes rollout-bucket served traffic and explicit allowlist forced serve.
+    if rollout == "allowlist":
+        return True
     return bool(_ROLLOUT_SERVE_PATTERN.match(rollout))
 
 
@@ -76,6 +79,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate Skill+LLM transform rollout/shadow metrics from command_logs.")
     parser.add_argument("--limit", type=int, default=200, help="Number of recent agent_plan logs")
     parser.add_argument("--days", type=int, default=0, help="If > 0, evaluate logs within recent N days (UTC).")
+    parser.add_argument("--since", type=str, default="", help="Optional UTC ISO cutoff (overrides --days).")
     parser.add_argument("--min-sample", type=int, default=30, help="Minimum sample size")
     parser.add_argument("--target-success", type=float, default=0.95, help="Target served success rate")
     parser.add_argument("--max-error-rate", type=float, default=0.05, help="Maximum served error rate")
@@ -92,10 +96,11 @@ def main() -> int:
         .eq("command", "agent_plan")
         .order("created_at", desc=True)
     )
-    window_start_utc: str | None = None
-    if int(args.days) > 0:
+    window_start_utc: str | None = str(args.since or "").strip() or None
+    if (not window_start_utc) and int(args.days) > 0:
         cutoff = datetime.now(timezone.utc) - timedelta(days=int(args.days))
         window_start_utc = cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    if window_start_utc:
         query = query.gte("created_at", window_start_utc)
     try:
         result = query.limit(max(1, args.limit)).execute()

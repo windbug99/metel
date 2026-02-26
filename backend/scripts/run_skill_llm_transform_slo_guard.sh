@@ -18,6 +18,7 @@ MIN_AUTONOMOUS_SUCCESS_OVER_ATTEMPT_RATE="${MIN_AUTONOMOUS_SUCCESS_OVER_ATTEMPT_
 MAX_TRANSFORM_ERROR_RATE="${MAX_TRANSFORM_ERROR_RATE:-0.10}"
 MAX_VERIFY_FAIL_BEFORE_WRITE="${MAX_VERIFY_FAIL_BEFORE_WRITE:-0}"
 MIN_COMPOSED_PIPELINE_COUNT="${MIN_COMPOSED_PIPELINE_COUNT:-10}"
+SINCE_UTC="${SINCE_UTC:-}"
 
 echo "[skill-llm-transform-slo] running SLO guard"
 echo "[skill-llm-transform-slo] days=${DAYS} limit=${LIMIT} min_sample=${MIN_SAMPLE}"
@@ -34,20 +35,26 @@ PYTHONPATH=. python scripts/check_supabase_connectivity.py --timeout-sec 5
 JSON_REPORT="${REPORT_DIR}/skill_llm_transform_slo_latest.json"
 MD_REPORT="${REPORT_DIR}/skill_llm_transform_slo_latest.md"
 
-python scripts/eval_agent_quality.py \
-  --limit "${LIMIT}" \
-  --days "${DAYS}" \
-  --min-sample "${MIN_SAMPLE}" \
-  --target-autonomous-success "${TARGET_AUTONOMOUS_SUCCESS}" \
-  --max-fallback-rate "${MAX_FALLBACK_RATE}" \
-  --max-planner-failed-rate "${MAX_PLANNER_FAILED_RATE}" \
-  --max-verification-failed-rate "${MAX_VERIFICATION_FAILED_RATE}" \
-  --max-guardrail-degrade-rate "${MAX_GUARDRAIL_DEGRADE_RATE}" \
-  --min-autonomous-attempt-rate "${MIN_AUTONOMOUS_ATTEMPT_RATE}" \
-  --min-autonomous-success-over-attempt-rate "${MIN_AUTONOMOUS_SUCCESS_OVER_ATTEMPT_RATE}" \
-  --fail-on-insufficient-sample \
-  --output "${MD_REPORT}" \
+EVAL_ARGS=(
+  --limit "${LIMIT}"
+  --min-sample "${MIN_SAMPLE}"
+  --target-autonomous-success "${TARGET_AUTONOMOUS_SUCCESS}"
+  --max-fallback-rate "${MAX_FALLBACK_RATE}"
+  --max-planner-failed-rate "${MAX_PLANNER_FAILED_RATE}"
+  --max-verification-failed-rate "${MAX_VERIFICATION_FAILED_RATE}"
+  --max-guardrail-degrade-rate "${MAX_GUARDRAIL_DEGRADE_RATE}"
+  --min-autonomous-attempt-rate "${MIN_AUTONOMOUS_ATTEMPT_RATE}"
+  --min-autonomous-success-over-attempt-rate "${MIN_AUTONOMOUS_SUCCESS_OVER_ATTEMPT_RATE}"
+  --fail-on-insufficient-sample
+  --output "${MD_REPORT}"
   --output-json "${JSON_REPORT}"
+)
+if [[ -n "${SINCE_UTC}" ]]; then
+  EVAL_ARGS+=(--since "${SINCE_UTC}")
+else
+  EVAL_ARGS+=(--days "${DAYS}")
+fi
+python scripts/eval_agent_quality.py "${EVAL_ARGS[@]}"
 
 python - <<'PY'
 import json

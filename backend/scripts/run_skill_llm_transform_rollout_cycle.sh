@@ -11,6 +11,7 @@ MIN_SAMPLE="${MIN_SAMPLE:-30}"
 TARGET_SUCCESS="${TARGET_SUCCESS:-0.95}"
 MAX_ERROR_RATE="${MAX_ERROR_RATE:-0.05}"
 MAX_P95_LATENCY_MS="${MAX_P95_LATENCY_MS:-12000}"
+SINCE_UTC="${SINCE_UTC:-}"
 
 CURRENT_PERCENT="${CURRENT_PERCENT:-0}"
 REQUIRE_SHADOW_OK_FOR_PROMOTE="${REQUIRE_SHADOW_OK_FOR_PROMOTE:-true}"
@@ -28,14 +29,20 @@ if [[ -f ".venv/bin/activate" ]]; then
   source .venv/bin/activate
 fi
 
-python scripts/eval_skill_llm_transform_rollout.py \
-  --limit "${LIMIT}" \
-  --days "${DAYS}" \
-  --min-sample "${MIN_SAMPLE}" \
-  --target-success "${TARGET_SUCCESS}" \
-  --max-error-rate "${MAX_ERROR_RATE}" \
-  --max-p95-latency-ms "${MAX_P95_LATENCY_MS}" \
-  --output-json "${REPORT_JSON}" || true
+EVAL_ARGS=(
+  --limit "${LIMIT}"
+  --min-sample "${MIN_SAMPLE}"
+  --target-success "${TARGET_SUCCESS}"
+  --max-error-rate "${MAX_ERROR_RATE}"
+  --max-p95-latency-ms "${MAX_P95_LATENCY_MS}"
+  --output-json "${REPORT_JSON}"
+)
+if [[ -n "${SINCE_UTC}" ]]; then
+  EVAL_ARGS+=(--since "${SINCE_UTC}")
+else
+  EVAL_ARGS+=(--days "${DAYS}")
+fi
+python scripts/eval_skill_llm_transform_rollout.py "${EVAL_ARGS[@]}" || true
 
 if [[ ! -f "${REPORT_JSON}" ]]; then
   echo "[skill-llm-transform-cycle] gate report not generated: ${REPORT_JSON}"

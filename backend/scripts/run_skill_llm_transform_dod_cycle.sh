@@ -15,6 +15,7 @@ DAYS="${DAYS:-3}"
 LIMIT="${LIMIT:-200}"
 MIN_SAMPLE="${MIN_SAMPLE:-30}"
 CURRENT_PERCENT="${CURRENT_PERCENT:-0}"
+SINCE_UTC="${SINCE_UTC:-}"
 
 STAGE6_CORE_PASS="${STAGE6_CORE_PASS:-true}"
 N_TO_N_E2E_PASS="${N_TO_N_E2E_PASS:-true}"
@@ -30,13 +31,13 @@ fi
 
 if [[ "${RUN_ROLLOUT}" == "true" ]]; then
   echo "[dod-cycle] running rollout cycle"
-  DAYS="${DAYS}" LIMIT="${LIMIT}" MIN_SAMPLE="${MIN_SAMPLE}" CURRENT_PERCENT="${CURRENT_PERCENT}" \
+  DAYS="${DAYS}" LIMIT="${LIMIT}" MIN_SAMPLE="${MIN_SAMPLE}" CURRENT_PERCENT="${CURRENT_PERCENT}" SINCE_UTC="${SINCE_UTC}" \
     APPLY_DECISION=false ./scripts/run_skill_llm_transform_rollout_cycle.sh
 fi
 
 if [[ "${RUN_SLO}" == "true" ]]; then
   echo "[dod-cycle] running SLO guard"
-  DAYS="${DAYS}" LIMIT="${LIMIT}" MIN_SAMPLE="${MIN_SAMPLE}" \
+  DAYS="${DAYS}" LIMIT="${LIMIT}" MIN_SAMPLE="${MIN_SAMPLE}" SINCE_UTC="${SINCE_UTC}" \
     ./scripts/run_skill_llm_transform_slo_guard.sh || true
 fi
 

@@ -218,6 +218,9 @@ DAYS=3 CURRENT_PERCENT=10 ./scripts/run_skill_llm_transform_rollout_cycle.sh
 ```bash
 cd backend
 DAYS=3 CURRENT_PERCENT=30 ./scripts/run_skill_llm_transform_rollout_cycle.sh
+
+# 배포 시각 이후 데이터만 평가 (권장)
+SINCE_UTC=2026-02-26T12:13:45Z CURRENT_PERCENT=30 ./scripts/run_skill_llm_transform_rollout_cycle.sh
 ```
 
 출력 파일:
@@ -231,6 +234,9 @@ DAYS=3 CURRENT_PERCENT=30 ./scripts/run_skill_llm_transform_rollout_cycle.sh
 ```bash
 cd backend
 DAYS=3 LIMIT=200 MIN_SAMPLE=30 ./scripts/run_skill_llm_transform_slo_guard.sh
+
+# 배포 시각 이후 데이터만 평가 (권장)
+SINCE_UTC=2026-02-26T12:13:45Z LIMIT=200 MIN_SAMPLE=30 ./scripts/run_skill_llm_transform_slo_guard.sh
 ```
 
 추가 임계값(옵션):
@@ -280,6 +286,11 @@ python scripts/update_skill_llm_transform_dod_md.py \
 ```bash
 cd backend
 DAYS=3 LIMIT=200 MIN_SAMPLE=30 CURRENT_PERCENT=100 \
+STAGE6_CORE_PASS=true N_TO_N_E2E_PASS=true ZERO_MATCH_E2E_PASS=true \
+./scripts/run_skill_llm_transform_dod_cycle.sh
+
+# 배포 시각 이후 데이터만 평가 (권장)
+SINCE_UTC=2026-02-26T12:13:45Z LIMIT=200 MIN_SAMPLE=30 CURRENT_PERCENT=30 \
 STAGE6_CORE_PASS=true N_TO_N_E2E_PASS=true ZERO_MATCH_E2E_PASS=true \
 ./scripts/run_skill_llm_transform_dod_cycle.sh
 ```
