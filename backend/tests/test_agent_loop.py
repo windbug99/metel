@@ -1516,7 +1516,7 @@ def test_run_agent_analysis_autonomous_clarification_required_starts_slot_loop(m
 
 
 def test_run_agent_analysis_bypasses_autonomous_for_recent_lookup(monkeypatch):
-    llm_plan = AgentPlan(
+    forced_plan = AgentPlan(
         user_text="리니어에서 최근 이슈 5개 조회",
         requirements=[AgentRequirement(summary="Linear 이슈 조회", quantity=5)],
         target_services=["linear"],
@@ -1540,14 +1540,21 @@ def test_run_agent_analysis_bypasses_autonomous_for_recent_lookup(monkeypatch):
         llm_autonomous_enabled = True
         llm_autonomous_traffic_percent = 100
         llm_autonomous_shadow_mode = False
+        skill_router_v2_enabled = True
+        skill_runner_v2_enabled = True
         slot_loop_enabled = False
         slot_loop_rollout_percent = 0
 
-    async def _fake_try_build(**kwargs):
-        return llm_plan, None
+    def _fake_build_plan(user_text: str, connected_services: list[str]):
+        _ = connected_services
+        assert user_text == "리니어에서 최근 이슈 5개 조회"
+        return forced_plan
 
     async def _fake_run_autonomous_loop(*args, **kwargs):
         raise AssertionError("autonomous should be bypassed for recent lookup intent")
+
+    async def _fake_v2(*args, **kwargs):
+        raise AssertionError("router_v2 should be bypassed for recent lookup intent")
 
     async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
         _ = user_id
@@ -1561,12 +1568,14 @@ def test_run_agent_analysis_bypasses_autonomous_for_recent_lookup(monkeypatch):
         )
 
     monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
-    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.build_agent_plan", _fake_build_plan)
     monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_run_autonomous_loop)
+    monkeypatch.setattr("agent.loop.try_run_v2_orchestration", _fake_v2)
     monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
 
     result = asyncio.run(run_agent_analysis("리니어에서 최근 이슈 5개 조회", ["linear"], "user-recent-bypass"))
     assert result.ok is True
+    assert result.plan_source == "rule_recent_lookup"
     assert result.execution is not None
     assert "https://linear.app/issue/OPT-1" in result.execution.user_message
     assert any(note == "autonomous_bypass=recent_lookup_intent" for note in result.plan.notes)

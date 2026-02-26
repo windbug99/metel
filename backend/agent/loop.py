@@ -1400,6 +1400,27 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             plan_source="dag_template",
         )
 
+    # Hard bypass for recent lookup intents: skip router_v2/autonomous/LLM planner.
+    # This guarantees deterministic tool output (list + links) for "최근/마지막 조회".
+    if _is_recent_lookup_intent(user_text):
+        recent_plan = build_agent_plan(user_text=user_text, connected_services=connected_services)
+        recent_plan.notes.append("planner=forced_recent_lookup_rule")
+        execution = await execute_agent_plan(user_id=user_id, plan=recent_plan)
+        finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
+        execution.user_message = finalized_message
+        if finalizer_mode != "disabled":
+            recent_plan.notes.append(f"response_finalizer={finalizer_mode}")
+        recent_plan.notes.append("autonomous_bypass=recent_lookup_intent")
+        recent_plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+        return AgentRunResult(
+            ok=execution.success,
+            stage="execution",
+            plan=recent_plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="rule_recent_lookup",
+        )
+
     pre_notes: list[str] = []
     v2_enabled = bool(getattr(settings, "skill_router_v2_enabled", False)) and bool(
         getattr(settings, "skill_runner_v2_enabled", False)
