@@ -98,6 +98,84 @@ def _normalize_timezone(value: str | None) -> str:
         return "UTC"
 
 
+def _notion_paragraph_block(text: str) -> dict:
+    content = str(text or "").strip()[:1800]
+    return {
+        "object": "block",
+        "type": "paragraph",
+        "paragraph": {
+            "rich_text": [
+                {
+                    "type": "text",
+                    "text": {"content": content},
+                }
+            ]
+        },
+    }
+
+
+def _extract_text_from_rich_text_items(items: object) -> str:
+    if not isinstance(items, list):
+        return ""
+    chunks: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        text_obj = item.get("text")
+        if isinstance(text_obj, dict):
+            content = str(text_obj.get("content") or "").strip()
+            if content:
+                chunks.append(content)
+                continue
+        plain = str(item.get("plain_text") or "").strip()
+        if plain:
+            chunks.append(plain)
+    return " ".join(chunks).strip()
+
+
+def _normalize_notion_children(children_raw: object, *, limit: int = 80) -> list[dict]:
+    if not isinstance(children_raw, list):
+        return []
+    normalized: list[dict] = []
+    for raw in children_raw[:limit]:
+        if isinstance(raw, str):
+            text = raw.strip()
+            if text:
+                normalized.append(_notion_paragraph_block(text))
+            continue
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        block_type = str(item.get("type") or "").strip()
+        block_payload = item.get(block_type) if block_type else None
+        # Keep already valid notion block payloads.
+        if block_type and isinstance(block_payload, dict):
+            rich_text = block_payload.get("rich_text")
+            if isinstance(rich_text, list) and rich_text:
+                item.setdefault("object", "block")
+                normalized.append(item)
+                continue
+        # Normalize loosely structured LLM output into paragraph blocks.
+        text_candidates = [
+            str(item.get("text") or "").strip(),
+            str(item.get("content") or "").strip(),
+            str(item.get("title") or "").strip(),
+            str(item.get("description") or "").strip(),
+            _extract_text_from_rich_text_items(item.get("rich_text")),
+        ]
+        if isinstance(item.get("paragraph"), dict):
+            text_candidates.append(_extract_text_from_rich_text_items((item.get("paragraph") or {}).get("rich_text")))
+        text = next((value for value in text_candidates if value), "")
+        if text:
+            normalized.append(_notion_paragraph_block(text))
+    return normalized
+    try:
+        ZoneInfo(candidate)
+        return candidate
+    except Exception:
+        return "UTC"
+
+
 def _load_user_timezone(user_id: str) -> str:
     settings = get_settings()
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
@@ -451,11 +529,13 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                     reason="notion_payload_invalid:missing_title",
                 )
             if children_payload is not None:
-                if not isinstance(children_payload, list) or not children_payload:
+                normalized_children = _normalize_notion_children(children_payload)
+                if not normalized_children:
                     raise PipelineExecutionError(
                         code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
-                        reason="notion_payload_invalid:empty_children",
+                        reason="notion_payload_invalid:children_schema",
                     )
+                normalized_payload["children"] = normalized_children
         if skill_name == "linear.issue_create":
             team_ref = str(normalized_payload.get("team_ref") or "").strip()
             team_id = str(normalized_payload.get("team_id") or "").strip()
@@ -584,6 +664,8 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                 )
             llm_parsed = await _request_autofill_json(system_prompt=system_prompt, user_prompt=user_prompt)
             if isinstance(llm_parsed, dict):
+                if transform_name == "format_detailed_minutes":
+                    llm_parsed["children"] = _normalize_notion_children(llm_parsed.get("children"))
                 transformed = llm_parsed
         try:
             if transformed is None:

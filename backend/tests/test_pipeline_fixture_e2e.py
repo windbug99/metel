@@ -241,6 +241,66 @@ def test_google_calendar_to_notion_minutes_fixture_uses_llm_transform_when_avail
     assert title_text == "LLM 회의록 초안 - 주간 회의"
 
 
+def test_google_calendar_to_notion_minutes_fixture_normalizes_llm_children_schema(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict) -> dict:
+        _ = user_id
+        calls.append((tool_name, payload))
+        if tool_name == "google_calendar_list_events":
+            return {
+                "ok": True,
+                "data": {"events": [{"id": "evt-1", "title": "주간 회의", "description": "백로그 점검"}]},
+            }
+        if tool_name == "notion_create_page":
+            return {"ok": True, "data": {"id": "page-1", "url": "https://notion.so/page-1"}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    async def _fake_request_autofill_json(*, system_prompt: str, user_prompt: str) -> dict | None:
+        _ = (system_prompt, user_prompt)
+        # Deliberately malformed children: not Notion block schema.
+        return {
+            "title": "LLM 회의록 초안 - 주간 회의",
+            "children": [{"type": "paragraph", "text": "회의 목적: 스키마 보정 테스트"}],
+        }
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_request_autofill_json)
+    monkeypatch.setattr("agent.executor._validate_dag_policy_guards", lambda **kwargs: (True, None, None, None))
+
+    pipeline = build_google_calendar_to_notion_minutes_pipeline(
+        user_text="구글캘린더에서 오늘 일정 중 회의일정만 조회해서 노션에 상세한 회의록 서식으로 생성"
+    )
+    plan = AgentPlan(
+        user_text="구글캘린더에서 오늘 일정 중 회의일정만 조회해서 노션에 상세한 회의록 서식으로 생성",
+        requirements=[AgentRequirement(summary="calendar_notion_minutes_fixture_llm_schema_normalize")],
+        target_services=["google", "notion"],
+        selected_tools=["google_calendar_list_events", "notion_create_page"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_pipeline_dag_minutes_fixture_llm_schema_normalize",
+                title="fixture dag minutes llm schema normalize",
+                task_type="PIPELINE_DAG",
+                payload={"pipeline": pipeline, "ctx": {"enabled": True}},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    notion_payload = next(payload for name, payload in calls if name == "notion_create_page")
+    children = notion_payload.get("children") or []
+    assert isinstance(children, list) and children
+    assert children[0].get("object") == "block"
+    assert children[0].get("type") == "paragraph"
+    paragraph = children[0].get("paragraph") or {}
+    rich = paragraph.get("rich_text") or []
+    assert isinstance(rich, list) and rich
+    assert (((rich[0] or {}).get("text") or {}).get("content") or "").strip() != ""
+
+
 def test_google_calendar_to_notion_minutes_fixture_n_events_create_n_pages(monkeypatch):
     calls: list[tuple[str, dict]] = []
 
