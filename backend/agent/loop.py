@@ -159,6 +159,25 @@ def _is_calendar_notion_todo_intent(user_text: str, connected_services: list[str
     return has_todo and is_create_intent(text)
 
 
+def _is_recent_lookup_intent(user_text: str) -> bool:
+    text = (user_text or "").strip()
+    lower = text.lower()
+    has_lookup = any(token in lower for token in ("조회", "검색", "목록", "list", "search", "show"))
+    if not has_lookup:
+        return False
+    is_notion_recent = (
+        (("노션" in text) or ("notion" in lower))
+        and (("페이지" in text) or ("page" in lower))
+        and any(token in lower for token in ("최근", "마지막", "최신", "latest", "last"))
+    )
+    is_linear_recent = (
+        (("리니어" in text) or ("linear" in lower))
+        and (("이슈" in text) or ("issue" in lower))
+        and any(token in lower for token in ("최근", "최신", "latest"))
+    )
+    return is_notion_recent or is_linear_recent
+
+
 def _build_calendar_pipeline_plan(user_text: str) -> AgentPlan:
     pipeline = build_google_calendar_to_notion_linear_pipeline(user_text=user_text)
     return AgentPlan(
@@ -1680,6 +1699,7 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     autonomous_traffic_percent = max(0, min(100, int(getattr(settings, "llm_autonomous_traffic_percent", 100))))
     autonomous_shadow_mode = bool(getattr(settings, "llm_autonomous_shadow_mode", False))
     autonomous_rollout_enabled = _autonomous_rollout_hit(user_id=user_id, percent=autonomous_traffic_percent)
+    recent_lookup_intent = _is_recent_lookup_intent(user_text)
     hybrid_executor_first = bool(getattr(settings, "llm_hybrid_executor_first", False))
     autonomous_strict = bool(getattr(settings, "llm_autonomous_strict", False))
     autonomous_retry_once = bool(getattr(settings, "llm_autonomous_limit_retry_once", True))
@@ -1694,8 +1714,10 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     plan.notes.append(f"autonomous_traffic_percent={autonomous_traffic_percent}")
     plan.notes.append(f"autonomous_rollout_hit={1 if autonomous_rollout_enabled else 0}")
     plan.notes.append(f"autonomous_shadow_mode={1 if autonomous_shadow_mode else 0}")
+    if recent_lookup_intent:
+        plan.notes.append("autonomous_bypass=recent_lookup_intent")
 
-    if autonomous_enabled and not hybrid_executor_first and autonomous_rollout_enabled:
+    if autonomous_enabled and not hybrid_executor_first and autonomous_rollout_enabled and not recent_lookup_intent:
         try:
             autonomous = await run_autonomous_loop(user_id=user_id, plan=plan)
         except Exception as exc:

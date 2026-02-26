@@ -240,8 +240,19 @@ def _verify_completion(plan: AgentPlan, history: list[dict[str, Any]], final_res
         for keyword in exclude_keywords:
             if keyword.lower() in joined:
                 return False, f"exclude_keyword_violated:{keyword}"
-    if not final_response.strip():
+    normalized_final = final_response.strip()
+    if not normalized_final:
         return False, "empty_final_response"
+    # Guardrail: generic completion text is not acceptable for read/list intents.
+    lower_final = normalized_final.lower()
+    if _plan_needs_lookup(plan):
+        generic_markers = (
+            "요청하신 작업을 완료했습니다",
+            "작업을 완료했습니다",
+            "완료했습니다",
+        )
+        if any(marker in normalized_final for marker in generic_markers) and ("http" not in lower_final):
+            return False, "generic_final_response_for_lookup"
     return True, "ok"
 
 

@@ -1515,6 +1515,63 @@ def test_run_agent_analysis_autonomous_clarification_required_starts_slot_loop(m
     clear_pending_action("user-auto-clarify")
 
 
+def test_run_agent_analysis_bypasses_autonomous_for_recent_lookup(monkeypatch):
+    llm_plan = AgentPlan(
+        user_text="리니어에서 최근 이슈 5개 조회",
+        requirements=[AgentRequirement(summary="Linear 이슈 조회", quantity=5)],
+        target_services=["linear"],
+        selected_tools=["linear_search_issues"],
+        workflow_steps=["1. 최근 이슈 조회"],
+        tasks=[
+            AgentTask(
+                id="task_linear_search",
+                title="Linear 이슈 조회",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_search_issues",
+                payload={"query": "최근", "first": 5},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    class _Settings:
+        llm_autonomous_enabled = True
+        llm_autonomous_traffic_percent = 100
+        llm_autonomous_shadow_mode = False
+        slot_loop_enabled = False
+        slot_loop_rollout_percent = 0
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_run_autonomous_loop(*args, **kwargs):
+        raise AssertionError("autonomous should be bypassed for recent lookup intent")
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        _ = user_id
+        assert plan.user_text == "리니어에서 최근 이슈 5개 조회"
+        return AgentExecutionResult(
+            success=True,
+            summary="deterministic",
+            user_message="최근 이슈\n1. [OPT-1] 로그인 오류\n   링크: https://linear.app/issue/OPT-1",
+            artifacts={},
+            steps=[AgentExecutionStep(name="task_linear_search", status="success", detail="ok")],
+        )
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.run_autonomous_loop", _fake_run_autonomous_loop)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("리니어에서 최근 이슈 5개 조회", ["linear"], "user-recent-bypass"))
+    assert result.ok is True
+    assert result.execution is not None
+    assert "https://linear.app/issue/OPT-1" in result.execution.user_message
+    assert any(note == "autonomous_bypass=recent_lookup_intent" for note in result.plan.notes)
+
+
 def test_run_agent_analysis_uses_deterministic_first_when_enabled(monkeypatch):
     llm_plan = _sample_plan()
 
