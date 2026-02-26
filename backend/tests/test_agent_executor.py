@@ -418,6 +418,66 @@ def test_execute_agent_plan_google_calendar_list_events_includes_title_and_link(
     assert "https://meet.google.com/abc-defg-hij" in result.user_message
 
 
+def test_execute_agent_plan_linear_recent_issues_includes_links(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, payload)
+        if tool_name == "linear_search_issues":
+            return {
+                "ok": True,
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "issue-1",
+                                "identifier": "OPS-101",
+                                "title": "로그인 오류 수정",
+                                "state": {"name": "In Progress"},
+                                "url": "https://linear.app/issue/OPS-101",
+                            },
+                            {
+                                "id": "issue-2",
+                                "identifier": "OPS-102",
+                                "title": "배포 파이프라인 점검",
+                                "state": {"name": "Todo"},
+                                "url": "https://linear.app/issue/OPS-102",
+                            },
+                        ]
+                    }
+                },
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="리니어에서 최근 이슈 5개 조회",
+        requirements=[AgentRequirement(summary="Linear 이슈 조회")],
+        target_services=["linear"],
+        selected_tools=["linear_search_issues"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_linear_search_issues",
+                title="Linear 이슈 조회",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_search_issues",
+                payload={"query": "최근", "first": 5},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert "최근 이슈" in result.user_message
+    assert "OPS-101" in result.user_message
+    assert "https://linear.app/issue/OPS-101" in result.user_message
+    assert "OPS-102" in result.user_message
+    assert "https://linear.app/issue/OPS-102" in result.user_message
+
+
 def test_task_orchestration_autofills_notion_append_with_search(monkeypatch):
     calls = []
 

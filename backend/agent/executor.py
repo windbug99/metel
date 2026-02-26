@@ -1492,6 +1492,29 @@ def _extract_google_calendar_event_previews_from_tool_result(result: dict, max_i
     return previews
 
 
+def _extract_linear_issue_previews_from_tool_result(result: dict, max_items: int = 5) -> list[str]:
+    data = result.get("data") or {}
+    if not isinstance(data, dict):
+        return []
+    nodes = ((data.get("issues") or {}).get("nodes") or [])
+    if not isinstance(nodes, list) or not nodes:
+        return []
+
+    previews: list[str] = []
+    for idx, node in enumerate(nodes[: max(1, max_items)], start=1):
+        if not isinstance(node, dict):
+            continue
+        identifier = str(node.get("identifier") or "-").strip()
+        title = str(node.get("title") or "(제목 없음)").strip()
+        state = str(((node.get("state") or {}).get("name") or "")).strip()
+        issue_url = str(node.get("url") or "").strip() or "-"
+        line = f"{idx}. [{identifier}] {title}"
+        if state:
+            line += f" ({state})"
+        previews.append(f"{line}\n   링크: {issue_url}")
+    return previews
+
+
 def _extract_upstream_message(detail: str) -> str:
     match = re.search(r"\|message=([^|]+)", detail or "")
     if not match:
@@ -2298,6 +2321,15 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
         if issue_url and issue_url != artifacts.get("linear_issue_url"):
             artifacts["linear_issue_url"] = issue_url
             final_user_message = f"{final_user_message}\n- 이슈 링크: {issue_url}"
+        if (
+            ("linear_search_issues" in tool_name or "linear_list_issues" in tool_name)
+            and "linear_issue_previews_added" not in artifacts
+        ):
+            issue_previews = _extract_linear_issue_previews_from_tool_result(tool_result, max_items=10)
+            if issue_previews:
+                artifacts["linear_issue_previews_added"] = "1"
+                artifacts["linear_issue_count"] = str(len(issue_previews))
+                final_user_message = f"{final_user_message}\n- 최근 이슈\n" + "\n".join(issue_previews)
 
     llm_outputs = [output for output in task_outputs.values() if output.get("kind") == "llm"]
     if llm_outputs:

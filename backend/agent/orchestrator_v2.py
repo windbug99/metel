@@ -702,7 +702,7 @@ def _is_linear_recent_list_intent(text: str) -> bool:
 def _is_notion_recent_list_intent(text: str) -> bool:
     lower = (text or "").lower()
     has_page_token = ("페이지" in text) or ("page" in lower)
-    has_list_token = any(token in lower for token in ("최근", "latest", "list", "목록", "검색", "조회"))
+    has_list_token = any(token in lower for token in ("최근", "마지막", "최신", "latest", "last", "list", "목록", "검색", "조회"))
     return has_page_token and has_list_token
 
 

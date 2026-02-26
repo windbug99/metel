@@ -171,6 +171,13 @@ def test_route_request_v2_skill_then_llm_for_linear_recent_list():
     assert decision.arguments.get("linear_first") == 10
 
 
+def test_route_request_v2_skill_then_llm_for_notion_last_page_lookup():
+    decision = route_request_v2("노션에서 마지막 페이지 조회", ["notion"])
+    assert decision.mode == MODE_SKILL_THEN_LLM
+    assert decision.skill_name == "notion.page_search"
+    assert decision.arguments.get("notion_first") == 5
+
+
 def test_route_request_v2_skill_then_llm_for_notion_analysis():
     decision = route_request_v2('노션에서 "스프린트 회고" 페이지 내용을 정리해줘', ["notion"])
     assert decision.mode == MODE_SKILL_THEN_LLM

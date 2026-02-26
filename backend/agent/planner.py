@@ -35,6 +35,16 @@ def _extract_quantity(text: str) -> int | None:
     return int(match.group(1))
 
 
+def _is_notion_recent_page_list_intent(text: str) -> bool:
+    raw = (text or "").strip()
+    lower = raw.lower()
+    has_notion = ("노션" in raw) or ("notion" in lower)
+    has_page = ("페이지" in raw) or ("page" in lower)
+    has_recent = any(token in lower for token in ("최근", "마지막", "최신", "latest", "last"))
+    has_lookup = any(token in lower for token in ("조회", "검색", "목록", "불러", "보여", "list", "search"))
+    return has_notion and has_page and has_recent and has_lookup
+
+
 def _extract_requirements(user_text: str) -> list[AgentRequirement]:
     normalized = user_text.strip()
     quantity = _extract_quantity(normalized)
@@ -253,6 +263,25 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
 
     tasks: list[AgentTask] = []
     primary_service = target_services[0] if target_services else None
+
+    notion_search_tool = _pick_tool_name_for_service(selected_tools, "notion", "search") or _pick_tool_name_for_service(
+        available_tools, "notion", "search"
+    )
+    if notion_search_tool and _is_notion_recent_page_list_intent(user_text):
+        service = _tool_service_name(notion_search_tool)
+        task_id = f"task_{service}_recent_pages" if service else "task_recent_pages"
+        page_size = max(1, min(20, _extract_quantity(user_text) or 5))
+        tasks.append(
+            AgentTask(
+                id=task_id,
+                title="최근 페이지 조회",
+                task_type="TOOL",
+                service=service,
+                tool_name=notion_search_tool,
+                payload={"query": "최근", "page_size": page_size},
+                output_schema={"type": "tool_result", "service": service or "", "tool": notion_search_tool},
+            )
+        )
 
     if is_data_source_intent(user_text):
         query_tool = _pick(("query", "data_source")) or _pick(("retrieve", "data_source"))
