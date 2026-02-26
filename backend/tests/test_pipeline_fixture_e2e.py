@@ -301,6 +301,68 @@ def test_google_calendar_to_notion_minutes_fixture_normalizes_llm_children_schem
     assert (((rich[0] or {}).get("text") or {}).get("content") or "").strip() != ""
 
 
+def test_google_calendar_to_notion_minutes_fixture_normalizes_text_dict_content_without_dict_repr(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict) -> dict:
+        _ = user_id
+        calls.append((tool_name, payload))
+        if tool_name == "google_calendar_list_events":
+            return {
+                "ok": True,
+                "data": {"events": [{"id": "evt-1", "title": "주간 회의", "description": "백로그 점검"}]},
+            }
+        if tool_name == "notion_create_page":
+            return {"ok": True, "data": {"id": "page-1", "url": "https://notion.so/page-1"}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    async def _fake_request_autofill_json(*, system_prompt: str, user_prompt: str) -> dict | None:
+        _ = (system_prompt, user_prompt)
+        return {
+            "title": "비즈니스 플랜 기획 회의",
+            "children": [
+                {"type": "paragraph", "text": {"content": "회의 개요"}},
+                {"type": "paragraph", "text": {"content": "본 회의는 비즈니스 플랜을 기획하기 위한 자리입니다."}},
+            ],
+        }
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_request_autofill_json)
+    monkeypatch.setattr("agent.executor._validate_dag_policy_guards", lambda **kwargs: (True, None, None, None))
+
+    pipeline = build_google_calendar_to_notion_minutes_pipeline(
+        user_text="구글캘린더에서 오늘 일정 중 회의일정만 조회해서 노션에 상세한 회의록 서식으로 생성"
+    )
+    plan = AgentPlan(
+        user_text="구글캘린더에서 오늘 일정 중 회의일정만 조회해서 노션에 상세한 회의록 서식으로 생성",
+        requirements=[AgentRequirement(summary="calendar_notion_minutes_fixture_text_dict_normalize")],
+        target_services=["google", "notion"],
+        selected_tools=["google_calendar_list_events", "notion_create_page"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_pipeline_dag_minutes_fixture_text_dict_normalize",
+                title="fixture dag minutes text dict normalize",
+                task_type="PIPELINE_DAG",
+                payload={"pipeline": pipeline, "ctx": {"enabled": True}},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    notion_payload = next(payload for name, payload in calls if name == "notion_create_page")
+    children = notion_payload.get("children") or []
+    assert len(children) >= 2
+    text_1 = ((((children[0] or {}).get("paragraph") or {}).get("rich_text") or [{}])[0].get("text") or {}).get("content", "")
+    text_2 = ((((children[1] or {}).get("paragraph") or {}).get("rich_text") or [{}])[0].get("text") or {}).get("content", "")
+    assert text_1 == "회의 개요"
+    assert text_2 == "본 회의는 비즈니스 플랜을 기획하기 위한 자리입니다."
+    assert "{'content':" not in text_1
+    assert "{'content':" not in text_2
+
+
 def test_google_calendar_to_notion_minutes_fixture_n_events_create_n_pages(monkeypatch):
     calls: list[tuple[str, dict]] = []
 

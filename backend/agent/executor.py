@@ -156,11 +156,23 @@ def _normalize_notion_children(children_raw: object, *, limit: int = 80) -> list
                 normalized.append(item)
                 continue
         # Normalize loosely structured LLM output into paragraph blocks.
+        text_value = item.get("text")
+        text_from_text_field = ""
+        if isinstance(text_value, dict):
+            text_from_text_field = str(text_value.get("content") or "").strip()
+        elif isinstance(text_value, str):
+            text_from_text_field = text_value.strip()
+        content_value = item.get("content")
+        content_from_field = content_value.strip() if isinstance(content_value, str) else ""
+        title_value = item.get("title")
+        title_from_field = title_value.strip() if isinstance(title_value, str) else ""
+        description_value = item.get("description")
+        description_from_field = description_value.strip() if isinstance(description_value, str) else ""
         text_candidates = [
-            str(item.get("text") or "").strip(),
-            str(item.get("content") or "").strip(),
-            str(item.get("title") or "").strip(),
-            str(item.get("description") or "").strip(),
+            text_from_text_field,
+            content_from_field,
+            title_from_field,
+            description_from_field,
             _extract_text_from_rich_text_items(item.get("rich_text")),
         ]
         if isinstance(item.get("paragraph"), dict):
