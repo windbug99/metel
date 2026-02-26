@@ -1,0 +1,13 @@
+{
+  "action": "rollback",
+  "current_percent": 30,
+  "next_percent": 10,
+  "reasons": [
+    "gate verdict is FAIL"
+  ],
+  "suggested_env": {
+    "SKILL_LLM_TRANSFORM_PIPELINE_ENABLED": "true",
+    "SKILL_LLM_TRANSFORM_PIPELINE_SHADOW_MODE": "false",
+    "SKILL_LLM_TRANSFORM_PIPELINE_TRAFFIC_PERCENT": "10"
+  }
+}

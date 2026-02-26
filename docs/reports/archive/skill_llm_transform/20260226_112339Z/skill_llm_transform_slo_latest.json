@@ -2,7 +2,7 @@
   "sample_size": 109,
   "min_sample": 30,
   "window_days": 1,
-  "window_start_utc": "2026-02-25T11:31:40Z",
+  "window_start_utc": "2026-02-25T11:23:40Z",
   "autonomous_success": 35,
   "autonomous_count": 36,
   "autonomous_success_rate": 0.9722222222222222,
