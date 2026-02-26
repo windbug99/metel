@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     skill_llm_transform_pipeline_enabled: bool = False
     skill_llm_transform_pipeline_shadow_mode: bool = False
     skill_llm_transform_pipeline_traffic_percent: int = 100
+    skill_llm_transform_pipeline_allowlist: str | None = None
     telegram_debug_report_enabled: bool = False
     telegram_message_max_chars: int = 3500
     rule_reparse_for_llm_plan_enabled: bool = False

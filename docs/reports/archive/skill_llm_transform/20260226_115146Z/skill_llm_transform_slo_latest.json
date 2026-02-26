@@ -1,22 +1,22 @@
 {
-  "sample_size": 169,
+  "sample_size": 139,
   "min_sample": 30,
   "window_days": 1,
-  "window_start_utc": "2026-02-25T12:01:31Z",
+  "window_start_utc": "2026-02-25T11:51:48Z",
   "autonomous_success": 35,
   "autonomous_count": 36,
   "autonomous_success_rate": 0.9722222222222222,
-  "autonomous_attempt_count": 78,
-  "autonomous_attempt_rate": 0.46153846153846156,
-  "autonomous_success_over_attempt_rate": 0.44871794871794873,
+  "autonomous_attempt_count": 74,
+  "autonomous_attempt_rate": 0.5323741007194245,
+  "autonomous_success_over_attempt_rate": 0.47297297297297297,
   "planner_failed_count": 0,
   "planner_failed_rate": 0.0,
   "verification_failed_count": 0,
   "verification_failed_rate": 0.0,
   "guardrail_degrade_count": 15,
-  "guardrail_degrade_rate": 0.08875739644970414,
-  "fallback_count": 43,
-  "fallback_rate": 0.25443786982248523,
+  "guardrail_degrade_rate": 0.1079136690647482,
+  "fallback_count": 39,
+  "fallback_rate": 0.2805755395683453,
   "top_fallback": [
     [
       "tool_error_rate",
@@ -31,11 +31,11 @@
       5
     ],
     [
-      "calendar_pipeline_failed",
-      4
+      "auth_error",
+      3
     ],
     [
-      "auth_error",
+      "validation_error",
       3
     ]
   ],
@@ -50,20 +50,19 @@
       5
     ],
     [
-      "calendar_pipeline_failed",
-      4
-    ],
-    [
       "validation_error",
       3
     ],
     [
       "COMPENSATION_FAILED",
       3
+    ],
+    [
+      "execution_failed",
+      3
     ]
   ],
   "error_code_counts": {
-    "calendar_pipeline_failed": 4,
     "unsupported_capability": 1,
     "TOOL_TIMEOUT": 5,
     "auth_error": 18,
@@ -93,19 +92,19 @@
   "top_plan_source": [
     [
       "llm",
-      108
+      92
     ],
     [
       "rule",
       22
     ],
     [
-      "calendar_linear_template",
-      18
-    ],
-    [
       "dag_template",
       17
+    ],
+    [
+      "calendar_linear_template",
+      4
     ],
     [
       "rule_recent_lookup",
@@ -115,7 +114,7 @@
   "top_execution_mode": [
     [
       "rule",
-      133
+      103
     ],
     [
       "autonomous",
@@ -144,9 +143,8 @@
     }
   ],
   "gate_reasons": [
-    "fallback_rate_above_target: 0.254 > 0.100",
-    "autonomous_attempt_rate_below_target: 0.462 < 0.500",
-    "autonomous_success_over_attempt_below_target: 0.449 < 0.700"
+    "fallback_rate_above_target: 0.281 > 0.100",
+    "autonomous_success_over_attempt_below_target: 0.473 < 0.700"
   ],
   "verdict": "FAIL"
 }

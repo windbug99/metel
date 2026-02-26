@@ -75,6 +75,9 @@ def _should_run_skill_llm_transform_pipeline(*, settings, user_id: str) -> tuple
     enabled = bool(getattr(settings, "skill_llm_transform_pipeline_enabled", False))
     if not enabled:
         return False, False, "disabled"
+    allowlist = _parse_v2_allowlist(getattr(settings, "skill_llm_transform_pipeline_allowlist", None))
+    if allowlist and user_id in allowlist:
+        return True, False, "allowlist"
     percent = int(getattr(settings, "skill_llm_transform_pipeline_traffic_percent", 100))
     bounded = max(0, min(100, percent))
     if _v2_rollout_hit(user_id=user_id, percent=bounded):

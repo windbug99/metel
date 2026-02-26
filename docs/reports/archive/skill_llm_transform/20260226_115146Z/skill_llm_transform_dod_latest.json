@@ -6,13 +6,13 @@
   "metrics": {
     "served_success_rate": 0.7777777777777778,
     "served_count": 9,
-    "sample_size": 170,
+    "sample_size": 140,
     "min_sample": 30,
     "transform_error_rate": 0.0,
     "transform_success_total": 0,
     "transform_error_total": 0,
     "verify_fail_before_write_count": 0,
-    "fallback_rate": 0.25443786982248523
+    "fallback_rate": 0.2805755395683453
   },
   "checklist": {
     "primary_success_3d_ge_95": false,

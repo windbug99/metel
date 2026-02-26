@@ -229,6 +229,51 @@ def test_run_agent_analysis_calendar_notion_minutes_shadow_mode_runs_compiled_an
     assert "skill_llm_transform_shadow_executed=1" in result.plan.notes
 
 
+def test_run_agent_analysis_calendar_notion_minutes_allowlist_forces_compiled_serve(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        slot_loop_enabled = False
+        slot_loop_rollout_percent = 0
+        skill_llm_transform_pipeline_enabled = True
+        skill_llm_transform_pipeline_shadow_mode = False
+        skill_llm_transform_pipeline_traffic_percent = 0
+        skill_llm_transform_pipeline_allowlist = "user-allow,another-user"
+
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        assert user_id == "user-allow"
+        assert plan.tasks
+        assert plan.tasks[0].task_type == "PIPELINE_DAG"
+        assert plan.tasks[0].title == "calendar->notion(minutes) DAG"
+        return AgentExecutionResult(
+            success=True,
+            user_message="allowlist serve",
+            summary="allowlist serve",
+            artifacts={"router_mode": "PIPELINE_DAG"},
+            steps=[AgentExecutionStep(name="calendar_notion_minutes", status="success", detail="allowlist")],
+        )
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(
+        run_agent_analysis(
+            "구글캘린더에서 오늘 일정 중 회의일정만 조회해서 노션에 상세한 회의록 서식으로 생성하세요",
+            ["google", "notion"],
+            "user-allow",
+        )
+    )
+    assert result.ok is True
+    assert result.plan_source == "dag_template"
+    assert result.plan is not None
+    assert "skill_llm_transform_rollout=allowlist" in result.plan.notes
+
+
 def test_run_agent_analysis_calendar_linear_minutes_uses_dag_template(monkeypatch):
     class _Settings:
         llm_autonomous_enabled = False

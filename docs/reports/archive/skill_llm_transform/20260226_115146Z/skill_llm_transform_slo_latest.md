@@ -1,39 +1,39 @@
 # Agent Quality Report
 
-- sample size: 169 (min required: 30)
+- sample size: 139 (min required: 30)
 - autonomous success rate: 97.2% (35/36, target >= 80.0%)
-- autonomous attempt rate: 46.2% (78/169)
-- autonomous success over attempts: 44.9% (35/78)
-- llm planner failed rate: 0.0% (0/169, target <= 20.0%)
-- verification failed rate: 0.0% (0/169, target <= 25.0%)
-- guardrail degrade rate: 8.9% (15/169, target <= 40.0%)
-- fallback rate: 25.4% (43/169, target <= 10.0%)
+- autonomous attempt rate: 53.2% (74/139)
+- autonomous success over attempts: 47.3% (35/74)
+- llm planner failed rate: 0.0% (0/139, target <= 20.0%)
+- verification failed rate: 0.0% (0/139, target <= 25.0%)
+- guardrail degrade rate: 10.8% (15/139, target <= 40.0%)
+- fallback rate: 28.1% (39/139, target <= 10.0%)
 - verdict: FAIL
 
 ## Plan Source Distribution
-- llm: 108
+- llm: 92
 - rule: 22
-- calendar_linear_template: 18
 - dag_template: 17
+- calendar_linear_template: 4
 - rule_recent_lookup: 4
 
 ## Execution Mode Distribution
-- rule: 133
+- rule: 103
 - autonomous: 36
 
 ## Top Fallback Reasons
 - tool_error_rate: 15
 - replan_limit: 8
 - TOOL_TIMEOUT: 5
-- calendar_pipeline_failed: 4
 - auth_error: 3
+- validation_error: 3
 
 ## Top Error Codes
 - auth_error: 18
 - TOOL_TIMEOUT: 5
-- calendar_pipeline_failed: 4
 - validation_error: 3
 - COMPENSATION_FAILED: 3
+- execution_failed: 3
 
 ## Top Guardrail Degrade Reasons
 - tool_error_rate: 15
@@ -48,6 +48,5 @@
 - `TOOL_SPECS_VALIDATE_ON_STARTUP=true`: 초기 검증/구성 점검을 강화해 인증 관련 실패를 조기 탐지하세요.
 
 ## Gate Reasons
-- fallback_rate_above_target: 0.254 > 0.100
-- autonomous_attempt_rate_below_target: 0.462 < 0.500
-- autonomous_success_over_attempt_below_target: 0.449 < 0.700
+- fallback_rate_above_target: 0.281 > 0.100
+- autonomous_success_over_attempt_below_target: 0.473 < 0.700
