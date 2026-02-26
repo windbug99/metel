@@ -527,7 +527,7 @@ def test_run_agent_analysis_resumes_with_focused_pending_task_only(monkeypatch):
     clear_pending_action("user-focused")
 
 
-def test_run_agent_analysis_does_not_replace_pending_on_service_action_text(monkeypatch):
+def test_run_agent_analysis_replaces_pending_on_service_action_text(monkeypatch):
     clear_pending_action("user-pending-keep")
     llm_plan = AgentPlan(
         user_text="notion 페이지 본문 업데이트",
@@ -592,16 +592,11 @@ def test_run_agent_analysis_does_not_replace_pending_on_service_action_text(monk
     assert first.ok is False
     assert get_pending_action("user-pending-keep") is not None
 
-    # Previously this kind of text replaced pending as "new request".
+    # New service-action phrase should start a new request instead of consuming pending slots.
     second = asyncio.run(run_agent_analysis("notion 내용 추가", ["notion"], "user-pending-keep"))
-    assert second.ok is False
-    assert second.execution is not None
-    assert second.execution.artifacts.get("error_code") == "validation_error"
-    assert get_pending_action("user-pending-keep") is not None
-
-    third = asyncio.run(run_agent_analysis("30d50e84a3bf8012abfeea8321ff12ea", ["notion"], "user-pending-keep"))
-    assert third.ok is True
-    assert third.result_summary == "done"
+    assert second.ok is True
+    assert second.result_summary == "done"
+    assert get_pending_action("user-pending-keep") is None
     clear_pending_action("user-pending-keep")
 
 

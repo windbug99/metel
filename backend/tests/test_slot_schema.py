@@ -74,7 +74,7 @@ def test_data_source_id_pattern_validation():
 def test_get_action_slot_schema():
     schema = get_action_slot_schema("notion_search")
     assert schema is not None
-    assert "query" in schema.required_slots
+    assert "query" in schema.optional_slots
 
 
 def test_validate_slots_missing_order_follows_ask_order():

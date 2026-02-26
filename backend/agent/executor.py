@@ -1595,8 +1595,11 @@ def _build_task_tool_payload(
 
     if "linear_search_issues" in tool_name:
         payload.setdefault("first", 5)
-        payload.setdefault("query", _extract_linear_search_query(plan.user_text) or "")
-        if not payload["query"]:
+        if not _is_linear_recent_issue_lookup(plan.user_text):
+            payload.setdefault("query", _extract_linear_search_query(plan.user_text) or "")
+            if not payload["query"]:
+                payload.pop("query", None)
+        else:
             payload.pop("query", None)
         return payload
 
@@ -1819,7 +1822,12 @@ async def _autofill_task_payload(
         # Common slot fill path for all actions with schema; regex branches below are fallback only.
         filled = _merge_keyed_slots_from_user_text(action=tool_name, user_text=user_text, filled=filled)
 
-    if "notion_search" in tool_name and _missing(filled.get("query")) and allow_user_text_reparse:
+    if (
+        "notion_search" in tool_name
+        and _missing(filled.get("query"))
+        and allow_user_text_reparse
+        and not _is_notion_recent_page_lookup(user_text)
+    ):
         query = _extract_target_page_title(user_text) or _extract_first_quoted_text(user_text) or ""
         if query:
             filled["query"] = query
@@ -1979,7 +1987,12 @@ async def _autofill_task_payload(
             if body:
                 filled["body"] = body
 
-    if "linear_search_issues" in tool_name and _missing(filled.get("query")) and allow_user_text_reparse:
+    if (
+        "linear_search_issues" in tool_name
+        and _missing(filled.get("query"))
+        and allow_user_text_reparse
+        and not _is_linear_recent_issue_lookup(user_text)
+    ):
         query = _extract_linear_search_query(user_text) or ""
         if query:
             filled["query"] = query
@@ -2319,12 +2332,14 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
     final_summary = "Task 기반 오케스트레이션 실행을 완료했습니다."
     final_user_message = "요청하신 작업을 완료했습니다."
     artifacts: dict[str, str] = {}
+    executed_tool_names: list[str] = []
 
     for output in task_outputs.values():
         if output.get("kind") != "tool":
             continue
         tool_result = output.get("tool_result") or {}
         tool_name = str(output.get("tool_name") or "")
+        executed_tool_names.append(tool_name)
         if "google_calendar_list_events" in tool_name and "google_calendar_events_preview" not in artifacts:
             event_previews = _extract_google_calendar_event_previews_from_tool_result(tool_result, max_items=5)
             if event_previews:
@@ -2354,6 +2369,16 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
                 artifacts["notion_page_previews_added"] = "1"
                 artifacts["notion_page_count"] = str(len(page_previews))
                 final_user_message = f"{final_user_message}\n- 최근 페이지\n" + "\n".join(page_previews)
+
+    if final_user_message.strip() == "요청하신 작업을 완료했습니다.":
+        linear_lookup_ran = any(("linear_search_issues" in name) or ("linear_list_issues" in name) for name in executed_tool_names)
+        notion_lookup_ran = any("notion_search" in name for name in executed_tool_names)
+        if linear_lookup_ran and notion_lookup_ran:
+            final_user_message = "Linear/Notion 조회 결과가 없습니다."
+        elif linear_lookup_ran:
+            final_user_message = "Linear 최근 이슈 조회 결과가 없습니다."
+        elif notion_lookup_ran:
+            final_user_message = "Notion 최근 페이지 조회 결과가 없습니다."
 
     llm_outputs = [output for output in task_outputs.values() if output.get("kind") == "llm"]
     if llm_outputs:
@@ -2715,6 +2740,26 @@ def _extract_linear_search_query(user_text: str) -> str | None:
         return None
     candidate = match.group(1).strip(" \"'`")
     return candidate or None
+
+
+def _is_notion_recent_page_lookup(text: str) -> bool:
+    raw = (text or "").strip()
+    lower = raw.lower()
+    has_notion = ("노션" in raw) or ("notion" in lower)
+    has_page = ("페이지" in raw) or ("page" in lower)
+    has_recent = any(token in lower for token in ("최근", "최신", "마지막", "latest", "last", "recent"))
+    has_lookup = any(token in lower for token in ("조회", "검색", "목록", "불러", "보여", "list", "search"))
+    return has_notion and has_page and has_recent and has_lookup
+
+
+def _is_linear_recent_issue_lookup(text: str) -> bool:
+    raw = (text or "").strip()
+    lower = raw.lower()
+    has_linear = ("리니어" in raw) or ("linear" in lower)
+    has_issue = ("이슈" in raw) or ("issue" in lower)
+    has_recent = any(token in lower for token in ("최근", "최신", "마지막", "latest", "last", "recent"))
+    has_lookup = any(token in lower for token in ("조회", "검색", "목록", "불러", "보여", "list", "search"))
+    return has_linear and has_issue and has_recent and has_lookup
 
 
 def _extract_linear_issue_reference(user_text: str) -> str | None:

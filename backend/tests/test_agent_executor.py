@@ -373,6 +373,63 @@ def test_build_task_tool_payload_forces_single_events_for_today_query():
     assert payload["order_by"] == "startTime"
 
 
+def test_build_task_tool_payload_linear_recent_lookup_does_not_force_query():
+    plan = AgentPlan(
+        user_text="리니어에서 최근 이슈 5개 조회",
+        requirements=[AgentRequirement(summary="이슈 조회")],
+        target_services=["linear"],
+        selected_tools=["linear_search_issues"],
+        workflow_steps=[],
+        notes=[],
+    )
+    task = AgentTask(
+        id="task_linear_issues",
+        title="Linear 이슈 조회",
+        task_type="TOOL",
+        service="linear",
+        tool_name="linear_search_issues",
+        payload={"first": 5},
+        depends_on=[],
+    )
+
+    payload = _build_task_tool_payload(plan=plan, task=task, task_outputs={})
+    assert payload["first"] == 5
+    assert "query" not in payload
+
+
+def test_execute_agent_plan_linear_lookup_empty_result_is_not_generic(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, payload)
+        if tool_name == "linear_list_issues":
+            return {"ok": True, "data": {"issues": {"nodes": []}}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="리니어에서 최근 이슈 5개 조회",
+        requirements=[AgentRequirement(summary="이슈 조회")],
+        target_services=["linear"],
+        selected_tools=["linear_list_issues"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_linear_issues",
+                title="Linear 이슈 조회",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_list_issues",
+                payload={"first": 5},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert result.user_message == "Linear 최근 이슈 조회 결과가 없습니다."
+
+
 def test_execute_agent_plan_google_calendar_list_events_includes_title_and_link(monkeypatch):
     async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
         _ = (user_id, payload)

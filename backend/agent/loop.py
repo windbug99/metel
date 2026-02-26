@@ -1078,6 +1078,12 @@ async def _try_resume_pending_action(
         pending.plan.notes.append("slot_loop_replaced_new_request")
         return None
 
+    # New user intents (service + action phrase) must not be consumed as slot replies.
+    if _looks_like_new_request(user_text):
+        clear_pending_action(user_id)
+        pending.plan.notes.append("slot_loop_replaced_new_request_auto")
+        return None
+
     if not pending.missing_slots:
         clear_pending_action(user_id)
         return None

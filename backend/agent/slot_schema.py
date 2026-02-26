@@ -36,10 +36,10 @@ LINEAR_ID_PATTERN = r"^[A-Za-z0-9_-]{2,64}$"
 ACTION_SLOT_SCHEMAS: dict[str, ActionSlotSchema] = {
     "notion_search": ActionSlotSchema(
         action="notion_search",
-        required_slots=("query",),
-        optional_slots=("page_size",),
-        auto_fill_slots=(),
-        ask_order=("query",),
+        required_slots=(),
+        optional_slots=("query", "page_size"),
+        auto_fill_slots=("query",),
+        ask_order=(),
         aliases={
             "query": ("검색어", "키워드", "title"),
             "page_size": ("개수", "수", "limit", "top"),
@@ -122,10 +122,10 @@ ACTION_SLOT_SCHEMAS: dict[str, ActionSlotSchema] = {
     ),
     "linear_search_issues": ActionSlotSchema(
         action="linear_search_issues",
-        required_slots=("query",),
-        optional_slots=("first", "team_id"),
+        required_slots=(),
+        optional_slots=("query", "first", "team_id"),
         auto_fill_slots=("query", "team_id"),
-        ask_order=("query",),
+        ask_order=(),
         aliases={
             "query": ("검색어", "키워드", "이슈"),
             "first": ("개수", "수", "limit"),

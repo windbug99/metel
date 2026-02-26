@@ -45,6 +45,16 @@ def _is_notion_recent_page_list_intent(text: str) -> bool:
     return has_notion and has_page and has_recent and has_lookup
 
 
+def _is_linear_recent_issue_list_intent(text: str) -> bool:
+    raw = (text or "").strip()
+    lower = raw.lower()
+    has_linear = ("리니어" in raw) or ("linear" in lower)
+    has_issue = ("이슈" in raw) or ("issue" in lower)
+    has_recent = any(token in lower for token in ("최근", "최신", "마지막", "latest", "last", "recent"))
+    has_lookup = any(token in lower for token in ("조회", "검색", "목록", "불러", "보여", "list", "search"))
+    return has_linear and has_issue and has_recent and has_lookup
+
+
 def _extract_requirements(user_text: str) -> list[AgentRequirement]:
     normalized = user_text.strip()
     quantity = _extract_quantity(normalized)
@@ -217,6 +227,8 @@ def _extract_linear_query_from_text(user_text: str) -> str | None:
     if not match:
         return None
     candidate = match.group(1).strip(" \"'`")
+    if any(token in candidate.lower() for token in ("최근", "최신", "마지막", "latest", "last", "recent")):
+        return None
     return candidate or None
 
 
@@ -278,7 +290,7 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
                 task_type="TOOL",
                 service=service,
                 tool_name=notion_search_tool,
-                payload={"query": "최근", "page_size": page_size},
+                payload={"page_size": page_size},
                 output_schema={"type": "tool_result", "service": service or "", "tool": notion_search_tool},
             )
         )
@@ -306,7 +318,8 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
 
     issue_create_tool = _pick(("create", "issue"))
     issue_update_tool = _pick(("update", "issue"))
-    issue_search_tool = _pick(("search", "issues")) or _pick(("list", "issues"))
+    issue_list_tool = _pick(("list", "issues"))
+    issue_search_tool = _pick(("search", "issues")) or issue_list_tool
 
     if is_linear_issue_create_intent(user_text) and issue_create_tool:
         service = _tool_service_name(issue_create_tool)
@@ -337,11 +350,13 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
             )
         )
     elif issue_search_tool and (("이슈" in user_text) or ("issue" in user_text.lower()) or is_read_intent(user_text)):
-        service = _tool_service_name(issue_search_tool)
+        recent_issue_lookup = _is_linear_recent_issue_list_intent(user_text)
+        chosen_issue_lookup_tool = issue_list_tool if (recent_issue_lookup and issue_list_tool) else issue_search_tool
+        service = _tool_service_name(chosen_issue_lookup_tool)
         task_id = f"task_{service}_issues" if service else "task_issues"
         issue_query = _extract_linear_query_from_text(user_text)
         payload = {"first": 5}
-        if "search" in issue_search_tool and issue_query:
+        if "search" in chosen_issue_lookup_tool and issue_query and not recent_issue_lookup:
             payload["query"] = issue_query
         tasks.append(
             AgentTask(
@@ -349,9 +364,9 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
                 title="이슈 조회",
                 task_type="TOOL",
                 service=service,
-                tool_name=issue_search_tool,
+                tool_name=chosen_issue_lookup_tool,
                 payload=payload,
-                output_schema={"type": "tool_result", "service": service or "", "tool": issue_search_tool},
+                output_schema={"type": "tool_result", "service": service or "", "tool": chosen_issue_lookup_tool},
             )
         )
 

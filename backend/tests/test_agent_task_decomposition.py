@@ -154,15 +154,27 @@ def test_build_agent_plan_prefers_google_calendar_list_events_for_schedule_looku
     assert plan.tasks[0].tool_name == "google_calendar_list_events"
 
 
-def test_build_agent_plan_notion_last_page_lookup_sets_recent_query():
+def test_build_agent_plan_notion_last_page_lookup_omits_query_filter():
     plan = build_agent_plan(
         "노션에서 마지막 페이지 조회",
         connected_services=["notion"],
     )
     notion_task = next((task for task in plan.tasks if task.tool_name == "notion_search"), None)
     assert notion_task is not None
-    assert notion_task.payload.get("query") == "최근"
+    assert "query" not in notion_task.payload
     assert notion_task.payload.get("page_size") == 5
+
+
+def test_build_agent_plan_linear_recent_issue_lookup_prefers_list_tool():
+    plan = build_agent_plan(
+        "리니어에서 최근 이슈 5개 조회",
+        connected_services=["linear"],
+    )
+    linear_task = next((task for task in plan.tasks if task.service == "linear"), None)
+    assert linear_task is not None
+    assert linear_task.tool_name == "linear_list_issues"
+    assert linear_task.payload.get("first") == 5
+    assert "query" not in linear_task.payload
 
 
 def test_execute_agent_plan_runs_notion_data_source_llm_notion_bridge(monkeypatch):
