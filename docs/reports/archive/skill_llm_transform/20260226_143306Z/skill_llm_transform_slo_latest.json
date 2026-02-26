@@ -1,8 +1,8 @@
 {
-  "sample_size": 20,
+  "sample_size": 0,
   "min_sample": 30,
   "window_days": 0,
-  "window_start_utc": "2026-02-26T14:00:00Z",
+  "window_start_utc": "2026-02-26T14:33:06Z",
   "autonomous_success": 0,
   "autonomous_count": 0,
   "autonomous_success_rate": 0.0,
@@ -29,22 +29,12 @@
   "transform_success_total": 0,
   "transform_error_total": 0,
   "verify_fail_before_write_count": 0,
-  "top_plan_source": [
-    [
-      "dag_template",
-      20
-    ]
-  ],
-  "top_execution_mode": [
-    [
-      "rule",
-      20
-    ]
-  ],
+  "top_plan_source": [],
+  "top_execution_mode": [],
   "tuning_hints": [],
   "policy_recommendations": [],
   "gate_reasons": [
-    "insufficient_sample: 20 < 30"
+    "insufficient_sample: 0 < 30"
   ],
   "verdict": "FAIL"
 }
