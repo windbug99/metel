@@ -237,6 +237,10 @@
 - 2026-02-26 (next step update)
   - 다음 작업 계획으로 `llm_transform`의 실제 LLM API 호출 전환을 명시.
   - 생성품질 개선은 프롬프트 대수정보다 모델/파라미터 튜닝과 shadow canary를 우선 적용.
+- 2026-02-26 (llm transform implementation update)
+  - `format_detailed_minutes`, `format_linear_meeting_issue`에 대해 LLM API 기반 transform 호출을 우선 시도하도록 반영.
+  - 출력 스키마/필수값 검증 실패 시 deterministic transform contract로 즉시 fallback하도록 보강.
+  - 관련 회귀 테스트(`notion minutes llm transform`) 추가.
 
 ## 15) 다음 고도화 후보
 - 다중 대상(`각 회의마다`, `각 프로젝트별`) fan-out/fan-in 노드 표준화

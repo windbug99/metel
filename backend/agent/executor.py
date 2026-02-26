@@ -552,8 +552,42 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
         fail_closed = True
         if isinstance(fallback_policy, dict) and fallback_policy.get("fail_closed") is False:
             fail_closed = False
+        transformed: dict | None = None
+        llm_transform_targets = {"format_detailed_minutes", "format_linear_meeting_issue"}
+        if transform_name in llm_transform_targets:
+            output_schema_text = json.dumps(output_schema or {}, ensure_ascii=False)
+            payload_text = json.dumps(raw_payload, ensure_ascii=False)
+            system_prompt = (
+                "You are a strict JSON transformer. "
+                "Return only one JSON object that follows the target schema. "
+                "Do not include markdown or explanations."
+            )
+            if transform_name == "format_detailed_minutes":
+                user_prompt = (
+                    "Transform calendar event payload into detailed meeting minutes payload for Notion page creation.\n"
+                    "Requirements:\n"
+                    "- Output keys must include `title` and `children`.\n"
+                    "- `children` must be a non-empty Notion block array.\n"
+                    "- Use Korean business writing style.\n"
+                    f"- Target schema: {output_schema_text}\n"
+                    f"- Input payload: {payload_text}"
+                )
+            else:
+                user_prompt = (
+                    "Transform calendar event payload into Linear meeting issue payload.\n"
+                    "Requirements:\n"
+                    "- Output keys must include `title` and `description`.\n"
+                    "- `description` must include sections for 목적/논의/결정/액션 아이템.\n"
+                    "- Use Korean business writing style.\n"
+                    f"- Target schema: {output_schema_text}\n"
+                    f"- Input payload: {payload_text}"
+                )
+            llm_parsed = await _request_autofill_json(system_prompt=system_prompt, user_prompt=user_prompt)
+            if isinstance(llm_parsed, dict):
+                transformed = llm_parsed
         try:
-            transformed = run_transform_contract(transform_name, raw_payload)
+            if transformed is None:
+                transformed = run_transform_contract(transform_name, raw_payload)
         except Exception as exc:
             if not fail_closed:
                 transformed = dict(raw_payload)
@@ -564,13 +598,33 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                 ) from exc
         required = [str(key).strip() for key in (output_schema or {}).get("required", []) if str(key).strip()]
         missing = [key for key in required if transformed.get(key) in (None, "")]
+        if transform_name == "format_detailed_minutes" and not isinstance(transformed.get("children"), list):
+            missing.append("children")
+        if transform_name == "format_detailed_minutes" and isinstance(transformed.get("children"), list) and not transformed.get("children"):
+            missing.append("children_non_empty")
         if missing:
-            if not fail_closed:
-                return dict(raw_payload)
-            raise PipelineExecutionError(
-                code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
-                reason=f"missing_required_slots:{','.join(missing)}",
-            )
+            try:
+                transformed_fallback = run_transform_contract(transform_name, raw_payload)
+                transformed = transformed_fallback
+                missing = [key for key in required if transformed.get(key) in (None, "")]
+                if transform_name == "format_detailed_minutes" and (
+                    not isinstance(transformed.get("children"), list) or not transformed.get("children")
+                ):
+                    missing.append("children")
+            except Exception as exc:
+                if not fail_closed:
+                    return dict(raw_payload)
+                raise PipelineExecutionError(
+                    code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
+                    reason=f"transform_contract_error:{transform_name}:{exc.__class__.__name__}",
+                ) from exc
+            if missing:
+                if not fail_closed:
+                    return dict(raw_payload)
+                raise PipelineExecutionError(
+                    code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
+                    reason=f"missing_required_slots:{','.join(missing)}",
+                )
         return transformed
 
     async def _execute_compensation_for_dag(
