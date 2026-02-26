@@ -263,9 +263,13 @@
 - [x] `llm_transform`의 LLM API 우선 호출 + deterministic fallback 적용
 - [x] Notion minutes 스키마 보정(children 정규화, dict 문자열 노출 방지) 반영
 - [x] todo helper 필드 누수(`todo_intro`, `todo_items`) 차단 반영
-- [ ] Stage6 전체 회귀 PASS 재확인
+- [x] Stage6 전체 회귀 PASS 재확인
+  - 로컬 회귀 세트: `42 passed` 확인
 - [ ] DoD 3일 연속 지표(성공률/fallback률/verify 누락) 충족 검증
-- [ ] 식사/비회의 요청에서 기대 출력 품질(예: 식당 추천 목록 포맷) 별도 기준 수립 및 테스트 추가
+  - 현재 로컬 실행 환경 DNS 제약으로 SLO guard의 Supabase 접속 실패(`dns: FAIL, gaierror`)
+- [x] 식사/비회의 요청에서 기대 출력 품질 기준 1차 반영
+  - 지도/장소 검색 skill 미연결 시 "근처 식당 추천" 요청을 명시적 안내로 차단(환각/임의 페이지 생성 방지)
+  - `test_run_agent_analysis_location_food_recommendation_requires_map_skill` 회귀 테스트 추가
 
 ## 17) 구현 분해 (PR/티켓 단위)
 

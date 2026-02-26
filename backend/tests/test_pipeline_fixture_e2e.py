@@ -48,6 +48,8 @@ def test_google_calendar_to_notion_linear_fixture_e2e(monkeypatch):
             }
         if tool_name == "notion_create_page":
             return {"ok": True, "data": {"id": f"page-{payload.get('title', '').lower().replace(' ', '-')}"}}
+        if tool_name == "linear_list_teams":
+            return {"ok": True, "data": {"teams": {"nodes": [{"id": "team-1", "name": "Operate"}]}}}
         if tool_name == "linear_create_issue":
             return {"ok": True, "data": {"issueCreate": {"success": True}}}
         raise AssertionError(f"unexpected tool: {tool_name}")

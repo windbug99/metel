@@ -317,6 +317,42 @@ def test_run_agent_analysis_calendar_linear_minutes_shadow_mode_runs_compiled_an
     assert "skill_llm_transform_shadow_executed=1" in result.plan.notes
 
 
+def test_run_agent_analysis_location_food_recommendation_requires_map_skill(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        slot_loop_enabled = False
+        slot_loop_rollout_percent = 0
+        skill_llm_transform_pipeline_enabled = True
+        skill_llm_transform_pipeline_traffic_percent = 100
+        skill_llm_transform_pipeline_shadow_mode = False
+
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    async def _fail_execute_agent_plan(user_id: str, plan: AgentPlan):
+        _ = (user_id, plan)
+        raise AssertionError("execute_agent_plan should not be called when capability guard blocks request")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fail_execute_agent_plan)
+
+    result = asyncio.run(
+        run_agent_analysis(
+            "구글캘린더에서 오늘 일정 중 식사 일정만 조회해서 약속장소 근처 식당 추천하세요.",
+            ["google", "notion"],
+            "user-food-no-map",
+        )
+    )
+    assert result.ok is False
+    assert result.execution is not None
+    assert result.execution.artifacts.get("error_code") == "unsupported_capability"
+    assert "지도/장소 검색 연동이 필요합니다." in result.execution.summary
+    assert "Naver Map" in result.execution.user_message
+
+
 def test_run_agent_analysis_slot_question_and_resume(monkeypatch):
     clear_pending_action("user-slot")
     llm_plan = AgentPlan(

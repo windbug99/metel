@@ -235,6 +235,27 @@ def _is_recent_lookup_intent(user_text: str) -> bool:
     return is_notion_recent or is_linear_recent
 
 
+def _has_map_search_capability(connected_services: list[str]) -> bool:
+    connected = {item.strip().lower() for item in connected_services if item and item.strip()}
+    return any(name in connected for name in ("naver_map", "kakao_map", "google_maps", "maps"))
+
+
+def _is_location_food_recommendation_intent(user_text: str) -> bool:
+    text = user_text or ""
+    lower = text.lower()
+    has_calendar_context = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "일정", "식사"))
+    if not has_calendar_context:
+        return False
+    has_food = any(token in text or token in lower for token in ("식당", "맛집", "레스토랑", "restaurant"))
+    if not has_food:
+        return False
+    has_recommend = any(token in text or token in lower for token in ("추천", "recommend"))
+    if not has_recommend:
+        return False
+    has_location_nearby = any(token in text or token in lower for token in ("근처", "주변", "약속장소", "장소"))
+    return has_location_nearby
+
+
 def _build_calendar_pipeline_plan(user_text: str) -> AgentPlan:
     pipeline = build_google_calendar_to_notion_linear_pipeline(user_text=user_text)
     return AgentPlan(
@@ -1472,6 +1493,30 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             ),
             artifacts={"error_code": "validation_error", "next_action": "start_new_request"},
             steps=[AgentExecutionStep(name="slot_loop_orphan_slot_input", status="error", detail="no_pending_action")],
+        )
+        return AgentRunResult(
+            ok=False,
+            stage="validation",
+            plan=plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="rule",
+        )
+
+    if _is_location_food_recommendation_intent(user_text) and not _has_map_search_capability(connected_services):
+        plan = build_agent_plan(user_text=user_text, connected_services=connected_services)
+        plan.notes.append("policy=unsupported_location_food_recommendation_without_map_skill")
+        plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+        execution = AgentExecutionResult(
+            success=False,
+            summary="지도/장소 검색 연동이 필요합니다.",
+            user_message=(
+                "약속장소 근처 식당 추천은 현재 지도/장소 검색 연동이 필요합니다.\n"
+                "현재 계정에는 해당 skill이 연결되어 있지 않아 추천 생성을 중단했습니다.\n"
+                "Naver Map 등 지도 연동 후 다시 요청해주세요."
+            ),
+            artifacts={"error_code": "unsupported_capability", "required_capability": "map_place_search"},
+            steps=[AgentExecutionStep(name="capability_guard", status="error", detail="missing_map_place_search_skill")],
         )
         return AgentRunResult(
             ok=False,
