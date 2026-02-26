@@ -294,3 +294,27 @@ STAGE6_CORE_PASS=true N_TO_N_E2E_PASS=true ZERO_MATCH_E2E_PASS=true \
 ```bash
 0 * * * * cd /Users/tomato/cursor/metel/backend && DAYS=3 LIMIT=200 MIN_SAMPLE=30 CURRENT_PERCENT=100 ./scripts/run_skill_llm_transform_dod_cycle.sh >> /tmp/skill_llm_transform_dod_cycle.log 2>&1
 ```
+
+## 16) Skill+LLM Transform compile miss 원인 집계 (신규)
+
+`rollout_*_miss` 요청의 컴파일 미매칭 원인/서비스 분포를 집계:
+
+```bash
+cd backend
+. .venv/bin/activate
+python scripts/eval_skill_llm_transform_compile_miss.py \
+  --days 1 \
+  --limit 500 \
+  --top 10 \
+  --output-json ../docs/reports/skill_llm_transform_compile_miss_latest.json
+```
+
+배포 시각 이후만 보고 싶으면:
+
+```bash
+python scripts/eval_skill_llm_transform_compile_miss.py \
+  --since 2026-02-26T12:13:45Z \
+  --limit 500 \
+  --top 10 \
+  --output-json ../docs/reports/skill_llm_transform_compile_miss_latest.json
+```

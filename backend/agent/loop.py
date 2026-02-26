@@ -178,8 +178,14 @@ def _is_calendar_linear_minutes_intent(user_text: str, connected_services: list[
     has_meeting = any(token in text or token in lower for token in ("회의", "meeting"))
     if not has_meeting:
         return False
-    has_minutes = any(token in text or token in lower for token in ("회의록", "minutes", "서식"))
-    return has_minutes and is_create_intent(text)
+    has_minutes = any(
+        token in text or token in lower
+        for token in ("회의록", "minutes", "서식", "양식", "템플릿", "template", "정리", "요약")
+    )
+    has_write_intent = is_create_intent(text) or is_update_intent(text) or any(
+        token in text or token in lower for token in ("생성", "작성", "만들", "등록", "정리", "요약")
+    )
+    return has_minutes and has_write_intent
 
 
 def _is_calendar_notion_todo_intent(user_text: str, connected_services: list[str]) -> bool:
@@ -215,8 +221,54 @@ def _is_calendar_notion_minutes_intent(user_text: str, connected_services: list[
     has_meeting = any(token in text or token in lower for token in ("회의", "meeting"))
     if not has_meeting:
         return False
-    has_minutes = any(token in text or token in lower for token in ("회의록", "minutes", "서식"))
-    return has_minutes and is_create_intent(text)
+    has_minutes = any(
+        token in text or token in lower
+        for token in ("회의록", "minutes", "서식", "양식", "템플릿", "template", "정리", "요약")
+    )
+    has_write_intent = is_create_intent(text) or is_update_intent(text) or any(
+        token in text or token in lower for token in ("생성", "작성", "만들", "등록", "정리", "요약")
+    )
+    return has_minutes and has_write_intent
+
+
+def _skill_llm_transform_compile_miss_reason(user_text: str, connected_services: list[str]) -> str:
+    text = user_text or ""
+    lower = text.lower()
+    connected = {item.strip().lower() for item in connected_services if item and item.strip()}
+
+    if "google" not in connected:
+        return "missing_google_connection"
+
+    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "일정", "회의"))
+    has_meeting = any(token in text or token in lower for token in ("회의", "meeting"))
+    has_minutes = any(
+        token in text or token in lower
+        for token in ("회의록", "minutes", "서식", "양식", "템플릿", "template", "정리", "요약")
+    )
+    has_write_intent = is_create_intent(text) or is_update_intent(text) or any(
+        token in text or token in lower for token in ("생성", "작성", "만들", "등록", "정리", "요약")
+    )
+
+    wants_notion = _mentions_service(text, "notion")
+    wants_linear = _mentions_service(text, "linear")
+
+    if wants_notion and "notion" not in connected:
+        return "missing_notion_connection"
+    if wants_linear and "linear" not in connected:
+        return "missing_linear_connection"
+    if not (wants_notion or wants_linear):
+        return "missing_target_service_keyword"
+    if not has_calendar:
+        return "missing_calendar_keyword"
+    if wants_notion and wants_linear:
+        return "ambiguous_target_both_notion_and_linear"
+    if not has_meeting:
+        return "missing_meeting_keyword"
+    if not has_minutes:
+        return "missing_minutes_format_keyword"
+    if not has_write_intent:
+        return "missing_write_intent"
+    return "no_dag_template_match"
 
 
 def _is_recent_lookup_intent(user_text: str) -> bool:
@@ -1593,6 +1645,9 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
         else:
             skill_llm_pre_notes.append("skill_llm_transform_shadow_executed=0")
             skill_llm_pre_notes.append("skill_llm_transform_shadow_ok=0")
+    elif bool(getattr(settings, "skill_llm_transform_pipeline_enabled", False)):
+        miss_reason = _skill_llm_transform_compile_miss_reason(user_text, connected_services)
+        skill_llm_pre_notes.append(f"skill_llm_transform_compile_miss_reason={miss_reason}")
 
     if _is_calendar_linear_issue_intent(user_text, connected_services):
         linear_plan = _build_calendar_linear_issue_plan(user_text)

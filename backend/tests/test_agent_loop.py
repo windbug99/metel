@@ -142,6 +142,48 @@ def test_run_agent_analysis_calendar_notion_minutes_uses_dag_template(monkeypatc
     assert result.execution.artifacts.get("router_mode") == "PIPELINE_DAG"
 
 
+def test_run_agent_analysis_calendar_notion_minutes_summary_phrase_uses_dag_template(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        slot_loop_enabled = False
+        slot_loop_rollout_percent = 0
+        skill_llm_transform_pipeline_enabled = True
+        skill_llm_transform_pipeline_traffic_percent = 100
+        skill_llm_transform_pipeline_shadow_mode = False
+
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        assert user_id == "user-minutes-summary"
+        assert plan.tasks
+        assert plan.tasks[0].task_type == "PIPELINE_DAG"
+        assert plan.tasks[0].title == "calendar->notion(minutes) DAG"
+        return AgentExecutionResult(
+            success=True,
+            user_message="ok",
+            summary="ok",
+            artifacts={"router_mode": "PIPELINE_DAG"},
+            steps=[AgentExecutionStep(name="calendar_notion_minutes", status="success", detail="done")],
+        )
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(
+        run_agent_analysis(
+            "구글캘린더 오늘 회의를 노션에 회의 요약 템플릿으로 정리해줘",
+            ["google", "notion"],
+            "user-minutes-summary",
+        )
+    )
+    assert result.ok is True
+    assert result.plan_source == "dag_template"
+
+
 def test_run_agent_analysis_calendar_notion_minutes_flag_off_uses_legacy_path(monkeypatch):
     llm_plan = _sample_plan()
 
@@ -396,6 +438,45 @@ def test_run_agent_analysis_location_food_recommendation_requires_map_skill(monk
     assert result.execution.artifacts.get("error_code") == "unsupported_capability"
     assert "지도/장소 검색 연동이 필요합니다." in result.execution.summary
     assert "Naver Map" in result.execution.user_message
+
+
+def test_run_agent_analysis_skill_llm_compile_miss_reason_is_logged(monkeypatch):
+    llm_plan = _sample_plan()
+
+    class _Settings:
+        llm_autonomous_enabled = False
+        slot_loop_enabled = False
+        slot_loop_rollout_percent = 0
+        skill_llm_transform_pipeline_enabled = True
+        skill_llm_transform_pipeline_shadow_mode = False
+        skill_llm_transform_pipeline_traffic_percent = 30
+
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        assert user_id == "user-miss-reason"
+        return AgentExecutionResult(success=True, user_message="legacy", summary="legacy")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(
+        run_agent_analysis(
+            "구글캘린더 조회해줘",
+            ["google", "notion"],
+            "user-miss-reason",
+        )
+    )
+    assert result.ok is True
+    assert any(note.startswith("skill_llm_transform_compile_miss_reason=") for note in result.plan.notes)
 
 
 def test_run_agent_analysis_slot_question_and_resume(monkeypatch):
