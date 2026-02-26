@@ -348,21 +348,29 @@ def _normalize_notion_payload(tool_name: str, payload: dict[str, Any]) -> dict[s
 
 
 async def _execute_notion_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
-    token = _load_oauth_access_token(user_id=user_id, provider="notion")
     path = _build_path(tool.path, payload)
     body_or_query = _strip_path_params(tool.path, payload)
     url = f"{tool.base_url}{path}"
-
-    headers = _notion_headers(token)
     method = tool.method.upper()
-    async with httpx.AsyncClient(timeout=20) as client:
-        if method == "GET":
-            response = await client.get(url, headers=headers, params=body_or_query)
-        elif method == "DELETE":
-            response = await client.delete(url, headers=headers)
-        else:
+
+    async def _request_with_token(token: str) -> httpx.Response:
+        headers = _notion_headers(token)
+        async with httpx.AsyncClient(timeout=20) as client:
+            if method == "GET":
+                return await client.get(url, headers=headers, params=body_or_query)
+            if method == "DELETE":
+                return await client.delete(url, headers=headers)
             headers["Content-Type"] = "application/json"
-            response = await client.request(method, url, headers=headers, json=body_or_query)
+            return await client.request(method, url, headers=headers, json=body_or_query)
+
+    token = _load_oauth_access_token(user_id=user_id, provider="notion")
+    response = await _request_with_token(token)
+    if response.status_code >= 400:
+        mapped = tool.error_map.get(str(response.status_code), "TOOL_FAILED")
+        if mapped == "AUTH_REQUIRED":
+            # Reconnect 직후 토큰 반영 race 완화: 최신 토큰으로 1회 재시도.
+            token = _load_oauth_access_token(user_id=user_id, provider="notion")
+            response = await _request_with_token(token)
 
     if response.status_code >= 400:
         mapped = tool.error_map.get(str(response.status_code), "TOOL_FAILED")
@@ -613,18 +621,32 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
 
 
 async def _execute_linear_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
-    token = _load_oauth_access_token(user_id=user_id, provider="linear")
     query, variables = _linear_query_and_variables(tool.tool_name, payload)
     url = f"{tool.base_url}/graphql"
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.post(url, headers=headers, json={"query": query, "variables": variables})
+    async def _request_with_token(token: str) -> httpx.Response:
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=20) as client:
+            return await client.post(url, headers=headers, json={"query": query, "variables": variables})
+
+    token = _load_oauth_access_token(user_id=user_id, provider="linear")
+    response = await _request_with_token(token)
 
     if response.status_code >= 400:
+        mapped = tool.error_map.get(str(response.status_code), "TOOL_FAILED")
+        if mapped == "AUTH_REQUIRED":
+            token = _load_oauth_access_token(user_id=user_id, provider="linear")
+            response = await _request_with_token(token)
+            if response.status_code < 400:
+                try:
+                    data = response.json()
+                except JSONDecodeError:
+                    raise HTTPException(status_code=400, detail=f"{tool.tool_name}:TOOL_FAILED|invalid_json")
+                if not data.get("errors"):
+                    return {"ok": True, "data": data.get("data", {})}
         mapped = tool.error_map.get(str(response.status_code), "TOOL_FAILED")
         logger.warning(
             "linear_http_failed tool=%s status=%s mapped=%s payload_keys=%s body=%s",
@@ -649,8 +671,22 @@ async def _execute_linear_http(user_id: str, tool: ToolDefinition, payload: dict
         first = errors[0] if isinstance(errors, list) and errors else {}
         message = str(first.get("message") or str(errors))[:300] if isinstance(first, dict) else str(errors)[:300]
         code = ""
+        mapped = "TOOL_FAILED"
         if isinstance(first, dict):
             code = str((first.get("extensions") or {}).get("code") or "")
+            if code == "AUTHENTICATION_ERROR":
+                mapped = "AUTH_REQUIRED"
+                token = _load_oauth_access_token(user_id=user_id, provider="linear")
+                retry_response = await _request_with_token(token)
+                if retry_response.status_code < 400:
+                    try:
+                        retry_data = retry_response.json()
+                    except JSONDecodeError:
+                        raise HTTPException(status_code=400, detail=f"{tool.tool_name}:TOOL_FAILED|invalid_json")
+                    if not retry_data.get("errors"):
+                        return {"ok": True, "data": retry_data.get("data", {})}
+                else:
+                    mapped = tool.error_map.get(str(retry_response.status_code), mapped)
         logger.warning(
             "linear_graphql_errors tool=%s payload_keys=%s code=%s message=%s",
             tool.tool_name,
@@ -658,7 +694,7 @@ async def _execute_linear_http(user_id: str, tool: ToolDefinition, payload: dict
             code or "-",
             message,
         )
-        detail = f"{tool.tool_name}:TOOL_FAILED|message={message}"
+        detail = f"{tool.tool_name}:{mapped}|message={message}"
         if code:
             detail = f"{detail}|code={code}"
         raise HTTPException(status_code=400, detail=detail)

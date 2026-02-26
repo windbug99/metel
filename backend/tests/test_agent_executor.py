@@ -478,6 +478,70 @@ def test_execute_agent_plan_linear_recent_issues_includes_links(monkeypatch):
     assert "https://linear.app/issue/OPS-102" in result.user_message
 
 
+def test_execute_agent_plan_notion_recent_pages_includes_links(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, payload)
+        if tool_name == "notion_search":
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {
+                            "id": "page-1",
+                            "url": "https://notion.so/page-1",
+                            "properties": {
+                                "title": {
+                                    "type": "title",
+                                    "title": [{"plain_text": "주간 회고"}],
+                                }
+                            },
+                        },
+                        {
+                            "id": "page-2",
+                            "url": "https://notion.so/page-2",
+                            "properties": {
+                                "title": {
+                                    "type": "title",
+                                    "title": [{"plain_text": "스프린트 계획"}],
+                                }
+                            },
+                        },
+                    ]
+                },
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="노션에서 마지막 페이지 조회",
+        requirements=[AgentRequirement(summary="Notion 페이지 조회")],
+        target_services=["notion"],
+        selected_tools=["notion_search"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_notion_recent_pages",
+                title="최근 페이지 조회",
+                task_type="TOOL",
+                service="notion",
+                tool_name="notion_search",
+                payload={"query": "최근", "page_size": 5},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert "최근 페이지" in result.user_message
+    assert "주간 회고" in result.user_message
+    assert "https://notion.so/page-1" in result.user_message
+    assert "스프린트 계획" in result.user_message
+    assert "https://notion.so/page-2" in result.user_message
+
+
 def test_task_orchestration_autofills_notion_append_with_search(monkeypatch):
     calls = []
 

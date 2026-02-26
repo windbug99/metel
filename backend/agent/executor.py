@@ -1515,6 +1515,24 @@ def _extract_linear_issue_previews_from_tool_result(result: dict, max_items: int
     return previews
 
 
+def _extract_notion_page_previews_from_tool_result(result: dict, max_items: int = 5) -> list[str]:
+    data = result.get("data") or {}
+    if not isinstance(data, dict):
+        return []
+    pages = data.get("results") or []
+    if not isinstance(pages, list) or not pages:
+        return []
+
+    previews: list[str] = []
+    for idx, page in enumerate(pages[: max(1, max_items)], start=1):
+        if not isinstance(page, dict):
+            continue
+        title = _extract_page_title(page)
+        page_url = str(page.get("url") or "").strip() or "-"
+        previews.append(f"{idx}. {title}\n   링크: {page_url}")
+    return previews
+
+
 def _extract_upstream_message(detail: str) -> str:
     match = re.search(r"\|message=([^|]+)", detail or "")
     if not match:
@@ -2330,6 +2348,12 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
                 artifacts["linear_issue_previews_added"] = "1"
                 artifacts["linear_issue_count"] = str(len(issue_previews))
                 final_user_message = f"{final_user_message}\n- 최근 이슈\n" + "\n".join(issue_previews)
+        if "notion_search" in tool_name and "notion_page_previews_added" not in artifacts:
+            page_previews = _extract_notion_page_previews_from_tool_result(tool_result, max_items=10)
+            if page_previews:
+                artifacts["notion_page_previews_added"] = "1"
+                artifacts["notion_page_count"] = str(len(page_previews))
+                final_user_message = f"{final_user_message}\n- 최근 페이지\n" + "\n".join(page_previews)
 
     llm_outputs = [output for output in task_outputs.values() if output.get("kind") == "llm"]
     if llm_outputs:

@@ -178,7 +178,7 @@ def _build_user_facing_message(
 
     cleaned = (execution_message or "").strip()
     if not cleaned:
-        return "요청하신 작업을 완료했습니다."
+        return "작업은 완료되었지만 표시할 결과 본문이 비어 있습니다. 동일 요청을 다시 시도해주세요."
     # Success responses should preserve core content (not only first line),
     # while still avoiding very long Telegram messages.
     max_success_chars = 1200

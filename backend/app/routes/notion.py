@@ -111,8 +111,8 @@ async def notion_oauth_status(request: Request):
             .maybe_single()
             .execute()
         )
-
-        return {"connected": bool(result.data), "integration": result.data}
+        integration = getattr(result, "data", None)
+        return {"connected": bool(integration), "integration": integration}
     except Exception as exc:
         logger.exception("notion status query failed: %s", exc)
         # Avoid bubbling runtime errors as opaque CORS failures on the frontend.

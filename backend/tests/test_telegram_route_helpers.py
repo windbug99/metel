@@ -154,6 +154,18 @@ def test_build_user_facing_message_success_keeps_multiline_body():
     assert "### 해결 방향" in text
 
 
+def test_build_user_facing_message_success_empty_body_uses_explicit_warning():
+    text = _build_user_facing_message(
+        ok=True,
+        execution_message="",
+        error_code=None,
+        slot_action=None,
+        missing_slot=None,
+    )
+    assert "결과 본문이 비어 있습니다" in text
+    assert text != "요청하신 작업을 완료했습니다."
+
+
 def test_truncate_telegram_message():
     source = "a" * 500
     out = _truncate_telegram_message(source, max_chars=140)
