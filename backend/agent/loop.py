@@ -19,6 +19,7 @@ from agent.intent_keywords import (
 from agent.pending_action import PendingActionStorageError, clear_pending_action, get_pending_action, set_pending_action
 from agent.orchestrator_v2 import try_run_v2_orchestration
 from agent.pipeline_fixtures import (
+    build_google_calendar_to_linear_minutes_pipeline,
     build_google_calendar_to_notion_linear_pipeline,
     build_google_calendar_to_notion_minutes_pipeline,
     build_google_calendar_to_notion_todo_pipeline,
@@ -158,6 +159,26 @@ def _is_calendar_linear_issue_intent(user_text: str, connected_services: list[st
     return has_linear and (not has_notion) and has_issue_create and is_create_intent(text)
 
 
+def _is_calendar_linear_minutes_intent(user_text: str, connected_services: list[str]) -> bool:
+    connected = {item.strip().lower() for item in connected_services if item and item.strip()}
+    if not {"google", "linear"}.issubset(connected):
+        return False
+    text = user_text or ""
+    lower = text.lower()
+    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "일정", "회의"))
+    if not has_calendar:
+        return False
+    if not _mentions_service(text, "linear"):
+        return False
+    if _mentions_service(text, "notion"):
+        return False
+    has_meeting = any(token in text or token in lower for token in ("회의", "meeting"))
+    if not has_meeting:
+        return False
+    has_minutes = any(token in text or token in lower for token in ("회의록", "minutes", "서식"))
+    return has_minutes and is_create_intent(text)
+
+
 def _is_calendar_notion_todo_intent(user_text: str, connected_services: list[str]) -> bool:
     connected = {item.strip().lower() for item in connected_services if item and item.strip()}
     if not {"google", "notion"}.issubset(connected):
@@ -255,6 +276,31 @@ def _build_calendar_linear_issue_plan(user_text: str) -> AgentPlan:
     )
 
 
+def _build_calendar_linear_minutes_plan(user_text: str) -> AgentPlan:
+    pipeline = build_google_calendar_to_linear_minutes_pipeline(user_text=user_text)
+    return AgentPlan(
+        user_text=user_text,
+        requirements=[AgentRequirement(summary="calendar_linear_minutes_pipeline")],
+        target_services=["google", "linear"],
+        selected_tools=["google_calendar_list_events", "linear_create_issue", "linear_list_teams"],
+        workflow_steps=[
+            "1. Google Calendar 오늘 일정 조회",
+            "2. 회의 일정만 필터링",
+            "3. 각 회의별 상세 회의록 서식 생성",
+            "4. 각 회의를 Linear 이슈로 생성",
+        ],
+        tasks=[
+            AgentTask(
+                id="task_pipeline_dag_calendar_linear_minutes",
+                title="calendar->linear(minutes) DAG",
+                task_type="PIPELINE_DAG",
+                payload={"pipeline": pipeline, "ctx": {"enabled": True}},
+            )
+        ],
+        notes=["planner=loop", "router_mode=PIPELINE_DAG", "plan_source=dag_template"],
+    )
+
+
 def _build_calendar_notion_todo_plan(user_text: str) -> AgentPlan:
     pipeline = build_google_calendar_to_notion_todo_pipeline(user_text=user_text)
     return AgentPlan(
@@ -316,6 +362,10 @@ def _compile_skill_llm_transform_pipeline(
         return None
     if _is_calendar_notion_minutes_intent(user_text, connected_services):
         plan = _build_calendar_notion_minutes_plan(user_text)
+        plan.notes.append("compiler=deterministic_skill_llm_transform_v1")
+        return plan
+    if _is_calendar_linear_minutes_intent(user_text, connected_services):
+        plan = _build_calendar_linear_minutes_plan(user_text)
         plan.notes.append("compiler=deterministic_skill_llm_transform_v1")
         return plan
     return None
@@ -1449,40 +1499,6 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             plan_source="dag_template",
         )
 
-    if _is_calendar_linear_issue_intent(user_text, connected_services):
-        linear_plan = _build_calendar_linear_issue_plan(user_text)
-        execution = await execute_agent_plan(user_id=user_id, plan=linear_plan)
-        finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
-        execution.user_message = finalized_message
-        if finalizer_mode != "disabled":
-            linear_plan.notes.append(f"response_finalizer={finalizer_mode}")
-        linear_plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
-        return AgentRunResult(
-            ok=execution.success,
-            stage="execution",
-            plan=linear_plan,
-            result_summary=execution.summary,
-            execution=execution,
-            plan_source="calendar_linear_template",
-        )
-
-    if _is_calendar_notion_todo_intent(user_text, connected_services):
-        notion_todo_plan = _build_calendar_notion_todo_plan(user_text)
-        execution = await execute_agent_plan(user_id=user_id, plan=notion_todo_plan)
-        finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
-        execution.user_message = finalized_message
-        if finalizer_mode != "disabled":
-            notion_todo_plan.notes.append(f"response_finalizer={finalizer_mode}")
-        notion_todo_plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
-        return AgentRunResult(
-            ok=execution.success,
-            stage="execution",
-            plan=notion_todo_plan,
-            result_summary=execution.summary,
-            execution=execution,
-            plan_source="dag_template",
-        )
-
     skill_llm_pre_notes: list[str] = []
     compiled_skill_llm_plan = _compile_skill_llm_transform_pipeline(
         user_text=user_text,
@@ -1529,6 +1545,40 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
         else:
             skill_llm_pre_notes.append("skill_llm_transform_shadow_executed=0")
             skill_llm_pre_notes.append("skill_llm_transform_shadow_ok=0")
+
+    if _is_calendar_linear_issue_intent(user_text, connected_services):
+        linear_plan = _build_calendar_linear_issue_plan(user_text)
+        execution = await execute_agent_plan(user_id=user_id, plan=linear_plan)
+        finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
+        execution.user_message = finalized_message
+        if finalizer_mode != "disabled":
+            linear_plan.notes.append(f"response_finalizer={finalizer_mode}")
+        linear_plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+        return AgentRunResult(
+            ok=execution.success,
+            stage="execution",
+            plan=linear_plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="calendar_linear_template",
+        )
+
+    if _is_calendar_notion_todo_intent(user_text, connected_services):
+        notion_todo_plan = _build_calendar_notion_todo_plan(user_text)
+        execution = await execute_agent_plan(user_id=user_id, plan=notion_todo_plan)
+        finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
+        execution.user_message = finalized_message
+        if finalizer_mode != "disabled":
+            notion_todo_plan.notes.append(f"response_finalizer={finalizer_mode}")
+        notion_todo_plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+        return AgentRunResult(
+            ok=execution.success,
+            stage="execution",
+            plan=notion_todo_plan,
+            result_summary=execution.summary,
+            execution=execution,
+            plan_source="dag_template",
+        )
 
     # Hard bypass for recent lookup intents: skip router_v2/autonomous/LLM planner.
     # This guarantees deterministic tool output (list + links) for "최근/마지막 조회".

@@ -229,6 +229,51 @@ def test_run_agent_analysis_calendar_notion_minutes_shadow_mode_runs_compiled_an
     assert "skill_llm_transform_shadow_executed=1" in result.plan.notes
 
 
+def test_run_agent_analysis_calendar_linear_minutes_uses_dag_template(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        slot_loop_enabled = False
+        slot_loop_rollout_percent = 0
+        skill_llm_transform_pipeline_enabled = True
+        skill_llm_transform_pipeline_traffic_percent = 100
+        skill_llm_transform_pipeline_shadow_mode = False
+
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        assert user_id == "user-linear-minutes"
+        assert plan.tasks
+        assert plan.tasks[0].task_type == "PIPELINE_DAG"
+        assert plan.tasks[0].title == "calendar->linear(minutes) DAG"
+        assert plan.selected_tools == ["google_calendar_list_events", "linear_create_issue", "linear_list_teams"]
+        return AgentExecutionResult(
+            success=True,
+            user_message="작업결과\n- 생성 완료\n\n링크\n- Linear: https://linear.app/issue/1",
+            summary="calendar linear minutes done",
+            artifacts={"router_mode": "PIPELINE_DAG", "pipeline_run_id": "prun_linear_minutes"},
+            steps=[AgentExecutionStep(name="calendar_linear_minutes", status="success", detail="done")],
+        )
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(
+        run_agent_analysis(
+            "구글캘린더에서 오늘 일정 중 회의일정만 조회해서 리니어에 회의록 서식 이슈 생성",
+            ["google", "linear"],
+            "user-linear-minutes",
+        )
+    )
+    assert result.ok is True
+    assert result.plan_source == "dag_template"
+    assert result.execution is not None
+    assert result.execution.artifacts.get("router_mode") == "PIPELINE_DAG"
+
+
 def test_run_agent_analysis_slot_question_and_resume(monkeypatch):
     clear_pending_action("user-slot")
     llm_plan = AgentPlan(
