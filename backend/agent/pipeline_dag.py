@@ -385,7 +385,7 @@ def validate_pipeline_dsl(
             if not isinstance(node.get("output_schema"), dict):
                 errors.append(f"{node_id}:output_schema_required")
         elif node_type == "for_each":
-            source_ref = str(node.get("source_ref") or "")
+            source_ref = str(node.get("source_ref") or node.get("items_ref") or "")
             if not _REF_PATTERN.match(source_ref):
                 errors.append(f"{node_id}:invalid_source_ref")
             item_nodes = node.get("item_node_ids") or []
@@ -394,6 +394,25 @@ def validate_pipeline_dsl(
             for item_node_id in item_nodes:
                 if item_node_id not in id_set:
                     errors.append(f"{node_id}:unknown_item_node:{item_node_id}")
+            max_items = node.get("max_items")
+            if max_items is not None:
+                try:
+                    parsed_max_items = int(max_items)
+                except Exception:
+                    parsed_max_items = 0
+                if parsed_max_items < 1 or parsed_max_items > 50:
+                    errors.append(f"{node_id}:max_items_out_of_range")
+            concurrency = node.get("concurrency")
+            if concurrency is not None:
+                try:
+                    parsed_concurrency = int(concurrency)
+                except Exception:
+                    parsed_concurrency = 0
+                if parsed_concurrency < 1 or parsed_concurrency > 10:
+                    errors.append(f"{node_id}:concurrency_out_of_range")
+            on_item_fail = str(node.get("on_item_fail") or "stop_all").strip()
+            if on_item_fail not in {"stop_all", "skip", "compensate"}:
+                errors.append(f"{node_id}:invalid_on_item_fail")
         elif node_type == "aggregate":
             source_ref = str(node.get("source_ref") or "")
             if not _REF_PATTERN.match(source_ref):
@@ -409,6 +428,9 @@ def validate_pipeline_dsl(
                 for rule in rules:
                     if not _WHEN_PATTERN.match(str(rule)):
                         errors.append(f"{node_id}:invalid_rule:{rule}")
+            on_fail = str(node.get("on_fail") or "stop").strip()
+            if on_fail not in {"stop", "fallback", "clarification"}:
+                errors.append(f"{node_id}:invalid_on_fail")
 
     if errors:
         return errors
@@ -551,7 +573,10 @@ async def execute_pipeline_dag(
                     return output
                 if node["type"] == "llm_transform":
                     started = time.monotonic()
-                    transformed = await execute_llm_transform(user_id, node_input, node.get("output_schema") or {})
+                    transform_payload = dict(node_input or {})
+                    transform_payload.setdefault("__transform_name", str(node.get("name") or "").strip())
+                    transform_payload.setdefault("__fallback_policy", node.get("fallback_policy") or {})
+                    transformed = await execute_llm_transform(user_id, transform_payload, node.get("output_schema") or {})
                     duration_ms = max(0, int((time.monotonic() - started) * 1000))
                     if not isinstance(transformed, dict):
                         node_runs.append(
@@ -615,6 +640,7 @@ async def execute_pipeline_dag(
                     )
                     duration_ms = max(0, int((time.monotonic() - started) * 1000))
                     if not all_passed:
+                        on_fail = str(node.get("on_fail") or "stop").strip() or "stop"
                         node_runs.append(
                             {
                                 "pipeline_run_id": pipeline_run_id,
@@ -627,6 +653,8 @@ async def execute_pipeline_dag(
                                 "external_ref": _extract_external_ref(item),
                             }
                         )
+                        if on_fail in {"fallback", "clarification"}:
+                            return {"pass": False, "reason": "verify_rule_failed", "action": on_fail}
                         raise PipelineExecutionError(
                             code=PipelineErrorCode.VERIFY_COUNT_MISMATCH,
                             reason="verify_rule_failed",
@@ -724,7 +752,8 @@ async def execute_pipeline_dag(
             artifacts[node_id] = {"status": "delegated"}
             continue
         if node["type"] == "for_each":
-            source_items = resolve_ref(node["source_ref"], artifacts=artifacts, ctx=ctx or {}, item=None)
+            source_ref = str(node.get("source_ref") or node.get("items_ref") or "")
+            source_items = resolve_ref(source_ref, artifacts=artifacts, ctx=ctx or {}, item=None)
             if not isinstance(source_items, list):
                 raise PipelineExecutionError(
                     code=PipelineErrorCode.DSL_VALIDATION_FAILED,
@@ -732,13 +761,19 @@ async def execute_pipeline_dag(
                     failed_step=node_id,
                 )
             max_fanout = int((pipeline.get("limits") or {}).get("max_fanout") or 50)
-            if len(source_items) > max_fanout:
+            node_max_items = int(node.get("max_items") or 0)
+            effective_fanout_limit = max_fanout
+            if node_max_items > 0:
+                effective_fanout_limit = min(max_fanout, node_max_items)
+            if len(source_items) > effective_fanout_limit:
                 raise PipelineExecutionError(
                     code=PipelineErrorCode.DSL_VALIDATION_FAILED,
-                    reason=f"fanout_exceeds_limit:{len(source_items)}>{max_fanout}",
+                    reason=f"fanout_exceeds_limit:{len(source_items)}>{effective_fanout_limit}",
                     failed_step=node_id,
                 )
+            on_item_fail = str(node.get("on_item_fail") or "stop_all").strip() or "stop_all"
             item_results: list[dict[str, Any]] = []
+            item_errors: list[dict[str, Any]] = []
             for item_index, raw_item in enumerate(source_items):
                 item = raw_item if isinstance(raw_item, dict) else {"value": raw_item}
                 item.setdefault("_index", item_index)
@@ -780,9 +815,29 @@ async def execute_pipeline_dag(
                                 ) from None
                         elif completed_write_nodes:
                             exc.compensation_status = "manual_required"
+                        if on_item_fail == "skip" and exc.compensation_status in {"completed", "not_required"}:
+                            item_errors.append(
+                                {
+                                    "index": item_index,
+                                    "error_code": exc.code.value,
+                                    "reason": exc.reason,
+                                    "failed_step": exc.failed_step,
+                                }
+                            )
+                            local_outputs["error"] = {
+                                "code": exc.code.value,
+                                "reason": exc.reason,
+                                "failed_step": exc.failed_step,
+                            }
+                            break
                         raise
                 item_results.append(local_outputs)
-            artifacts[node_id] = {"item_results": item_results, "item_count": len(source_items)}
+            artifacts[node_id] = {
+                "item_results": item_results,
+                "item_count": len(source_items),
+                "item_error_count": len(item_errors),
+                "item_errors": item_errors,
+            }
             continue
 
         result = await _run_single_node(node)

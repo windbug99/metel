@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import re
+import copy
 
 from agent.autonomous import run_autonomous_loop
 from agent.executor import execute_agent_plan
@@ -19,6 +20,7 @@ from agent.pending_action import PendingActionStorageError, clear_pending_action
 from agent.orchestrator_v2 import try_run_v2_orchestration
 from agent.pipeline_fixtures import (
     build_google_calendar_to_notion_linear_pipeline,
+    build_google_calendar_to_notion_minutes_pipeline,
     build_google_calendar_to_notion_todo_pipeline,
 )
 from agent.plan_contract import validate_plan_contract
@@ -66,6 +68,20 @@ def _should_run_v2(*, settings, user_id: str) -> tuple[bool, str]:
     if bool(getattr(settings, "skill_v2_shadow_mode", False)):
         return True, f"rollout_{max(0, min(100, percent))}_shadow"
     return False, f"rollout_{max(0, min(100, percent))}_miss"
+
+
+def _should_run_skill_llm_transform_pipeline(*, settings, user_id: str) -> tuple[bool, bool, str]:
+    enabled = bool(getattr(settings, "skill_llm_transform_pipeline_enabled", False))
+    if not enabled:
+        return False, False, "disabled"
+    percent = int(getattr(settings, "skill_llm_transform_pipeline_traffic_percent", 100))
+    bounded = max(0, min(100, percent))
+    if _v2_rollout_hit(user_id=user_id, percent=bounded):
+        return True, False, f"rollout_{bounded}"
+    shadow_mode = bool(getattr(settings, "skill_llm_transform_pipeline_shadow_mode", False))
+    if shadow_mode:
+        return False, True, f"rollout_{bounded}_shadow"
+    return False, False, f"rollout_{bounded}_miss"
 
 
 def _has_any_tool(selected_tools: list[str], *tokens: str) -> bool:
@@ -159,6 +175,26 @@ def _is_calendar_notion_todo_intent(user_text: str, connected_services: list[str
     return has_todo and is_create_intent(text)
 
 
+def _is_calendar_notion_minutes_intent(user_text: str, connected_services: list[str]) -> bool:
+    connected = {item.strip().lower() for item in connected_services if item and item.strip()}
+    if not {"google", "notion"}.issubset(connected):
+        return False
+    text = user_text or ""
+    lower = text.lower()
+    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "일정", "회의"))
+    if not has_calendar:
+        return False
+    if not _mentions_service(text, "notion"):
+        return False
+    if _mentions_service(text, "linear"):
+        return False
+    has_meeting = any(token in text or token in lower for token in ("회의", "meeting"))
+    if not has_meeting:
+        return False
+    has_minutes = any(token in text or token in lower for token in ("회의록", "minutes", "서식"))
+    return has_minutes and is_create_intent(text)
+
+
 def _is_recent_lookup_intent(user_text: str) -> bool:
     text = (user_text or "").strip()
     lower = text.lower()
@@ -242,6 +278,47 @@ def _build_calendar_notion_todo_plan(user_text: str) -> AgentPlan:
         ],
         notes=["planner=loop", "router_mode=PIPELINE_DAG", "plan_source=dag_template"],
     )
+
+
+def _build_calendar_notion_minutes_plan(user_text: str) -> AgentPlan:
+    pipeline = build_google_calendar_to_notion_minutes_pipeline(user_text=user_text)
+    return AgentPlan(
+        user_text=user_text,
+        requirements=[AgentRequirement(summary="calendar_notion_minutes_pipeline")],
+        target_services=["google", "notion"],
+        selected_tools=["google_calendar_list_events", "notion_create_page"],
+        workflow_steps=[
+            "1. Google Calendar 오늘 일정 조회",
+            "2. 회의 일정만 필터링",
+            "3. 각 회의별 상세 회의록 서식 생성",
+            "4. 각 회의별 Notion 페이지 생성",
+        ],
+        tasks=[
+            AgentTask(
+                id="task_pipeline_dag_calendar_notion_minutes",
+                title="calendar->notion(minutes) DAG",
+                task_type="PIPELINE_DAG",
+                payload={"pipeline": pipeline, "ctx": {"enabled": True}},
+            )
+        ],
+        notes=["planner=loop", "router_mode=PIPELINE_DAG", "plan_source=dag_template"],
+    )
+
+
+def _compile_skill_llm_transform_pipeline(
+    *,
+    user_text: str,
+    connected_services: list[str],
+    settings,
+) -> AgentPlan | None:
+    enabled = bool(getattr(settings, "skill_llm_transform_pipeline_enabled", False))
+    if not enabled:
+        return None
+    if _is_calendar_notion_minutes_intent(user_text, connected_services):
+        plan = _build_calendar_notion_minutes_plan(user_text)
+        plan.notes.append("compiler=deterministic_skill_llm_transform_v1")
+        return plan
+    return None
 
 
 def _plan_consistency_reason(user_text: str, selected_tools: list[str]) -> str | None:
@@ -1406,6 +1483,53 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             plan_source="dag_template",
         )
 
+    skill_llm_pre_notes: list[str] = []
+    compiled_skill_llm_plan = _compile_skill_llm_transform_pipeline(
+        user_text=user_text,
+        connected_services=connected_services,
+        settings=settings,
+    )
+    if compiled_skill_llm_plan is not None:
+        serve_compiled, shadow_compiled, compiled_rollout_reason = _should_run_skill_llm_transform_pipeline(
+            settings=settings,
+            user_id=user_id,
+        )
+        skill_llm_pre_notes.append(f"skill_llm_transform_rollout={compiled_rollout_reason}")
+        skill_llm_pre_notes.append(f"skill_llm_transform_shadow_mode={1 if shadow_compiled else 0}")
+        if serve_compiled:
+            execution = await execute_agent_plan(user_id=user_id, plan=compiled_skill_llm_plan)
+            finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
+            execution.user_message = finalized_message
+            if finalizer_mode != "disabled":
+                compiled_skill_llm_plan.notes.append(f"response_finalizer={finalizer_mode}")
+            compiled_skill_llm_plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+            compiled_skill_llm_plan.notes.extend(skill_llm_pre_notes)
+            return AgentRunResult(
+                ok=execution.success,
+                stage="execution",
+                plan=compiled_skill_llm_plan,
+                result_summary=execution.summary,
+                execution=execution,
+                plan_source="dag_template",
+            )
+        if shadow_compiled:
+            shadow_plan = copy.deepcopy(compiled_skill_llm_plan)
+            try:
+                shadow_execution = await execute_agent_plan(user_id=user_id, plan=shadow_plan)
+            except Exception as exc:
+                skill_llm_pre_notes.append("skill_llm_transform_shadow_executed=1")
+                skill_llm_pre_notes.append("skill_llm_transform_shadow_ok=0")
+                skill_llm_pre_notes.append(f"skill_llm_transform_shadow_exception={exc.__class__.__name__}")
+            else:
+                shadow_error = str(shadow_execution.artifacts.get("error_code") or "").strip()
+                skill_llm_pre_notes.append("skill_llm_transform_shadow_executed=1")
+                skill_llm_pre_notes.append(f"skill_llm_transform_shadow_ok={1 if shadow_execution.success else 0}")
+                if shadow_error:
+                    skill_llm_pre_notes.append(f"skill_llm_transform_shadow_error={shadow_error}")
+        else:
+            skill_llm_pre_notes.append("skill_llm_transform_shadow_executed=0")
+            skill_llm_pre_notes.append("skill_llm_transform_shadow_ok=0")
+
     # Hard bypass for recent lookup intents: skip router_v2/autonomous/LLM planner.
     # This guarantees deterministic tool output (list + links) for "최근/마지막 조회".
     if _is_recent_lookup_intent(user_text):
@@ -1418,6 +1542,8 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             recent_plan.notes.append(f"response_finalizer={finalizer_mode}")
         recent_plan.notes.append("autonomous_bypass=recent_lookup_intent")
         recent_plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+        if skill_llm_pre_notes:
+            recent_plan.notes.extend(skill_llm_pre_notes)
         return AgentRunResult(
             ok=execution.success,
             stage="execution",
@@ -1428,6 +1554,8 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
         )
 
     pre_notes: list[str] = []
+    if skill_llm_pre_notes:
+        pre_notes.extend(skill_llm_pre_notes)
     v2_enabled = bool(getattr(settings, "skill_router_v2_enabled", False)) and bool(
         getattr(settings, "skill_runner_v2_enabled", False)
     )

@@ -27,6 +27,7 @@ from agent.skill_contracts import required_scopes_for_skill, runtime_tools_for_s
 from agent.slot_collector import collect_slots_from_user_reply
 from agent.slot_schema import get_action_slot_schema, validate_slots
 from agent.tool_runner import execute_tool
+from agent.transform_contracts import run_transform_contract
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentTask
 from app.core.config import get_settings
 
@@ -433,6 +434,28 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                     )
                 if children:
                     normalized_payload["children"] = children
+            # Fail-closed validation before write: title and body blocks must be materially present.
+            title_prop = (
+                (((normalized_payload.get("properties") or {}).get("title") or {}).get("title"))
+                if isinstance((normalized_payload.get("properties") or {}).get("title"), dict)
+                else None
+            )
+            title_text = ""
+            if isinstance(title_prop, list) and title_prop:
+                text_obj = ((title_prop[0] or {}).get("text") or {}) if isinstance(title_prop[0], dict) else {}
+                title_text = str(text_obj.get("content") or "").strip()
+            children_payload = normalized_payload.get("children")
+            if not title_text:
+                raise PipelineExecutionError(
+                    code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
+                    reason="notion_payload_invalid:missing_title",
+                )
+            if children_payload is not None:
+                if not isinstance(children_payload, list) or not children_payload:
+                    raise PipelineExecutionError(
+                        code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
+                        reason="notion_payload_invalid:empty_children",
+                    )
         if skill_name == "linear.issue_create":
             team_ref = str(normalized_payload.get("team_ref") or "").strip()
             team_id = str(normalized_payload.get("team_id") or "").strip()
@@ -523,10 +546,27 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
         output_schema: dict,
     ) -> dict:
         _ = run_user_id
-        transformed = dict(payload or {})
+        raw_payload = dict(payload or {})
+        transform_name = str(raw_payload.pop("__transform_name", "") or raw_payload.get("transform_name", "")).strip()
+        fallback_policy = raw_payload.pop("__fallback_policy", {})
+        fail_closed = True
+        if isinstance(fallback_policy, dict) and fallback_policy.get("fail_closed") is False:
+            fail_closed = False
+        try:
+            transformed = run_transform_contract(transform_name, raw_payload)
+        except Exception as exc:
+            if not fail_closed:
+                transformed = dict(raw_payload)
+            else:
+                raise PipelineExecutionError(
+                    code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
+                    reason=f"transform_contract_error:{transform_name}:{exc.__class__.__name__}",
+                ) from exc
         required = [str(key).strip() for key in (output_schema or {}).get("required", []) if str(key).strip()]
         missing = [key for key in required if transformed.get(key) in (None, "")]
         if missing:
+            if not fail_closed:
+                return dict(raw_payload)
             raise PipelineExecutionError(
                 code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
                 reason=f"missing_required_slots:{','.join(missing)}",
@@ -782,15 +822,24 @@ def _extract_dag_created_links(artifacts: dict[str, Any]) -> tuple[list[str], li
 def _extract_dag_processed_count(artifacts: dict[str, Any], notion_urls: list[str], linear_urls: list[str]) -> int:
     if not isinstance(artifacts, dict):
         return max(len(notion_urls), len(linear_urls))
+    has_item_count = any(isinstance(value, dict) and value.get("item_count") is not None for value in artifacts.values())
     count = 0
     for value in artifacts.values():
         if not isinstance(value, dict):
             continue
         todo_count = value.get("todo_count")
         source_count = value.get("source_count")
+        meeting_count = value.get("meeting_count")
         item_count = value.get("item_count")
         event_count = value.get("event_count")
-        for candidate in (todo_count, source_count, item_count, event_count):
+        candidates: list[Any] = [todo_count, item_count]
+        if not has_item_count:
+            candidates.append(event_count)
+        if meeting_count is not None:
+            candidates.append(meeting_count)
+        elif not has_item_count:
+            candidates.append(source_count)
+        for candidate in candidates:
             try:
                 parsed = int(candidate)
             except Exception:

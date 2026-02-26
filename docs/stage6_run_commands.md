@@ -157,3 +157,87 @@ python scripts/decide_skill_v2_rollout.py \
   --require-shadow-ok-for-promote \
   > ../docs/reports/skill_v2_rollout_decision_latest.json
 ```
+
+## 10) Skill+LLM Transform 경로 점검 (신규)
+
+환경변수:
+- `SKILL_LLM_TRANSFORM_PIPELINE_ENABLED=true`
+- `SKILL_LLM_TRANSFORM_PIPELINE_SHADOW_MODE=false`
+- `SKILL_LLM_TRANSFORM_PIPELINE_TRAFFIC_PERCENT=100`
+
+shadow-only 검증(기존 경로 응답 유지 + 신규 경로 병행 실행):
+- `SKILL_LLM_TRANSFORM_PIPELINE_ENABLED=true`
+- `SKILL_LLM_TRANSFORM_PIPELINE_SHADOW_MODE=true`
+- `SKILL_LLM_TRANSFORM_PIPELINE_TRAFFIC_PERCENT=0`
+
+권장 점검:
+
+```bash
+cd backend
+. .venv/bin/activate
+PYTHONPATH=. pytest -q \
+  tests/test_transform_contracts.py \
+  tests/test_pipeline_dag.py \
+  tests/test_pipeline_dsl_schema.py \
+  tests/test_pipeline_fixture_e2e.py::test_google_calendar_to_notion_minutes_fixture_e2e \
+  tests/test_pipeline_fixture_e2e.py::test_google_calendar_to_linear_minutes_fixture_e2e \
+  tests/test_agent_loop.py::test_run_agent_analysis_calendar_notion_minutes_uses_dag_template \
+  tests/test_agent_loop.py::test_run_agent_analysis_calendar_notion_minutes_flag_off_uses_legacy_path
+```
+
+## 11) Skill+LLM Transform 점진 확대/롤백 자동화 (신규)
+
+shadow-only 시작(기존 경로 응답 유지):
+- `SKILL_LLM_TRANSFORM_PIPELINE_ENABLED=true`
+- `SKILL_LLM_TRANSFORM_PIPELINE_SHADOW_MODE=true`
+- `SKILL_LLM_TRANSFORM_PIPELINE_TRAFFIC_PERCENT=0`
+
+게이트 + 결정(dry-run):
+
+```bash
+cd backend
+DAYS=3 CURRENT_PERCENT=0 ./scripts/run_skill_llm_transform_rollout_cycle.sh
+```
+
+결정 자동 적용까지:
+
+```bash
+cd backend
+DAYS=3 CURRENT_PERCENT=0 APPLY_DECISION=true ENV_FILE=.env ./scripts/run_skill_llm_transform_rollout_cycle.sh
+```
+
+10% -> 30%:
+
+```bash
+cd backend
+DAYS=3 CURRENT_PERCENT=10 ./scripts/run_skill_llm_transform_rollout_cycle.sh
+```
+
+30% -> 100%:
+
+```bash
+cd backend
+DAYS=3 CURRENT_PERCENT=30 ./scripts/run_skill_llm_transform_rollout_cycle.sh
+```
+
+출력 파일:
+- `docs/reports/skill_llm_transform_rollout_latest.json`
+- `docs/reports/skill_llm_transform_rollout_decision_latest.json`
+
+## 12) Skill+LLM Transform DoD SLO Guard (신규)
+
+운영 지표 + 핵심 E2E 불변식(N->N, zero-match success) 자동 검증:
+
+```bash
+cd backend
+DAYS=3 LIMIT=200 MIN_SAMPLE=30 ./scripts/run_skill_llm_transform_slo_guard.sh
+```
+
+추가 임계값(옵션):
+- `MAX_TRANSFORM_ERROR_RATE=0.10`
+- `MAX_VERIFY_FAIL_BEFORE_WRITE=0`
+- `MIN_COMPOSED_PIPELINE_COUNT=10`
+
+출력 파일:
+- `docs/reports/skill_llm_transform_slo_latest.md`
+- `docs/reports/skill_llm_transform_slo_latest.json`

@@ -594,6 +594,64 @@ def _build_structured_verifier_log(
     }
 
 
+def _build_structured_pipeline_log(
+    *,
+    execution,
+    dag_pipeline: bool,
+) -> dict:
+    if execution is None:
+        return {
+            "composed_pipeline": bool(dag_pipeline),
+            "pipeline_run_id": None,
+            "created_count": 0,
+            "transform_success_count": 0,
+            "transform_error_count": 0,
+            "verify_error_count": 0,
+            "verify_fail_before_write": False,
+        }
+    artifacts = execution.artifacts or {}
+    node_runs_raw = str(artifacts.get("dag_node_runs_json") or "").strip()
+    node_runs: list[dict] = []
+    if node_runs_raw:
+        try:
+            parsed = json.loads(node_runs_raw)
+            if isinstance(parsed, list):
+                node_runs = [item for item in parsed if isinstance(item, dict)]
+        except Exception:
+            node_runs = []
+
+    transform_success_count = sum(
+        1 for row in node_runs if row.get("node_type") == "llm_transform" and row.get("status") == "success"
+    )
+    transform_error_count = sum(
+        1 for row in node_runs if row.get("node_type") == "llm_transform" and row.get("status") == "error"
+    )
+    verify_error_count = sum(1 for row in node_runs if row.get("node_type") == "verify" and row.get("status") == "error")
+    write_success_count = sum(
+        1
+        for row in node_runs
+        if row.get("node_type") == "skill" and row.get("status") == "success"
+    )
+
+    created_count_raw = str(artifacts.get("processed_count") or "").strip()
+    created_count = 0
+    if created_count_raw:
+        try:
+            created_count = int(created_count_raw)
+        except Exception:
+            created_count = 0
+
+    return {
+        "composed_pipeline": bool(dag_pipeline),
+        "pipeline_run_id": str(artifacts.get("pipeline_run_id") or "").strip() or None,
+        "created_count": created_count,
+        "transform_success_count": transform_success_count,
+        "transform_error_count": transform_error_count,
+        "verify_error_count": verify_error_count,
+        "verify_fail_before_write": bool(verify_error_count > 0 and write_success_count == 0),
+    }
+
+
 def _append_structured_log_detail(
     *,
     base_detail: str,
@@ -601,12 +659,14 @@ def _append_structured_log_detail(
     intent_payload: dict,
     autonomous_payload: dict,
     verifier_payload: dict,
+    pipeline_payload: dict,
 ) -> str:
     pairs = _parse_detail_pairs(base_detail)
     pairs["request_id"] = request_id
     pairs["intent_json"] = json.dumps(intent_payload, ensure_ascii=False, separators=(",", ":"))
     pairs["autonomous_json"] = json.dumps(autonomous_payload, ensure_ascii=False, separators=(",", ":"))
     pairs["verifier_json"] = json.dumps(verifier_payload, ensure_ascii=False, separators=(",", ":"))
+    pairs["pipeline_json"] = json.dumps(pipeline_payload, ensure_ascii=False, separators=(",", ":"))
     return ";".join(f"{key}={value}" for key, value in pairs.items())
 
 
@@ -847,6 +907,10 @@ async def telegram_webhook(
             v2_shadow_mode = None
             v2_shadow_executed = None
             v2_shadow_ok = None
+            skill_llm_transform_rollout = None
+            skill_llm_transform_shadow_mode = None
+            skill_llm_transform_shadow_executed = None
+            skill_llm_transform_shadow_ok = None
             router_source = None
             missing_slot = None
             slot_action = None
@@ -867,6 +931,14 @@ async def telegram_webhook(
                     v2_shadow_executed = note.split("=", 1)[1]
                 if note.startswith("skill_v2_shadow_ok="):
                     v2_shadow_ok = note.split("=", 1)[1]
+                if note.startswith("skill_llm_transform_rollout="):
+                    skill_llm_transform_rollout = note.split("=", 1)[1]
+                if note.startswith("skill_llm_transform_shadow_mode="):
+                    skill_llm_transform_shadow_mode = note.split("=", 1)[1]
+                if note.startswith("skill_llm_transform_shadow_executed="):
+                    skill_llm_transform_shadow_executed = note.split("=", 1)[1]
+                if note.startswith("skill_llm_transform_shadow_ok="):
+                    skill_llm_transform_shadow_ok = note.split("=", 1)[1]
                 if note.startswith("router_source="):
                     router_source = note.split("=", 1)[1]
             if analysis.execution:
@@ -921,6 +993,14 @@ async def telegram_webhook(
                 mode_extra += f"\n- skill_v2_shadow_executed: {v2_shadow_executed}"
             if v2_shadow_ok is not None:
                 mode_extra += f"\n- skill_v2_shadow_ok: {v2_shadow_ok}"
+            if skill_llm_transform_rollout:
+                mode_extra += f"\n- skill_llm_transform_rollout: {skill_llm_transform_rollout}"
+            if skill_llm_transform_shadow_mode is not None:
+                mode_extra += f"\n- skill_llm_transform_shadow_mode: {skill_llm_transform_shadow_mode}"
+            if skill_llm_transform_shadow_executed is not None:
+                mode_extra += f"\n- skill_llm_transform_shadow_executed: {skill_llm_transform_shadow_executed}"
+            if skill_llm_transform_shadow_ok is not None:
+                mode_extra += f"\n- skill_llm_transform_shadow_ok: {skill_llm_transform_shadow_ok}"
             if router_source:
                 mode_extra += f"\n- router_source: {router_source}"
             mode_extra += f"\n- analysis_latency_ms: {analysis_latency_ms}"
@@ -984,6 +1064,22 @@ async def telegram_webhook(
                 + (f";skill_v2_shadow_mode={v2_shadow_mode}" if v2_shadow_mode is not None else "")
                 + (f";skill_v2_shadow_executed={v2_shadow_executed}" if v2_shadow_executed is not None else "")
                 + (f";skill_v2_shadow_ok={v2_shadow_ok}" if v2_shadow_ok is not None else "")
+                + (f";skill_llm_transform_rollout={skill_llm_transform_rollout}" if skill_llm_transform_rollout else "")
+                + (
+                    f";skill_llm_transform_shadow_mode={skill_llm_transform_shadow_mode}"
+                    if skill_llm_transform_shadow_mode is not None
+                    else ""
+                )
+                + (
+                    f";skill_llm_transform_shadow_executed={skill_llm_transform_shadow_executed}"
+                    if skill_llm_transform_shadow_executed is not None
+                    else ""
+                )
+                + (
+                    f";skill_llm_transform_shadow_ok={skill_llm_transform_shadow_ok}"
+                    if skill_llm_transform_shadow_ok is not None
+                    else ""
+                )
                 + (f";router_source={router_source}" if router_source else "")
                 + (f";dag_pipeline=1" if dag_pipeline else "")
                 + (f";pipeline_run_id={pipeline_run_id}" if pipeline_run_id else "")
@@ -1009,12 +1105,17 @@ async def telegram_webhook(
                 verifier_failed_rule=verifier_failed_rule,
                 verifier_remediation_type=verifier_remediation_type,
             )
+            structured_pipeline = _build_structured_pipeline_log(
+                execution=analysis.execution,
+                dag_pipeline=dag_pipeline,
+            )
             structured_detail = _append_structured_log_detail(
                 base_detail=base_detail,
                 request_id=request_id,
                 intent_payload=structured_intent,
                 autonomous_payload=structured_autonomous,
                 verifier_payload=structured_verifier,
+                pipeline_payload=structured_pipeline,
             )
 
             _record_command_log(
