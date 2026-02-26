@@ -484,10 +484,12 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                         },
                     }
                 ]
+            # Remove helper-only fields so they are never forwarded to Notion API.
+            intro_text_raw = str(normalized_payload.pop("todo_intro", "") or "").strip()
             todo_items = normalized_payload.pop("todo_items", None)
             if isinstance(todo_items, list) and todo_items and "children" not in normalized_payload:
                 children: list[dict] = []
-                intro_text = str(normalized_payload.pop("todo_intro", "") or "").strip()
+                intro_text = intro_text_raw
                 if intro_text:
                     children.append(
                         {

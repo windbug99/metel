@@ -241,19 +241,33 @@
   - `format_detailed_minutes`, `format_linear_meeting_issue`에 대해 LLM API 기반 transform 호출을 우선 시도하도록 반영.
   - 출력 스키마/필수값 검증 실패 시 deterministic transform contract로 즉시 fallback하도록 보강.
   - 관련 회귀 테스트(`notion minutes llm transform`) 추가.
+- 2026-02-26 (stability fix update)
+  - LLM 출력 `children`가 Notion block 스키마를 벗어나는 경우 paragraph block으로 정규화하도록 보강.
+  - `text` dict(`{\"content\": ...}`)가 문자열로 노출되는 버그 수정.
+  - `calendar->notion(todo)` 경로에서 내부 helper 필드(`todo_intro`, `todo_items`)가 Notion API로 누수되지 않도록 차단.
 
 ## 15) 다음 고도화 후보
 - 다중 대상(`각 회의마다`, `각 프로젝트별`) fan-out/fan-in 노드 표준화
 - transform 결과 신뢰도(score) 기반 동적 검증 강도 조절
 - 서비스별 템플릿 라이브러리화(회의록/버그리포트/일일요약)
-- `llm_transform`를 deterministic contract에서 실제 LLM API 기반 변환으로 전환
+- `llm_transform` LLM API 전환 이후 모델 품질/스키마 안정화 운영
 - LLM 생성품질 개선(모델 튜닝 우선)
   - 1차: 후보 모델 A/B 오프라인 리플레이 평가
   - 2차: `temperature/top_p/max_tokens` 표준 파라미터 고정
   - 3차: shadow mode canary 후 점진 승격
   - 4차: 실패 시 deterministic fallback 유지(fail-closed)
 
-## 16) 구현 분해 (PR/티켓 단위)
+## 16) 현재 상태 점검 (2026-02-26)
+- [x] `SKILL_LLM_TRANSFORM_PIPELINE` 운영 플래그 적용 및 100% serve 전환 확인
+- [x] `calendar->notion(minutes)`, `calendar->linear(minutes)` DAG 진입 확인
+- [x] `llm_transform`의 LLM API 우선 호출 + deterministic fallback 적용
+- [x] Notion minutes 스키마 보정(children 정규화, dict 문자열 노출 방지) 반영
+- [x] todo helper 필드 누수(`todo_intro`, `todo_items`) 차단 반영
+- [ ] Stage6 전체 회귀 PASS 재확인
+- [ ] DoD 3일 연속 지표(성공률/fallback률/verify 누락) 충족 검증
+- [ ] 식사/비회의 요청에서 기대 출력 품질(예: 식당 추천 목록 포맷) 별도 기준 수립 및 테스트 추가
+
+## 17) 구현 분해 (PR/티켓 단위)
 
 ### PR-1: Pipeline DSL/런타임 최소 확장 (`for_each`, `llm_transform`)
 - 목표:
@@ -377,7 +391,7 @@
 - 진행 상태:
   - [x] 1차 완료 (transform/fixture/loop 회귀 테스트 + Stage6 시트/실행 문서 반영)
 
-## 17) 실행 순서 (권장)
+## 18) 실행 순서 (권장)
 1. PR-1 (런타임 확장)  
 2. PR-2 (transform 계약/검증)  
 3. PR-3 (Primary fixture 적용)  
