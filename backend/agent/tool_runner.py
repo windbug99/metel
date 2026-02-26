@@ -185,6 +185,7 @@ def _load_oauth_access_token(user_id: str, provider: str) -> str:
         .select("access_token_encrypted")
         .eq("user_id", user_id)
         .eq("provider", provider)
+        .order("updated_at", desc=True)
         .limit(1)
         .execute()
     )

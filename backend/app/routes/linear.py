@@ -180,6 +180,7 @@ async def linear_issues_list(request: Request, first: int = Query(5, ge=1, le=20
         .select("access_token_encrypted")
         .eq("user_id", user_id)
         .eq("provider", "linear")
+        .order("updated_at", desc=True)
         .limit(1)
         .execute()
     )

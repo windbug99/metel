@@ -148,6 +148,7 @@ async def notion_pages_list(request: Request, page_size: int = Query(5, ge=1, le
             .select("access_token_encrypted")
             .eq("user_id", user_id)
             .eq("provider", "notion")
+            .order("updated_at", desc=True)
             .limit(1)
             .execute()
         )
