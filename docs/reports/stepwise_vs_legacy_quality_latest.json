@@ -1,0 +1,27 @@
+{
+  "window": "last 7 day(s)",
+  "rows": 500,
+  "metrics": {
+    "stepwise": {
+      "run_count": 311,
+      "success_rate_pct": 70.42,
+      "error_rate_pct": 29.58,
+      "validation_fail_rate_pct": 16.08,
+      "p95_latency_ms": 18801
+    },
+    "dag": {
+      "run_count": 96,
+      "success_rate_pct": 92.71,
+      "error_rate_pct": 7.29,
+      "validation_fail_rate_pct": 0.0,
+      "p95_latency_ms": 13403
+    },
+    "legacy": {
+      "run_count": 93,
+      "success_rate_pct": 62.37,
+      "error_rate_pct": 37.63,
+      "validation_fail_rate_pct": 30.11,
+      "p95_latency_ms": 18603
+    }
+  }
+}

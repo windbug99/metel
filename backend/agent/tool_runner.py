@@ -251,6 +251,12 @@ def _strip_path_params(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in payload.items() if k not in used}
 
 
+def _split_idempotency_key(payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    body = dict(payload or {})
+    key = str(body.pop("idempotency_key", "") or "").strip()
+    return body, key
+
+
 def _validate_type(value: Any, expected: str) -> bool:
     if expected == "string":
         return isinstance(value, str)
@@ -349,12 +355,14 @@ def _normalize_notion_payload(tool_name: str, payload: dict[str, Any]) -> dict[s
 
 async def _execute_notion_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
     path = _build_path(tool.path, payload)
-    body_or_query = _strip_path_params(tool.path, payload)
+    body_or_query, idempotency_key = _split_idempotency_key(_strip_path_params(tool.path, payload))
     url = f"{tool.base_url}{path}"
     method = tool.method.upper()
 
     async def _request_with_token(token: str) -> httpx.Response:
         headers = _notion_headers(token)
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
         async with httpx.AsyncClient(timeout=20) as client:
             if method == "GET":
                 return await client.get(url, headers=headers, params=body_or_query)
@@ -412,12 +420,14 @@ async def _execute_notion_oauth_http(tool: ToolDefinition, payload: dict[str, An
 async def _execute_spotify_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
     token = _load_oauth_access_token(user_id=user_id, provider="spotify")
     path = _build_path(tool.path, payload)
-    body_or_query = _strip_path_params(tool.path, payload)
+    body_or_query, idempotency_key = _split_idempotency_key(_strip_path_params(tool.path, payload))
     url = f"{tool.base_url}{path}"
 
     headers = {
         "Authorization": f"Bearer {token}",
     }
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
     method = tool.method.upper()
     async with httpx.AsyncClient(timeout=20) as client:
         if method == "GET":
@@ -475,6 +485,7 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
                   dueDate
                   priority
                   state {
+                    id
                     name
                   }
                   assignee {
@@ -509,6 +520,7 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
                   description
                   url
                   state {
+                    id
                     name
                   }
                 }
@@ -565,12 +577,6 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
                 mutation ArchiveIssue($id: String!) {
                   issueArchive(id: $id) {
                     success
-                    issue {
-                      id
-                      identifier
-                      title
-                      url
-                    }
                   }
                 }
                 """,
@@ -631,12 +637,15 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
 async def _execute_linear_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
     query, variables = _linear_query_and_variables(tool.tool_name, payload)
     url = f"{tool.base_url}/graphql"
+    idempotency_key = str(payload.get("idempotency_key") or "").strip()
 
     async def _request_with_token(token: str) -> httpx.Response:
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
         async with httpx.AsyncClient(timeout=20) as client:
             return await client.post(url, headers=headers, json={"query": query, "variables": variables})
 
@@ -787,7 +796,7 @@ def _build_default_headers_for_service(user_id: str, tool: ToolDefinition) -> di
 
 async def _execute_generic_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
     path = _build_path(tool.path, payload)
-    body_or_query = _strip_path_params(tool.path, payload)
+    body_or_query, idempotency_key = _split_idempotency_key(_strip_path_params(tool.path, payload))
     if tool.service == "google":
         body_or_query = {
             _GOOGLE_QUERY_KEY_MAP.get(key, key): value
@@ -795,6 +804,8 @@ async def _execute_generic_http(user_id: str, tool: ToolDefinition, payload: dic
         }
     url = f"{tool.base_url}{path}"
     headers = _build_default_headers_for_service(user_id=user_id, tool=tool)
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
     method = tool.method.upper()
 
     async with httpx.AsyncClient(timeout=20) as client:

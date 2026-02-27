@@ -71,9 +71,18 @@ Service connection (OAuth / status / disconnect):
 Execution capabilities (implemented):
 - Notion search/list/create/update/archive + append content
 - Linear search/list/create/update flows
+- Linear due-date filtered issue listing (`linear_list_issues` with `due_date`)
 - Google Calendar event listing (`google_calendar_list_events`)
 - Multi-step request handling with autonomous loop + guardrails
 - Execution logs UI in dashboard (`command_logs`)
+
+## Recent Update (2026-02-27)
+
+- Added support for "today due issues" lookup in Linear.
+- Requests like `리니어에서 오늘 마감 이슈 조회` now map to `linear_list_issues` with `due_date=<today>`.
+- Empty-result message is now intent-aware:
+  - `Linear 오늘 마감 이슈 조회 결과가 없습니다.`
+  - (instead of generic recent-issues empty message)
 
 ## Reliability Model (Current)
 
@@ -98,6 +107,7 @@ This repository prioritizes execution reliability before adding many new integra
 - `구글캘린더에서 오늘 회의 일정 조회`
 - `구글캘린더에서 오늘 회의일정 조회해서 각 회의마다 노션에 회의록 초안 생성하고 각 회의를 리니어 이슈로 등록해줘`
 - `linear 최근 이슈 5개 검색해줘`
+- `리니어에서 오늘 마감 이슈 조회해줘`
 - `notion 페이지를 생성하고 오늘 작업 요약을 추가해줘`
 
 ## Current Limits

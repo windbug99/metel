@@ -57,6 +57,109 @@ def test_run_agent_analysis_calendar_pipeline_uses_dag_template(monkeypatch):
     assert result.execution.artifacts.get("router_mode") == "PIPELINE_DAG"
 
 
+def test_run_agent_analysis_calendar_pipeline_uses_stepwise_fixture_when_enabled(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        slot_loop_enabled = False
+        slot_loop_rollout_percent = 0
+        llm_stepwise_pipeline_enabled = True
+
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        assert user_id == "user-stepwise"
+        assert plan.tasks
+        assert plan.tasks[0].task_type == "PIPELINE_DAG"
+        payload = plan.tasks[0].payload or {}
+        assert (payload.get("pipeline") or {}).get("pipeline_id") == "google_calendar_to_notion_linear_stepwise_v1"
+        return AgentExecutionResult(
+            success=True,
+            user_message="stepwise ok",
+            summary="stepwise DAG 파이프라인 실행 완료",
+            artifacts={"router_mode": "PIPELINE_DAG", "pipeline_run_id": "prun_stepwise"},
+            steps=[AgentExecutionStep(name="pipeline_dag", status="success", detail="succeeded")],
+        )
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(
+        run_agent_analysis(
+            "구글캘린더에서 오늘 일정 중 회의 일정만 조회해서 노션에 회의록 서식으로 생성하고 리니어에 이슈 생성하세요",
+            ["google", "notion", "linear"],
+            "user-stepwise",
+        )
+    )
+    assert result.ok is True
+    assert result.plan_source == "dag_template"
+    assert result.execution is not None
+    assert result.execution.artifacts.get("router_mode") == "PIPELINE_DAG"
+
+
+def test_run_agent_analysis_uses_stepwise_template_when_enabled(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        slot_loop_enabled = False
+        slot_loop_rollout_percent = 0
+        llm_stepwise_pipeline_enabled = True
+
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    async def _fake_stepwise_plan(user_text: str, connected_services: list[str], user_id: str):
+        _ = (user_text, connected_services, user_id)
+        return AgentPlan(
+            user_text="stepwise",
+            requirements=[AgentRequirement(summary="stepwise")],
+            target_services=["notion"],
+            selected_tools=["notion_search"],
+            workflow_steps=["1. 노션 검색"],
+            tasks=[
+                AgentTask(
+                    id="task_stepwise_pipeline_v1",
+                    title="stepwise",
+                    task_type="STEPWISE_PIPELINE",
+                    payload={"tasks": [{"task_id": "step_1", "sentence": "검색", "service": "notion", "tool_name": "notion_search"}]},
+                )
+            ],
+            notes=[],
+        )
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        assert user_id == "user-stepwise-template"
+        assert plan.tasks and plan.tasks[0].task_type == "STEPWISE_PIPELINE"
+        return AgentExecutionResult(
+            success=True,
+            user_message="stepwise template ok",
+            summary="stepwise template done",
+            artifacts={"router_mode": "STEPWISE_PIPELINE"},
+            steps=[AgentExecutionStep(name="step_1", status="success", detail="executed")],
+        )
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
+    monkeypatch.setattr("agent.loop.try_build_stepwise_pipeline_plan", _fake_stepwise_plan)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(
+        run_agent_analysis(
+            "노션에서 최근 페이지 조회해줘",
+            ["notion"],
+            "user-stepwise-template",
+        )
+    )
+    assert result.ok is True
+    assert result.plan_source == "stepwise_template"
+    assert result.execution is not None
+    assert result.execution.artifacts.get("router_mode") == "STEPWISE_PIPELINE"
+
+
 def test_run_agent_analysis_calendar_notion_todo_uses_dag_template(monkeypatch):
     class _Settings:
         llm_autonomous_enabled = False

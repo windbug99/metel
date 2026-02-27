@@ -212,6 +212,118 @@ def build_google_calendar_to_notion_linear_pipeline(*, user_text: str) -> dict:
     }
 
 
+def build_google_calendar_to_notion_linear_stepwise_pipeline(*, user_text: str) -> dict:
+    linear_team_ref = intent_normalizer.extract_linear_team_reference(user_text)
+    return {
+        "pipeline_id": "google_calendar_to_notion_linear_stepwise_v1",
+        "version": "1.0",
+        "limits": {
+            "max_nodes": 6,
+            "max_fanout": 50,
+            "max_tool_calls": 200,
+            "pipeline_timeout_sec": 300,
+        },
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "skill",
+                "name": "google.list_today",
+                "depends_on": [],
+                "input": {"calendar_id": "primary", "max_results": 50},
+                "when": "$ctx.enabled == true",
+                "retry": {"max_attempts": 2, "backoff_ms": 500},
+                "timeout_sec": 45,
+            },
+            {
+                "id": "n2",
+                "type": "llm_transform",
+                "name": "filter_meeting_events",
+                "depends_on": ["n1"],
+                "input": {
+                    "events": "$n1.events",
+                    "keyword_include": ["회의", "meeting"],
+                },
+                "output_schema": {
+                    "type": "object",
+                    "required": ["meeting_events", "meeting_count", "source_count"],
+                    "properties": {
+                        "meeting_events": {"type": "array"},
+                        "meeting_count": {"type": "integer"},
+                        "source_count": {"type": "integer"},
+                    },
+                    "additionalProperties": True,
+                },
+                "fallback_policy": {"fail_closed": True},
+                "retry": {"max_attempts": 2, "backoff_ms": 200},
+                "timeout_sec": 30,
+            },
+            {
+                "id": "n3",
+                "type": "for_each",
+                "name": "fanout_meeting_events",
+                "depends_on": ["n2"],
+                "input": {},
+                "items_ref": "$n2.meeting_events",
+                "item_node_ids": ["n3_1", "n3_2", "n3_3"],
+                "on_item_fail": "stop_all",
+                "timeout_sec": 60,
+            },
+            {
+                "id": "n3_1",
+                "type": "llm_transform",
+                "name": "format_detailed_minutes",
+                "depends_on": ["n3"],
+                "input": {
+                    "id": "$item.id",
+                    "title": "$item.title",
+                    "description": "$item.description",
+                    "start": "$item.start",
+                    "end": "$item.end",
+                    "attendees": "$item.attendees",
+                },
+                "output_schema": {
+                    "type": "object",
+                    "required": ["title", "children"],
+                    "properties": {
+                        "title": {"type": "string"},
+                        "children": {"type": "array"},
+                        "source_event_id": {"type": "string"},
+                    },
+                    "additionalProperties": True,
+                },
+                "fallback_policy": {"fail_closed": True},
+                "retry": {"max_attempts": 2, "backoff_ms": 200},
+                "timeout_sec": 30,
+            },
+            {
+                "id": "n3_2",
+                "type": "skill",
+                "name": "notion.page_create",
+                "depends_on": ["n3_1"],
+                "input": {
+                    "title": "$n3_1.title",
+                    "children": "$n3_1.children",
+                },
+                "retry": {"max_attempts": 2, "backoff_ms": 500},
+                "timeout_sec": 45,
+            },
+            {
+                "id": "n3_3",
+                "type": "skill",
+                "name": "linear.issue_create",
+                "depends_on": ["n3_1", "n3_2"],
+                "input": {
+                    "team_ref": linear_team_ref or "",
+                    "title": "$n3_1.title",
+                    "description": "$item.description",
+                },
+                "retry": {"max_attempts": 2, "backoff_ms": 500},
+                "timeout_sec": 45,
+            },
+        ],
+    }
+
+
 def build_google_calendar_to_linear_minutes_pipeline(*, user_text: str) -> dict:
     linear_team_ref = intent_normalizer.extract_linear_team_reference(user_text)
     return {

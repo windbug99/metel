@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import re
 from html import unescape
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -23,6 +25,9 @@ from agent.pipeline_dag import PipelineExecutionError, execute_pipeline_dag
 from agent.pipeline_error_codes import PipelineErrorCode
 from agent.pipeline_links import extract_pipeline_links, persist_pipeline_failure_link, persist_pipeline_links
 from agent.planner import build_execution_tasks
+from agent.registry import load_registry
+from agent.runtime_api_profile import build_runtime_api_profile
+from agent.runtime_catalog import get_catalog
 from agent.skill_contracts import required_scopes_for_skill, runtime_tools_for_skill, service_for_skill
 from agent.slot_collector import collect_slots_from_user_reply
 from agent.slot_schema import get_action_slot_schema, validate_slots
@@ -96,6 +101,18 @@ def _normalize_timezone(value: str | None) -> str:
         return candidate
     except Exception:
         return "UTC"
+
+
+def _create_supabase_client_or_none():
+    settings = get_settings()
+    supabase_url = str(getattr(settings, "supabase_url", "") or "").strip()
+    service_role_key = str(getattr(settings, "supabase_service_role_key", "") or "").strip()
+    if not supabase_url or not service_role_key:
+        return None
+    try:
+        return create_client(supabase_url, service_role_key)
+    except Exception:
+        return None
 
 
 def _notion_paragraph_block(text: str) -> dict:
@@ -181,16 +198,12 @@ def _normalize_notion_children(children_raw: object, *, limit: int = 80) -> list
         if text:
             normalized.append(_notion_paragraph_block(text))
     return normalized
-    try:
-        ZoneInfo(candidate)
-        return candidate
-    except Exception:
-        return "UTC"
 
 
 def _load_user_timezone(user_id: str) -> str:
-    settings = get_settings()
-    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    supabase = _create_supabase_client_or_none()
+    if supabase is None:
+        return "UTC"
     try:
         rows = (
             supabase.table("users")
@@ -211,17 +224,21 @@ def _load_user_timezone(user_id: str) -> str:
 def _load_granted_scopes_map(user_id: str, providers: set[str]) -> dict[str, set[str]]:
     if not providers:
         return {}
-    settings = get_settings()
-    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
-    rows = (
-        supabase.table("oauth_tokens")
-        .select("provider,granted_scopes")
-        .eq("user_id", user_id)
-        .in_("provider", sorted(providers))
-        .execute()
-        .data
-        or []
-    )
+    supabase = _create_supabase_client_or_none()
+    if supabase is None:
+        return {}
+    try:
+        rows = (
+            supabase.table("oauth_tokens")
+            .select("provider,granted_scopes")
+            .eq("user_id", user_id)
+            .in_("provider", sorted(providers))
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return {}
     result: dict[str, set[str]] = {}
     for row in rows:
         provider = str(row.get("provider") or "").strip().lower()
@@ -268,6 +285,16 @@ def _validate_dag_policy_guards(
                 providers_needed.add(provider)
 
     granted = _load_granted_scopes_map(user_id, providers_needed)
+    canonical_granted: dict[str, set[str]] = {}
+    for provider, scopes in granted.items():
+        normalized_provider = str(provider or "").strip().lower()
+        normalized_scopes = {
+            _canonical_scope(normalized_provider, value)
+            for value in (scopes or set())
+            if _canonical_scope(normalized_provider, value)
+        }
+        canonical_granted[normalized_provider] = normalized_scopes
+
     for node in nodes:
         if not isinstance(node, dict) or node.get("type") != "skill":
             continue
@@ -277,11 +304,7 @@ def _validate_dag_policy_guards(
         required = {_canonical_scope(provider, value) for value in required_scopes_for_skill(skill_name) if value}
         if not required:
             continue
-        granted_scopes = {
-            _canonical_scope(provider, value)
-            for value in granted.get(provider, set())
-            if _canonical_scope(provider, value)
-        }
+        granted_scopes = canonical_granted.get(provider, set())
         if not granted_scopes:
             return False, f"oauth_scope_missing:{provider}", node_id, PipelineErrorCode.TOOL_AUTH_ERROR
         if not required.issubset(granted_scopes):
@@ -293,12 +316,51 @@ def _validate_dag_policy_guards(
                 PipelineErrorCode.TOOL_AUTH_ERROR,
             )
 
+    # Stepwise rollout guard: all runtime tools used by selected skills must be
+    # executable under the runtime api profile.
+    if bool(getattr(get_settings(), "llm_stepwise_pipeline_enabled", False)):
+        connected_services = sorted(
+            {
+                str(service_for_skill(str(node.get("name") or "").strip()) or "").strip().lower()
+                for node in nodes
+                if isinstance(node, dict) and node.get("type") == "skill"
+            }
+            - {""}
+        )
+        api_profile = build_runtime_api_profile(
+            connected_services=connected_services,
+            granted_scopes=canonical_granted,
+            risk_policy={"allow_high_risk": bool(getattr(get_settings(), "delete_operations_enabled", False))},
+        )
+        enabled_api_ids = set(api_profile.get("enabled_api_ids") or [])
+        for node in nodes:
+            if not isinstance(node, dict) or node.get("type") != "skill":
+                continue
+            node_id = str(node.get("id") or "").strip() or None
+            skill_name = str(node.get("name") or "").strip()
+            tools = runtime_tools_for_skill(skill_name)
+            for tool_name in tools:
+                if tool_name and tool_name not in enabled_api_ids:
+                    return (
+                        False,
+                        f"api_profile_blocked:{tool_name}",
+                        node_id,
+                        PipelineErrorCode.TOOL_AUTH_ERROR,
+                    )
+
     return True, None, None, None
 
 
 def _extract_pipeline_dag_task(plan: AgentPlan) -> AgentTask | None:
     for task in plan.tasks:
         if str(task.task_type or "").strip().upper() == "PIPELINE_DAG":
+            return task
+    return None
+
+
+def _extract_stepwise_pipeline_task(plan: AgentPlan) -> AgentTask | None:
+    for task in plan.tasks:
+        if str(task.task_type or "").strip().upper() == "STEPWISE_PIPELINE":
             return task
     return None
 
@@ -378,6 +440,22 @@ def _retry_hint_for_pipeline_error(code: PipelineErrorCode) -> str:
     return "잠시 후 다시 시도하세요."
 
 
+def _extract_missing_required_fields(reason: str | None) -> list[str]:
+    text = str(reason or "").strip()
+    if not text:
+        return []
+    if text.startswith("missing_required_slots:"):
+        suffix = text.split(":", 1)[1]
+        return [item.strip() for item in suffix.split(",") if item.strip()]
+    if text.startswith("notion_payload_invalid:"):
+        suffix = text.split(":", 1)[1].strip()
+        if suffix == "missing_title":
+            return ["title"]
+        if suffix in {"children_schema", "children"}:
+            return ["children"]
+    return []
+
+
 async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExecutionResult | None:
     task = _extract_pipeline_dag_task(plan)
     if task is None:
@@ -385,6 +463,8 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
 
     raw_pipeline = (task.payload or {}).get("pipeline")
     if not isinstance(raw_pipeline, dict):
+        failure_reason = "pipeline_payload_missing_or_invalid"
+        missing_required_fields = _extract_missing_required_fields(failure_reason)
         return AgentExecutionResult(
             success=False,
             summary="DAG 파이프라인 입력이 올바르지 않습니다.",
@@ -393,7 +473,10 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                 "error_code": PipelineErrorCode.DSL_VALIDATION_FAILED.value,
                 "router_mode": "PIPELINE_DAG",
                 "failed_step": str(task.id or "pipeline_dag"),
-                "reason": "pipeline_payload_missing_or_invalid",
+                "failed_task_id": str(task.id or "pipeline_dag"),
+                "reason": failure_reason,
+                "failure_reason": failure_reason,
+                "missing_required_fields": json.dumps(missing_required_fields, ensure_ascii=False),
                 "retry_hint": _retry_hint_for_pipeline_error(PipelineErrorCode.DSL_VALIDATION_FAILED),
                 "compensation_status": "not_required",
             },
@@ -402,6 +485,8 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
     ok, reason, failed_step, code = _validate_dag_policy_guards(user_id=user_id, pipeline=raw_pipeline)
     if not ok:
         resolved = code or PipelineErrorCode.DSL_VALIDATION_FAILED
+        failure_reason = str(reason or "dag_policy_validation_failed")
+        missing_required_fields = _extract_missing_required_fields(failure_reason)
         return AgentExecutionResult(
             success=False,
             summary="DAG 정책 검증 실패",
@@ -410,7 +495,10 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                 "error_code": resolved.value,
                 "router_mode": "PIPELINE_DAG",
                 "failed_step": str(failed_step or ""),
-                "reason": str(reason or "dag_policy_validation_failed"),
+                "failed_task_id": str(failed_step or ""),
+                "reason": failure_reason,
+                "failure_reason": failure_reason,
+                "missing_required_fields": json.dumps(missing_required_fields, ensure_ascii=False),
                 "retry_hint": _retry_hint_for_pipeline_error(resolved),
                 "compensation_status": "not_required",
             },
@@ -426,6 +514,8 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
     preflight_ok, preflight_reason = await _preflight_linear_for_pipeline(user_id=user_id, pipeline=raw_pipeline)
     if not preflight_ok:
         summary, user_message, error_code = _map_execution_error(str(preflight_reason or "linear_preflight_failed"))
+        failure_reason = str(preflight_reason or "linear_preflight_failed")
+        missing_required_fields = _extract_missing_required_fields(failure_reason)
         return AgentExecutionResult(
             success=False,
             summary=summary,
@@ -434,7 +524,10 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                 "error_code": error_code,
                 "router_mode": "PIPELINE_DAG",
                 "failed_step": "preflight_linear_list_teams",
-                "reason": str(preflight_reason or "linear_preflight_failed"),
+                "failed_task_id": "preflight_linear_list_teams",
+                "reason": failure_reason,
+                "failure_reason": failure_reason,
+                "missing_required_fields": json.dumps(missing_required_fields, ensure_ascii=False),
                 "retry_hint": _retry_hint_for_pipeline_error(PipelineErrorCode.TOOL_AUTH_ERROR),
                 "compensation_status": "not_required",
             },
@@ -487,10 +580,10 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
             # Remove helper-only fields so they are never forwarded to Notion API.
             intro_text_raw = str(normalized_payload.pop("todo_intro", "") or "").strip()
             todo_items = normalized_payload.pop("todo_items", None)
-            if isinstance(todo_items, list) and todo_items and "children" not in normalized_payload:
-                children: list[dict] = []
+            if isinstance(todo_items, list) and todo_items:
+                children = list(normalized_payload.get("children") or [])
                 intro_text = intro_text_raw
-                if intro_text:
+                if intro_text and not children:
                     children.append(
                         {
                             "object": "block",
@@ -505,7 +598,7 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                             },
                         }
                     )
-                for raw_item in todo_items[:80]:
+                for raw_item in todo_items[: max(0, 80 - len(children))]:
                     text = str(raw_item or "").strip()
                     if not text:
                         continue
@@ -721,6 +814,11 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                     code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
                     reason=f"missing_required_slots:{','.join(missing)}",
                 )
+        if transform_name == "format_linear_meeting_issue":
+            description_text = str(transformed.get("description") or "")
+            required_sections = ("회의 목적:", "논의 내용:", "결정 사항:", "액션 아이템:")
+            if not all(section in description_text for section in required_sections):
+                transformed = run_transform_contract(transform_name, raw_payload)
         return transformed
 
     async def _execute_compensation_for_dag(
@@ -825,6 +923,8 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
             error_code=code.value,
             compensation_status=str(exc.compensation_status or "not_required"),
         )
+        failure_reason = str(exc.reason or "")
+        missing_required_fields = _extract_missing_required_fields(failure_reason)
         return AgentExecutionResult(
             success=False,
             summary="DAG 파이프라인 실행 실패",
@@ -834,7 +934,10 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                 "pipeline_run_id": str(exc.pipeline_run_id or ""),
                 "failed_item_ref": str(exc.failed_item_ref or ""),
                 "failed_step": str(exc.failed_step or ""),
-                "reason": exc.reason,
+                "failed_task_id": str(exc.failed_step or ""),
+                "reason": failure_reason,
+                "failure_reason": failure_reason,
+                "missing_required_fields": json.dumps(missing_required_fields, ensure_ascii=False),
                 "retry_hint": _retry_hint_for_pipeline_error(code),
                 "compensation_status": str(exc.compensation_status or "not_required"),
                 "pipeline_links_failure_persisted": "1" if failure_link_saved else "0",
@@ -844,11 +947,1304 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
         )
 
 
+def _extract_required_fields_from_input_schema(input_schema: dict) -> list[str]:
+    if not isinstance(input_schema, dict):
+        return []
+    required = input_schema.get("required")
+    if not isinstance(required, list):
+        return []
+    return [str(item).strip() for item in required if str(item).strip()]
+
+
+def _parse_iso_datetime(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+
+def _validate_stepwise_payload_semantics(*, tool_name: str, input_schema: dict, payload: dict) -> list[str]:
+    if not isinstance(payload, dict):
+        return ["payload_type:object_required"]
+    properties = input_schema.get("properties") if isinstance(input_schema, dict) else None
+    if not isinstance(properties, dict):
+        properties = {}
+
+    errors: list[str] = []
+    for field_name, value in payload.items():
+        spec = properties.get(field_name)
+        if not isinstance(spec, dict):
+            continue
+        expected_type = str(spec.get("type") or "").strip()
+        if expected_type == "string" and not isinstance(value, str):
+            errors.append(f"validation_type:{field_name}:string_required")
+            continue
+        if expected_type == "integer" and (not isinstance(value, int) or isinstance(value, bool)):
+            errors.append(f"validation_type:{field_name}:integer_required")
+            continue
+        if expected_type == "number" and (not isinstance(value, (int, float)) or isinstance(value, bool)):
+            errors.append(f"validation_type:{field_name}:number_required")
+            continue
+        if expected_type == "boolean" and not isinstance(value, bool):
+            errors.append(f"validation_type:{field_name}:boolean_required")
+            continue
+        if expected_type == "object" and not isinstance(value, dict):
+            errors.append(f"validation_type:{field_name}:object_required")
+            continue
+        if expected_type == "array" and not isinstance(value, list):
+            errors.append(f"validation_type:{field_name}:array_required")
+            continue
+
+        enum_values = spec.get("enum")
+        if isinstance(enum_values, list) and enum_values and value not in enum_values:
+            errors.append(f"validation_enum:{field_name}")
+            continue
+
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            minimum = spec.get("minimum")
+            if isinstance(minimum, (int, float)) and value < minimum:
+                errors.append(f"validation_minimum:{field_name}")
+                continue
+            maximum = spec.get("maximum")
+            if isinstance(maximum, (int, float)) and value > maximum:
+                errors.append(f"validation_maximum:{field_name}")
+                continue
+
+        if isinstance(value, str):
+            min_len = spec.get("minLength")
+            if isinstance(min_len, int) and len(value) < min_len:
+                errors.append(f"validation_min_length:{field_name}")
+                continue
+            max_len = spec.get("maxLength")
+            if isinstance(max_len, int) and len(value) > max_len:
+                errors.append(f"validation_max_length:{field_name}")
+                continue
+            pattern = spec.get("pattern")
+            if isinstance(pattern, str) and pattern.strip():
+                try:
+                    if re.fullmatch(pattern, value) is None:
+                        errors.append(f"validation_pattern:{field_name}")
+                        continue
+                except re.error:
+                    pass
+            fmt = str(spec.get("format") or "").strip().lower()
+            if fmt == "date-time" and _parse_iso_datetime(value) is None:
+                errors.append(f"validation_format:{field_name}:date-time")
+                continue
+            if fmt == "date" and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is None:
+                errors.append(f"validation_format:{field_name}:date")
+                continue
+
+    if tool_name == "google_calendar_list_events":
+        time_min = payload.get("time_min")
+        time_max = payload.get("time_max")
+        parsed_min = _parse_iso_datetime(time_min) if time_min is not None else None
+        parsed_max = _parse_iso_datetime(time_max) if time_max is not None else None
+        if time_min is not None and parsed_min is None:
+            errors.append("semantic_time_min_invalid")
+        if time_max is not None and parsed_max is None:
+            errors.append("semantic_time_max_invalid")
+        if parsed_min is not None and parsed_max is not None and parsed_min >= parsed_max:
+            errors.append("semantic_time_range_invalid")
+    if tool_name == "linear_update_issue":
+        issue_id = str(payload.get("issue_id") or "").strip()
+        if issue_id and _looks_like_linear_identifier(issue_id):
+            errors.append("semantic_issue_id_invalid")
+        state_id = str(payload.get("state_id") or "").strip()
+        if state_id and not _looks_like_linear_internal_issue_id(state_id):
+            errors.append("semantic_state_id_invalid")
+        has_update_field = any(
+            payload.get(key) not in (None, "")
+            for key in ("title", "description", "state_id", "priority")
+        )
+        if payload.get("archived") is True:
+            has_update_field = True
+        if not has_update_field:
+            errors.append("semantic_update_fields_missing")
+    return errors
+
+
+def _mutation_payload_without_idempotency(payload: dict[str, object]) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        return {}
+    return {key: value for key, value in payload.items() if key != "idempotency_key"}
+
+
+def _derive_stepwise_idempotency_key(*, user_id: str, step_id: str, tool_name: str, payload: dict[str, object]) -> str:
+    explicit = str((payload or {}).get("idempotency_key") or "").strip()
+    if explicit:
+        return explicit
+    basis = {
+        "user_id": str(user_id or "").strip(),
+        "step_id": str(step_id or "").strip(),
+        "tool_name": str(tool_name or "").strip(),
+        "payload": _mutation_payload_without_idempotency(payload),
+    }
+    try:
+        encoded = json.dumps(basis, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        encoded = str(basis)
+    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]
+    return f"sw:{digest}"
+
+
+def _is_write_tool_call(*, tool_name: str, method: str) -> bool:
+    upper_method = str(method or "").strip().upper()
+    if upper_method in {"GET", "HEAD"}:
+        return False
+    lower_name = str(tool_name or "").strip().lower()
+    write_tokens = ("create", "update", "delete", "append", "archive", "move", "write")
+    read_tokens = ("list", "get", "search", "retrieve", "query", "fetch", "read")
+    if any(token in lower_name for token in write_tokens):
+        return True
+    if any(token in lower_name for token in read_tokens):
+        return False
+    return upper_method in {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _infer_service_from_tool_name(tool_name: str) -> str | None:
+    name = str(tool_name or "").strip().lower()
+    if not name or "_" not in name:
+        return None
+    prefix = name.split("_", 1)[0].strip()
+    if not prefix:
+        return None
+    return prefix
+
+
+def _coerce_positive_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float):
+        if not value.is_integer():
+            return None
+        casted = int(value)
+        return casted if casted > 0 else None
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d+", text) is None:
+        return None
+    casted = int(text)
+    return casted if casted > 0 else None
+
+
+def _sanitize_stepwise_request_payload(
+    *,
+    tool_name: str,
+    sentence: str,
+    request_payload: dict[str, object],
+    previous_result: dict[str, object] | None = None,
+    memory: dict[str, dict] | None = None,
+) -> dict[str, object]:
+    payload = dict(request_payload) if isinstance(request_payload, dict) else {}
+    normalized_tool = str(tool_name or "").strip().lower()
+
+    if normalized_tool == "notion_retrieve_bot_user":
+        return {}
+
+    if normalized_tool in {"linear_search_issues", "linear_list_issues"}:
+        first_value = _coerce_positive_int(payload.get("first"))
+        payload["first"] = first_value or 5
+        if normalized_tool == "linear_search_issues" and _missing(payload.get("query")):
+            payload["query"] = _extract_linear_search_query(sentence) or "최근"
+        due_date = _normalize_due_date_value(payload.get("due_date"))
+        if due_date is None:
+            payload.pop("due_date", None)
+        else:
+            payload["due_date"] = due_date
+
+    if normalized_tool == "google_calendar_list_calendars":
+        max_results = _coerce_positive_int(payload.get("max_results"))
+        payload["max_results"] = max_results or 50
+        min_access_role = _normalize_google_min_access_role(payload.get("min_access_role"))
+        if min_access_role is None:
+            payload.pop("min_access_role", None)
+        else:
+            payload["min_access_role"] = min_access_role
+        page_token = payload.get("page_token")
+        if isinstance(page_token, str):
+            normalized_page_token = page_token.strip()
+            if normalized_page_token:
+                payload["page_token"] = normalized_page_token
+            else:
+                payload.pop("page_token", None)
+        else:
+            payload.pop("page_token", None)
+        show_deleted = _normalize_stepwise_bool(payload.get("show_deleted"))
+        if show_deleted is None:
+            payload.pop("show_deleted", None)
+        else:
+            payload["show_deleted"] = show_deleted
+        show_hidden = _normalize_stepwise_bool(payload.get("show_hidden"))
+        if show_hidden is None:
+            payload.pop("show_hidden", None)
+        else:
+            payload["show_hidden"] = show_hidden
+
+    if normalized_tool == "google_calendar_list_events":
+        calendar_id = str(payload.get("calendar_id") or "").strip()
+        payload["calendar_id"] = calendar_id or "primary"
+        max_results = _coerce_positive_int(payload.get("max_results"))
+        payload["max_results"] = max_results or 100
+        page_token = payload.get("page_token")
+        if isinstance(page_token, str):
+            normalized_page_token = page_token.strip()
+            if normalized_page_token:
+                payload["page_token"] = normalized_page_token
+            else:
+                payload.pop("page_token", None)
+        else:
+            payload.pop("page_token", None)
+        single_events = _normalize_stepwise_bool(payload.get("single_events"))
+        if single_events is None:
+            payload.pop("single_events", None)
+        else:
+            payload["single_events"] = single_events
+        order_by = str(payload.get("order_by") or "").strip()
+        if order_by not in {"startTime", "updated"}:
+            payload.pop("order_by", None)
+        else:
+            payload["order_by"] = order_by
+            # Google Calendar API requires singleEvents=true when orderBy=startTime.
+            if order_by == "startTime":
+                payload["single_events"] = True
+        time_min = str(payload.get("time_min") or "").strip()
+        if time_min and _parse_iso_datetime(time_min) is not None:
+            payload["time_min"] = time_min
+        else:
+            payload.pop("time_min", None)
+        time_max = str(payload.get("time_max") or "").strip()
+        if time_max and _parse_iso_datetime(time_max) is not None:
+            payload["time_max"] = time_max
+        else:
+            payload.pop("time_max", None)
+
+    if normalized_tool == "linear_create_issue":
+        title = str(payload.get("title") or "").strip()
+        if not title:
+            fallback = re.sub(r"\s+", " ", str(sentence or "").strip())
+            if fallback:
+                payload["title"] = fallback[:120]
+        due_date = _normalize_due_date_value(payload.get("due_date"))
+        if due_date is None:
+            payload.pop("due_date", None)
+        else:
+            payload["due_date"] = due_date
+        if _missing(payload.get("team_id")):
+            team_id = _extract_team_id_from_stepwise_context(
+                previous_result=previous_result,
+                memory=memory or {},
+            )
+            if team_id:
+                payload["team_id"] = team_id
+
+    if normalized_tool == "notion_retrieve_user" and _missing(payload.get("user_id")):
+        payload["user_id"] = "me"
+
+    if normalized_tool == "linear_update_issue":
+        extracted = _extract_linear_update_fields(str(sentence or ""))
+        for key in ("title", "description", "state_id"):
+            if _missing(payload.get(key)) and not _missing(extracted.get(key)):
+                payload[key] = str(extracted.get(key) or "").strip()
+        title_value = payload.get("title")
+        if isinstance(title_value, str):
+            normalized_title = title_value.strip()
+            if normalized_title:
+                payload["title"] = normalized_title
+            else:
+                payload.pop("title", None)
+        description_value = payload.get("description")
+        if isinstance(description_value, str):
+            normalized_description = description_value.strip()
+            if normalized_description:
+                payload["description"] = normalized_description
+            else:
+                payload.pop("description", None)
+        normalized_priority = _normalize_stepwise_linear_priority(payload.get("priority"))
+        if normalized_priority is None:
+            payload.pop("priority", None)
+        else:
+            payload["priority"] = normalized_priority
+        state_id = payload.get("state_id")
+        if state_id in (None, ""):
+            payload.pop("state_id", None)
+        elif isinstance(state_id, str):
+            normalized_state_id = state_id.strip()
+            resolved_state_id = _resolve_linear_state_id_from_stepwise_context(
+                state_value=normalized_state_id,
+                previous_result=previous_result,
+                memory=memory or {},
+            )
+            if resolved_state_id:
+                payload["state_id"] = resolved_state_id
+            else:
+                payload.pop("state_id", None)
+        else:
+            payload.pop("state_id", None)
+        normalized_archived = _normalize_stepwise_bool(payload.get("archived"))
+        if normalized_archived is True:
+            payload["archived"] = True
+        else:
+            payload.pop("archived", None)
+
+    return payload
+
+
+def _extract_team_nodes_from_payload(data: object) -> list[dict]:
+    if not isinstance(data, dict):
+        return []
+    teams = data.get("teams")
+    if isinstance(teams, dict):
+        nodes = teams.get("nodes")
+        if isinstance(nodes, list):
+            return [item for item in nodes if isinstance(item, dict)]
+    org = data.get("organization")
+    if isinstance(org, dict):
+        org_teams = org.get("teams")
+        if isinstance(org_teams, dict):
+            nodes = org_teams.get("nodes")
+            if isinstance(nodes, list):
+                return [item for item in nodes if isinstance(item, dict)]
+    return []
+
+
+def _extract_team_id_from_result_blob(blob: object) -> str:
+    if not isinstance(blob, dict):
+        return ""
+    # linear_get_viewer style fallbacks
+    viewer = blob.get("viewer")
+    if isinstance(viewer, dict):
+        default_team = viewer.get("defaultTeam") or viewer.get("default_team")
+        if isinstance(default_team, dict):
+            team_id = str(default_team.get("id") or "").strip()
+            if team_id:
+                return team_id
+    team = blob.get("team")
+    if isinstance(team, dict):
+        team_id = str(team.get("id") or "").strip()
+        if team_id:
+            return team_id
+    for node in _extract_team_nodes_from_payload(blob):
+        team_id = str(node.get("id") or "").strip()
+        if team_id:
+            return team_id
+    return ""
+
+
+def _extract_team_id_from_stepwise_context(*, previous_result: dict[str, object] | None, memory: dict[str, dict]) -> str:
+    first = _extract_team_id_from_result_blob(previous_result or {})
+    if first:
+        return first
+    if isinstance(memory, dict):
+        for key in sorted(memory.keys(), reverse=True):
+            team_id = _extract_team_id_from_result_blob(memory.get(key) or {})
+            if team_id:
+                return team_id
+    return ""
+
+
+def _normalize_stepwise_linear_priority(value: object) -> int | None:
+    direct = _sanitize_linear_priority(value)
+    if direct is not None:
+        return direct
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    matched = re.fullmatch(r"p?([0-4])", text)
+    if matched:
+        return int(matched.group(1))
+    label_map = {
+        "urgent": 1,
+        "highest": 1,
+        "high": 2,
+        "medium": 3,
+        "low": 4,
+        "긴급": 1,
+        "높음": 2,
+        "보통": 3,
+        "중간": 3,
+        "낮음": 4,
+    }
+    return label_map.get(text)
+
+
+def _normalize_stepwise_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        if value in (0, 1):
+            return bool(value)
+        return None
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text in {"true", "1", "yes", "y", "on", "t"}:
+        return True
+    if text in {"false", "0", "no", "n", "off", "f"}:
+        return False
+    return None
+
+
+def _normalize_google_min_access_role(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    allowed = {"freeBusyReader", "reader", "writer", "owner"}
+    if normalized in allowed:
+        return normalized
+    lowered = normalized.lower()
+    aliases = {
+        "freebusyreader": "freeBusyReader",
+        "read": "reader",
+        "readonly": "reader",
+        "viewer": "reader",
+        "edit": "writer",
+        "editor": "writer",
+        "admin": "owner",
+    }
+    mapped = aliases.get(lowered)
+    return mapped if mapped in allowed else None
+
+
+def _normalize_due_date_value(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    return None
+
+
+def _has_linear_update_patch_fields(payload: dict[str, object]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    has_update_field = any(
+        payload.get(key) not in (None, "")
+        for key in ("title", "description", "state_id", "priority")
+    )
+    if payload.get("archived") is True:
+        has_update_field = True
+    return has_update_field
+
+
+def _ensure_linear_update_patch_field(
+    *,
+    payload: dict[str, object],
+    sentence: str,
+    user_text: str,
+) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        return {}
+    if _missing(payload.get("issue_id")):
+        return payload
+    if _has_linear_update_patch_fields(payload):
+        return payload
+
+    merged = dict(payload)
+    extracted_sentence = _extract_linear_update_fields(str(sentence or ""))
+    extracted_user_text = _extract_linear_update_fields(str(user_text or ""))
+    for key in ("title", "description"):
+        if _missing(merged.get(key)) and not _missing(extracted_sentence.get(key)):
+            merged[key] = str(extracted_sentence.get(key) or "").strip()
+    for key in ("title", "description"):
+        if _missing(merged.get(key)) and not _missing(extracted_user_text.get(key)):
+            merged[key] = str(extracted_user_text.get(key) or "").strip()
+
+    # Last-resort fallback to avoid issue_id-only update payload.
+    if not _has_linear_update_patch_fields(merged):
+        basis = str((sentence or "").strip() or (user_text or "").strip())
+        if basis:
+            merged["description"] = f"요청 기반 자동 업데이트: {basis[:300]}"
+        else:
+            merged["description"] = "요청 기반 자동 업데이트"
+    return merged
+
+
+def _build_linear_update_retry_payload(payload: dict[str, object]) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        return {}
+    retry_payload: dict[str, object] = {}
+    issue_id = str(payload.get("issue_id") or "").strip()
+    if issue_id:
+        retry_payload["issue_id"] = issue_id
+    # Prefer text fields first; they are the safest update inputs.
+    for key in ("title", "description"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized:
+                retry_payload[key] = normalized
+    if not any(retry_payload.get(key) not in (None, "") for key in ("title", "description")):
+        state_id = payload.get("state_id")
+        if (
+            isinstance(state_id, str)
+            and state_id.strip()
+            and _looks_like_linear_internal_issue_id(state_id.strip())
+        ):
+            retry_payload["state_id"] = state_id.strip()
+        else:
+            priority = _normalize_stepwise_linear_priority(payload.get("priority"))
+            if priority is not None:
+                retry_payload["priority"] = priority
+            else:
+                archived = _normalize_stepwise_bool(payload.get("archived"))
+                if archived is True:
+                    retry_payload["archived"] = True
+    return retry_payload
+
+
+def _extract_first_issue_id_from_stepwise_blob(blob: object) -> str:
+    if not isinstance(blob, dict):
+        return ""
+    issues = blob.get("issues")
+    if isinstance(issues, list):
+        for issue in issues:
+            if not isinstance(issue, dict):
+                continue
+            issue_id = str(issue.get("id") or "").strip()
+            if issue_id:
+                return issue_id
+    data = blob.get("data")
+    if isinstance(data, dict):
+        return _extract_first_issue_id_from_stepwise_blob(data)
+    issue = blob.get("issue")
+    if isinstance(issue, dict):
+        issue_id = str(issue.get("id") or "").strip()
+        if issue_id:
+            return issue_id
+    return ""
+
+
+def _extract_issue_id_from_stepwise_context(*, previous_result: dict[str, object] | None, memory: dict[str, dict]) -> str:
+    first = _extract_first_issue_id_from_stepwise_blob(previous_result or {})
+    if first:
+        return first
+    if isinstance(memory, dict):
+        for key in sorted(memory.keys(), reverse=True):
+            issue_id = _extract_first_issue_id_from_stepwise_blob(memory.get(key) or {})
+            if issue_id:
+                return issue_id
+    return ""
+
+
+def _normalize_state_name(value: str) -> str:
+    return re.sub(r"[\s_\-]+", "", str(value or "").strip().lower())
+
+
+def _extract_state_id_name_pairs_from_stepwise_blob(blob: object) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    if not isinstance(blob, dict):
+        return pairs
+
+    def _collect_from_issue(issue: dict) -> None:
+        state = issue.get("state")
+        if not isinstance(state, dict):
+            return
+        state_id = str(state.get("id") or "").strip()
+        state_name = str(state.get("name") or "").strip()
+        if state_id and state_name:
+            pairs.append((state_name, state_id))
+
+    issues = blob.get("issues")
+    if isinstance(issues, list):
+        for issue in issues:
+            if isinstance(issue, dict):
+                _collect_from_issue(issue)
+
+    issues_obj = blob.get("issues")
+    if isinstance(issues_obj, dict):
+        nodes = issues_obj.get("nodes")
+        if isinstance(nodes, list):
+            for issue in nodes:
+                if isinstance(issue, dict):
+                    _collect_from_issue(issue)
+
+    data = blob.get("data")
+    if isinstance(data, dict):
+        pairs.extend(_extract_state_id_name_pairs_from_stepwise_blob(data))
+    result = blob.get("result")
+    if isinstance(result, dict):
+        pairs.extend(_extract_state_id_name_pairs_from_stepwise_blob(result))
+    return pairs
+
+
+def _resolve_linear_state_id_from_stepwise_context(
+    *,
+    state_value: str,
+    previous_result: dict[str, object] | None,
+    memory: dict[str, dict],
+) -> str:
+    candidate = str(state_value or "").strip()
+    if not candidate:
+        return ""
+    if _looks_like_linear_internal_issue_id(candidate):
+        return candidate
+    normalized_candidate = _normalize_state_name(candidate)
+    if not normalized_candidate:
+        return ""
+    candidates: list[tuple[str, str]] = []
+    candidates.extend(_extract_state_id_name_pairs_from_stepwise_blob(previous_result or {}))
+    if isinstance(memory, dict):
+        for key in sorted(memory.keys(), reverse=True):
+            candidates.extend(_extract_state_id_name_pairs_from_stepwise_blob(memory.get(key) or {}))
+    for name, state_id in candidates:
+        if _normalize_state_name(name) == normalized_candidate and _looks_like_linear_internal_issue_id(state_id):
+            return state_id
+    return ""
+
+
+async def _resolve_linear_state_id_for_stepwise(
+    *,
+    user_id: str,
+    plan: AgentPlan,
+    state_value: object,
+    previous_result: dict[str, object] | None,
+    memory: dict[str, dict],
+    steps: list[AgentExecutionStep],
+) -> str:
+    candidate = str(state_value or "").strip()
+    if not candidate:
+        return ""
+    if _looks_like_linear_internal_issue_id(candidate):
+        return candidate
+    from_context = _resolve_linear_state_id_from_stepwise_context(
+        state_value=candidate,
+        previous_result=previous_result,
+        memory=memory,
+    )
+    if from_context:
+        return from_context
+    # Fallback: sample recent issues to infer state name -> state id mapping.
+    try:
+        listed = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "linear_list_issues", "linear_list_issues"),
+            payload={"first": 20},
+        )
+        data = (listed or {}).get("data") if isinstance(listed, dict) else {}
+        resolved = _resolve_linear_state_id_from_stepwise_context(
+            state_value=candidate,
+            previous_result=data if isinstance(data, dict) else {},
+            memory=memory,
+        )
+        if resolved:
+            steps.append(
+                AgentExecutionStep(
+                    name="stepwise_linear_state_resolve_from_list",
+                    status="success",
+                    detail=f"state={candidate}",
+                )
+            )
+            return resolved
+    except Exception:
+        pass
+    return ""
+
+
+async def _resolve_linear_team_id_for_stepwise(*, user_id: str, memory: dict[str, dict]) -> str:
+    from_memory = _extract_team_id_from_stepwise_context(previous_result=None, memory=memory)
+    if from_memory:
+        return from_memory
+    try:
+        tool_result = await execute_tool(user_id=user_id, tool_name="linear_list_teams", payload={"first": 20})
+    except Exception:
+        return ""
+    if not isinstance(tool_result, dict) or not bool(tool_result.get("ok", False)):
+        return ""
+    data = tool_result.get("data")
+    return _extract_team_id_from_result_blob(data)
+
+
+async def _resolve_linear_issue_id_for_stepwise(
+    *,
+    user_id: str,
+    plan: AgentPlan,
+    sentence: str,
+    user_text: str,
+    previous_result: dict[str, object] | None,
+    memory: dict[str, dict],
+    steps: list[AgentExecutionStep],
+) -> str:
+    from_context = _extract_issue_id_from_stepwise_context(previous_result=previous_result, memory=memory)
+    if from_context:
+        return from_context
+    issue_ref = _extract_linear_issue_reference(sentence) or ""
+    if issue_ref:
+        resolved = await _resolve_linear_issue_id_from_reference(
+            user_id=user_id,
+            plan=plan,
+            issue_reference=issue_ref,
+            steps=steps,
+            step_name="stepwise_linear_search_issue_for_update",
+        )
+        if resolved:
+            return resolved
+    if user_text:
+        issue_ref = _extract_linear_issue_reference(user_text) or ""
+        if issue_ref:
+            resolved = await _resolve_linear_issue_id_from_reference(
+                user_id=user_id,
+                plan=plan,
+                issue_reference=issue_ref,
+                steps=steps,
+                step_name="stepwise_linear_search_issue_for_update_user_text",
+            )
+            if resolved:
+                return resolved
+    try:
+        listed = await execute_tool(
+            user_id=user_id,
+            tool_name=_pick_tool(plan, "linear_list_issues", "linear_list_issues"),
+            payload={"first": 5},
+        )
+        first_issue = _first_linear_issue_id(listed)
+        if first_issue:
+            steps.append(AgentExecutionStep(name="stepwise_linear_issue_from_list", status="success", detail="count=5"))
+            return first_issue
+    except Exception:
+        pass
+    return ""
+
+
+def _parse_stepwise_autofill_response(raw: object) -> tuple[dict[str, object], str | None]:
+    if not isinstance(raw, dict):
+        return {}, "autofill_response_not_object"
+    request_payload = raw.get("request_payload")
+    if request_payload is None:
+        return {}, "autofill_request_payload_missing"
+    if not isinstance(request_payload, dict):
+        return {}, "autofill_request_payload_not_object"
+    missing_required = raw.get("missing_required_fields")
+    if missing_required is not None and not isinstance(missing_required, list):
+        return {}, "autofill_missing_required_fields_not_array"
+    return dict(request_payload), None
+
+
+def _prune_stepwise_payload_by_input_schema(*, input_schema: dict, payload: dict[str, object]) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        return {}
+    if not isinstance(input_schema, dict):
+        return dict(payload)
+    properties = input_schema.get("properties")
+    additional = input_schema.get("additionalProperties")
+    if additional is True:
+        return dict(payload)
+    if not isinstance(properties, dict) or not properties:
+        return dict(payload)
+    allowed = set(properties.keys())
+    return {k: v for k, v in payload.items() if k in allowed}
+
+
+def _normalize_stepwise_tool_response(*, tool_name: str, tool_result: object) -> tuple[dict | None, str | None]:
+    if not isinstance(tool_result, dict):
+        return None, "tool_result_not_object"
+    if "data" not in tool_result:
+        return None, "missing_data_field"
+    raw_data = tool_result.get("data")
+
+    if tool_name == "google_calendar_list_events":
+        if not isinstance(raw_data, dict):
+            return None, "google_events_data_not_object"
+        source = raw_data.get("events")
+        if not isinstance(source, list):
+            source = raw_data.get("items")
+        if not isinstance(source, list):
+            return None, "google_events_array_missing"
+        events = [item for item in source if isinstance(item, dict)]
+        return {"events": events, "event_count": len(events)}, None
+
+    if tool_name == "notion_search":
+        if not isinstance(raw_data, dict):
+            return None, "notion_search_data_not_object"
+        results = raw_data.get("results")
+        if not isinstance(results, list):
+            return None, "notion_search_results_missing"
+        return {"results": [item for item in results if isinstance(item, dict)], "result_count": len(results)}, None
+
+    if tool_name in {"linear_list_issues", "linear_search_issues"}:
+        if not isinstance(raw_data, dict):
+            return None, "linear_issues_data_not_object"
+        issues_obj = raw_data.get("issues")
+        nodes = issues_obj.get("nodes") if isinstance(issues_obj, dict) else None
+        if not isinstance(nodes, list):
+            return None, "linear_issues_nodes_missing"
+        return {"issues": [item for item in nodes if isinstance(item, dict)], "count": len(nodes)}, None
+
+    if isinstance(raw_data, dict):
+        return raw_data, None
+    if isinstance(raw_data, list):
+        return {"items": raw_data, "count": len(raw_data)}, None
+    if raw_data is None:
+        return {}, None
+    return {"value": raw_data}, None
+
+
+def _is_retryable_stepwise_tool_failure(tool_result: object) -> bool:
+    if not isinstance(tool_result, dict):
+        return False
+    error_code = str(tool_result.get("error_code") or "").strip().lower()
+    detail = str(tool_result.get("detail") or tool_result.get("error") or "").strip().lower()
+    retryable_codes = {
+        "rate_limited",
+        "tool_rate_limited",
+        "timeout",
+        "tool_timeout",
+        "network_error",
+        "upstream_timeout",
+    }
+    if error_code in retryable_codes:
+        return True
+    if any(token in detail for token in ("rate_limited", "tool_timeout", "timeout", "timed out")):
+        return True
+    if re.search(r"status[=: ]+5\d\d", detail):
+        return True
+    return False
+
+
+def _is_retryable_tool_http_detail(detail: str | None) -> bool:
+    text = str(detail or "").strip().lower()
+    if not text:
+        return False
+    retryable_tokens = (
+        "rate_limited",
+        "tool_timeout",
+        "timeout",
+        "timed out",
+        "network_error",
+        "upstream_timeout",
+        "bad gateway",
+        "service unavailable",
+        "gateway timeout",
+    )
+    if any(token in text for token in retryable_tokens):
+        return True
+    if re.search(r"status[=: ]+5\d\d", text):
+        return True
+    if re.search(r"status[=: ]+429", text):
+        return True
+    return False
+
+
+async def _execute_tool_with_stepwise_retry(
+    *,
+    user_id: str,
+    tool_name: str,
+    payload: dict,
+    max_attempts: int,
+    backoff_ms: int,
+) -> tuple[dict, int]:
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            tool_result = await execute_tool(user_id=user_id, tool_name=tool_name, payload=payload)
+        except HTTPException as exc:
+            detail = str(exc.detail or "")
+            tool_result = {
+                "ok": False,
+                "error_code": "tool_failed",
+                "detail": detail,
+            }
+            if attempts >= max_attempts:
+                return tool_result, attempts
+            if not _is_retryable_tool_http_detail(detail):
+                return tool_result, attempts
+            await asyncio.sleep(max(0, backoff_ms) / 1000.0)
+            continue
+        if bool((tool_result or {}).get("ok", False)):
+            return tool_result, attempts
+        if attempts >= max_attempts:
+            return tool_result, attempts
+        if not _is_retryable_stepwise_tool_failure(tool_result):
+            return tool_result, attempts
+        await asyncio.sleep(max(0, backoff_ms) / 1000.0)
+
+
+async def _execute_stepwise_pipeline_task(user_id: str, plan: AgentPlan) -> AgentExecutionResult | None:
+    task = _extract_stepwise_pipeline_task(plan)
+    if task is None:
+        return None
+    payload = task.payload if isinstance(task.payload, dict) else {}
+    tasks = payload.get("tasks")
+    ctx = payload.get("ctx") if isinstance(payload.get("ctx"), dict) else {}
+    catalog_id = str((ctx or {}).get("catalog_id") or "").strip()
+    catalog_payload = get_catalog(catalog_id) if catalog_id else None
+    if not isinstance(tasks, list) or not tasks:
+        return AgentExecutionResult(
+            success=False,
+            summary="STEPWISE 파이프라인 입력이 올바르지 않습니다.",
+            user_message="STEPWISE 실행 작업 정의가 누락되었습니다.",
+            artifacts={
+                "error_code": "stepwise_payload_invalid",
+                "router_mode": "STEPWISE_PIPELINE",
+                "failed_task_id": str(task.id or "stepwise_pipeline"),
+                "failure_reason": "tasks_missing",
+                "missing_required_fields": "[]",
+                "catalog_id": catalog_id,
+            },
+            steps=[AgentExecutionStep(name="stepwise_pipeline", status="error", detail="tasks_missing")],
+        )
+
+    registry = load_registry()
+    user_timezone = _load_user_timezone(user_id)
+    memory: dict[str, dict] = {}
+    execution_steps: list[AgentExecutionStep] = []
+    result_items: list[dict] = []
+    settings = get_settings()
+    max_attempts = max(1, int(getattr(settings, "stepwise_tool_retry_max_attempts", 2) or 2))
+    backoff_ms = max(0, int(getattr(settings, "stepwise_tool_retry_backoff_ms", 300) or 300))
+
+    for index, item in enumerate(tasks, start=1):
+        if not isinstance(item, dict):
+            return AgentExecutionResult(
+                success=False,
+                summary="STEPWISE 파이프라인 실행 실패",
+                user_message="작업 단위 형식이 올바르지 않습니다.",
+                artifacts={
+                    "error_code": "stepwise_task_invalid",
+                    "router_mode": "STEPWISE_PIPELINE",
+                    "failed_task_id": f"step_{index}",
+                    "failure_reason": "task_item_not_object",
+                    "missing_required_fields": "[]",
+                    "catalog_id": catalog_id,
+                },
+                steps=execution_steps + [AgentExecutionStep(name=f"step_{index}", status="error", detail="task_item_not_object")],
+            )
+        sentence = str(item.get("sentence") or "").strip()
+        tool_name = str(item.get("tool_name") or "").strip()
+        service_name = _infer_service_from_tool_name(tool_name)
+        step_id = str(item.get("task_id") or f"step_{index}").strip()
+        if not sentence or not tool_name:
+            missing = []
+            if not sentence:
+                missing.append("sentence")
+            if not tool_name:
+                missing.append("tool_name")
+            return AgentExecutionResult(
+                success=False,
+                summary="STEPWISE 파이프라인 실행 실패",
+                user_message="작업 단위 필수 항목이 누락되었습니다.",
+                artifacts={
+                    "error_code": "stepwise_task_missing_field",
+                    "router_mode": "STEPWISE_PIPELINE",
+                    "failed_task_id": step_id,
+                    "failure_reason": "step_definition_missing_required_field",
+                    "missing_required_fields": json.dumps(missing, ensure_ascii=False),
+                    "catalog_id": catalog_id,
+                },
+                steps=execution_steps + [AgentExecutionStep(name=step_id, status="error", detail="step_definition_missing_required_field")],
+            )
+        try:
+            tool_def = registry.get_tool(tool_name)
+        except Exception:
+            return AgentExecutionResult(
+                success=False,
+                summary="STEPWISE 파이프라인 실행 실패",
+                user_message="선택된 API를 실행할 수 없습니다.",
+                artifacts={
+                    "error_code": "unknown_tool",
+                    "router_mode": "STEPWISE_PIPELINE",
+                    "failed_task_id": step_id,
+                    "failure_reason": f"unknown_tool:{tool_name}",
+                    "missing_required_fields": "[]",
+                    "catalog_id": catalog_id,
+                },
+                steps=execution_steps + [AgentExecutionStep(name=step_id, status="error", detail=f"unknown_tool:{tool_name}")],
+            )
+
+        required_fields = _extract_required_fields_from_input_schema(tool_def.input_schema)
+        previous_result = memory.get(f"step_{index-1}", {}) if index > 1 else {}
+        system_prompt = (
+            "You are a strict API payload filler. "
+            "Return only one JSON object with keys: request_payload, missing_required_fields, notes."
+        )
+        user_prompt = (
+            f"sentence={sentence}\n"
+            f"timezone={user_timezone}\n"
+            f"tool_name={tool_name}\n"
+            f"input_schema={json.dumps(tool_def.input_schema, ensure_ascii=False)}\n"
+            f"previous_result={json.dumps(previous_result, ensure_ascii=False)}\n"
+            "Fill required params if possible. Keep unknown optional fields empty."
+        )
+        llm_filled = await _request_autofill_json(system_prompt=system_prompt, user_prompt=user_prompt) or {}
+        request_payload, parse_error = _parse_stepwise_autofill_response(llm_filled)
+        if parse_error:
+            return AgentExecutionResult(
+                success=False,
+                summary="STEPWISE 파이프라인 실행 실패",
+                user_message=f"{index}번째 API 요청 생성 결과 형식이 올바르지 않습니다.",
+                artifacts={
+                    "error_code": "validation_error",
+                    "router_mode": "STEPWISE_PIPELINE",
+                    "failed_task_id": step_id,
+                    "failure_reason": f"autofill_response_schema_invalid:{parse_error}",
+                    "missing_required_fields": "[]",
+                    "failed_service": service_name,
+                    "failed_api": tool_name,
+                    "catalog_id": catalog_id,
+                },
+                steps=execution_steps + [AgentExecutionStep(name=step_id, status="error", detail=parse_error)],
+            )
+        request_payload = _sanitize_stepwise_request_payload(
+            tool_name=tool_name,
+            sentence=sentence,
+            request_payload=request_payload,
+            previous_result=previous_result,
+            memory=memory,
+        )
+        request_payload = _prune_stepwise_payload_by_input_schema(
+            input_schema=tool_def.input_schema if isinstance(tool_def.input_schema, dict) else {},
+            payload=request_payload,
+        )
+        if str(tool_name or "").strip().lower() == "linear_update_issue" and _missing(request_payload.get("issue_id")):
+            resolved_issue_id = await _resolve_linear_issue_id_for_stepwise(
+                user_id=user_id,
+                plan=plan,
+                sentence=sentence,
+                user_text=str(plan.user_text or ""),
+                previous_result=previous_result,
+                memory=memory,
+                steps=execution_steps,
+            )
+            if resolved_issue_id:
+                request_payload["issue_id"] = resolved_issue_id
+        if str(tool_name or "").strip().lower() == "linear_update_issue" and not _missing(request_payload.get("issue_id")):
+            issue_ref = str(request_payload.get("issue_id") or "").strip()
+            if issue_ref and not _looks_like_linear_internal_issue_id(issue_ref):
+                resolved_issue_id = await _resolve_linear_issue_id_for_stepwise(
+                    user_id=user_id,
+                    plan=plan,
+                    sentence=sentence,
+                    user_text=str(plan.user_text or ""),
+                    previous_result=previous_result,
+                    memory=memory,
+                    steps=execution_steps,
+                )
+                if resolved_issue_id:
+                    request_payload["issue_id"] = resolved_issue_id
+                else:
+                    request_payload.pop("issue_id", None)
+        if str(tool_name or "").strip().lower() == "linear_update_issue" and not _missing(request_payload.get("state_id")):
+            resolved_state_id = await _resolve_linear_state_id_for_stepwise(
+                user_id=user_id,
+                plan=plan,
+                state_value=request_payload.get("state_id"),
+                previous_result=previous_result,
+                memory=memory,
+                steps=execution_steps,
+            )
+            if resolved_state_id:
+                request_payload["state_id"] = resolved_state_id
+            else:
+                request_payload.pop("state_id", None)
+        if str(tool_name or "").strip().lower() == "linear_update_issue":
+            request_payload = _ensure_linear_update_patch_field(
+                payload=request_payload,
+                sentence=sentence,
+                user_text=str(plan.user_text or ""),
+            )
+        if str(tool_name or "").strip().lower() == "linear_create_issue" and _missing(request_payload.get("team_id")):
+            resolved_team_id = await _resolve_linear_team_id_for_stepwise(user_id=user_id, memory=memory)
+            if resolved_team_id:
+                request_payload["team_id"] = resolved_team_id
+        missing_required_fields = [field for field in required_fields if request_payload.get(field) in (None, "", [])]
+        if missing_required_fields:
+            return AgentExecutionResult(
+                success=False,
+                summary="STEPWISE 파이프라인 실행 실패",
+                user_message=f"{index}번째 작업의 필수 파라미터가 누락되어 실행을 중단했습니다.",
+                artifacts={
+                    "error_code": "missing_required_fields",
+                    "router_mode": "STEPWISE_PIPELINE",
+                    "failed_task_id": step_id,
+                    "failure_reason": f"missing_required_fields:{','.join(missing_required_fields)}",
+                    "missing_required_fields": json.dumps(missing_required_fields, ensure_ascii=False),
+                    "failed_request_payload": json.dumps(request_payload, ensure_ascii=False),
+                    "failed_service": service_name,
+                    "failed_api": tool_name,
+                    "catalog_id": catalog_id,
+                },
+                steps=execution_steps + [AgentExecutionStep(name=step_id, status="error", detail=f"missing_required_fields:{','.join(missing_required_fields)}")],
+            )
+        semantic_errors = _validate_stepwise_payload_semantics(
+            tool_name=tool_name,
+            input_schema=tool_def.input_schema,
+            payload=request_payload,
+        )
+        if semantic_errors:
+            validation_detail = semantic_errors[0]
+            return AgentExecutionResult(
+                success=False,
+                summary="STEPWISE 파이프라인 실행 실패",
+                user_message=f"{index}번째 작업 요청 형식 검증에 실패했습니다.",
+                artifacts={
+                    "error_code": "validation_error",
+                    "router_mode": "STEPWISE_PIPELINE",
+                    "failed_task_id": step_id,
+                    "failure_reason": f"semantic_validation_failed:{validation_detail}",
+                    "missing_required_fields": "[]",
+                    "failed_request_payload": json.dumps(request_payload, ensure_ascii=False),
+                    "failed_service": service_name,
+                    "failed_api": tool_name,
+                    "catalog_id": catalog_id,
+                },
+                steps=execution_steps + [AgentExecutionStep(name=step_id, status="error", detail=validation_detail)],
+            )
+
+        idempotency_policy = str(getattr(tool_def, "idempotency_key_policy", "none") or "none").strip().lower()
+        method = str(getattr(tool_def, "method", "") or "").strip().upper()
+        is_write_call = _is_write_tool_call(tool_name=tool_name, method=method)
+        idempotency_key = ""
+        if is_write_call and idempotency_policy in {"optional", "required"}:
+            idempotency_key = _derive_stepwise_idempotency_key(
+                user_id=user_id,
+                step_id=step_id,
+                tool_name=tool_name,
+                payload=request_payload,
+            )
+            request_payload["idempotency_key"] = idempotency_key
+
+        effective_max_attempts = max_attempts
+        if is_write_call and idempotency_policy == "none":
+            # Prevent duplicate writes when provider-level idempotency is not supported.
+            effective_max_attempts = 1
+
+        tool_result, attempts = await _execute_tool_with_stepwise_retry(
+            user_id=user_id,
+            tool_name=tool_name,
+            payload=request_payload,
+            max_attempts=effective_max_attempts,
+            backoff_ms=backoff_ms,
+        )
+        fail_reason = str((tool_result or {}).get("detail") or (tool_result or {}).get("error") or "tool_failed")
+        if (
+            not bool((tool_result or {}).get("ok", False))
+            and str(tool_name or "").strip().lower() == "linear_update_issue"
+            and "invalid_input" in fail_reason.lower()
+        ):
+            retry_payload = _build_linear_update_retry_payload(request_payload)
+            if retry_payload and retry_payload != request_payload:
+                retried_result, retried_attempts = await _execute_tool_with_stepwise_retry(
+                    user_id=user_id,
+                    tool_name=tool_name,
+                    payload=retry_payload,
+                    max_attempts=1,
+                    backoff_ms=backoff_ms,
+                )
+                attempts += retried_attempts
+                if bool((retried_result or {}).get("ok", False)):
+                    tool_result = retried_result
+                    request_payload = retry_payload
+                    execution_steps.append(
+                        AgentExecutionStep(
+                            name=f"{step_id}_retry",
+                            status="success",
+                            detail="linear_update_issue_invalid_input_retry_succeeded",
+                        )
+                    )
+                else:
+                    tool_result = retried_result
+                    fail_reason = str((tool_result or {}).get("detail") or (tool_result or {}).get("error") or fail_reason)
+        if not bool((tool_result or {}).get("ok", False)):
+            return AgentExecutionResult(
+                success=False,
+                summary="STEPWISE 파이프라인 실행 실패",
+                user_message=f"{index}번째 API 호출에 실패했습니다.",
+                artifacts={
+                    "error_code": str((tool_result or {}).get("error_code") or "tool_failed"),
+                    "router_mode": "STEPWISE_PIPELINE",
+                    "failed_task_id": step_id,
+                    "failure_reason": fail_reason,
+                    "missing_required_fields": "[]",
+                    "retry_attempts": str(attempts),
+                    "idempotency_key": idempotency_key,
+                    "failed_request_payload": json.dumps(request_payload, ensure_ascii=False),
+                    "failed_service": service_name,
+                    "failed_api": tool_name,
+                    "catalog_id": catalog_id,
+                },
+                steps=execution_steps + [AgentExecutionStep(name=step_id, status="error", detail=fail_reason[:200])],
+            )
+
+        normalized_response, normalization_error = _normalize_stepwise_tool_response(
+            tool_name=tool_name,
+            tool_result=tool_result,
+        )
+        if normalization_error:
+            return AgentExecutionResult(
+                success=False,
+                summary="STEPWISE 파이프라인 실행 실패",
+                user_message=f"{index}번째 API 응답 정규화 검증에 실패했습니다.",
+                artifacts={
+                    "error_code": "validation_error",
+                    "router_mode": "STEPWISE_PIPELINE",
+                    "failed_task_id": step_id,
+                    "failure_reason": f"normalization_validation_failed:{normalization_error}",
+                    "missing_required_fields": "[]",
+                    "retry_attempts": str(attempts),
+                    "idempotency_key": idempotency_key,
+                    "failed_service": service_name,
+                    "failed_api": tool_name,
+                    "catalog_id": catalog_id,
+                },
+                steps=execution_steps + [AgentExecutionStep(name=step_id, status="error", detail=f"normalization:{normalization_error}")],
+            )
+
+        memory[f"step_{index}"] = normalized_response or {}
+        result_items.append(
+            {
+                "task_id": step_id,
+                "tool_name": tool_name,
+                "service": service_name,
+                "request_payload": request_payload,
+                "result": memory[f"step_{index}"],
+                "idempotency_key": idempotency_key,
+                "attempts": attempts,
+            }
+        )
+        execution_steps.append(
+            AgentExecutionStep(
+                name=step_id,
+                status="success",
+                detail="executed" if attempts <= 1 else f"executed:retried{attempts - 1}",
+            )
+        )
+
+    return AgentExecutionResult(
+        success=True,
+        summary="STEPWISE 파이프라인 실행 완료",
+        user_message="요청한 단계형 작업을 완료했습니다.",
+        artifacts={
+            "router_mode": "STEPWISE_PIPELINE",
+            "step_count": str(len(tasks)),
+            "stepwise_results_json": json.dumps(result_items, ensure_ascii=False),
+            "catalog_id": catalog_id,
+            "catalog_loaded": "1" if isinstance(catalog_payload, dict) else "0",
+        },
+        steps=execution_steps,
+    )
+
+
 def _map_execution_error(detail: str) -> tuple[str, str, str]:
     code = detail or "unknown_error"
     lower = code.lower()
     upstream_message_match = re.search(r"\|message=([^|]+)", code)
     upstream_message = upstream_message_match.group(1).strip() if upstream_message_match else ""
+    status_match = re.search(r"\|status=(\d{3})", lower)
+    status_code = int(status_match.group(1)) if status_match else None
     if lower == "delete_disabled":
         return (
             "삭제 요청이 비활성화되어 있습니다.",
@@ -899,7 +2295,41 @@ def _map_execution_error(detail: str) -> tuple[str, str, str]:
             f"요청 파라미터가 올바르지 않습니다. 제목/개수/ID 형식을 확인해주세요.{field_hint}",
             "validation_error",
         )
-    if "tool_failed" in lower or "notion_api_failed" in lower or "notion_parse_failed" in lower:
+    if "tool_failed" in lower:
+        if status_code in {400, 422}:
+            hint = f"\n세부: {upstream_message[:200]}" if upstream_message else ""
+            return (
+                "요청 형식이 올바르지 않습니다.",
+                f"요청 파라미터가 올바르지 않습니다. 입력값 형식을 확인해주세요.{hint}",
+                "validation_error",
+            )
+        if status_code in {401, 403}:
+            return (
+                "외부 서비스 권한 오류가 발생했습니다.",
+                "권한이 부족하거나 만료되었습니다. 연동 권한을 다시 확인해주세요.",
+                "auth_error",
+            )
+        if status_code == 404:
+            return (
+                "요청한 대상을 찾지 못했습니다.",
+                "요청한 페이지/데이터를 찾지 못했습니다. 제목이나 ID를 확인해주세요.",
+                "not_found",
+            )
+        if status_code == 429:
+            return (
+                "요청 한도를 초과했습니다.",
+                "외부 API 호출 한도를 초과했습니다. 잠시 후 다시 시도해주세요.",
+                "rate_limited",
+            )
+        hint = ""
+        if upstream_message:
+            hint = f"\n세부: {upstream_message[:200]}"
+        return (
+            "외부 서비스 처리 중 오류가 발생했습니다.",
+            f"외부 서비스 응답 처리에 실패했습니다. 잠시 후 다시 시도해주세요.{hint}",
+            "upstream_error",
+        )
+    if "notion_api_failed" in lower or "notion_parse_failed" in lower:
         hint = ""
         if upstream_message:
             hint = f"\n세부: {upstream_message[:200]}"
@@ -2166,6 +3596,42 @@ async def _autofill_task_payload(
         if not any(filled.get(key) not in (None, "") for key in ("title", "description", "state_id", "priority")):
             filled = await _autofill_linear_update_with_llm(user_text=user_text, filled=filled)
             steps.append(AgentExecutionStep(name="llm_autofill_linear_update_issue", status="success", detail="applied=1"))
+        # Normalize optional linear_update_issue fields to avoid avoidable validation failures.
+        title_value = filled.get("title")
+        if isinstance(title_value, str):
+            normalized_title = title_value.strip()
+            if normalized_title:
+                filled["title"] = normalized_title
+            else:
+                filled.pop("title", None)
+        description_value = filled.get("description")
+        if isinstance(description_value, str):
+            normalized_description = description_value.strip()
+            if normalized_description:
+                filled["description"] = normalized_description
+            else:
+                filled.pop("description", None)
+        normalized_priority = _normalize_stepwise_linear_priority(filled.get("priority"))
+        if normalized_priority is None:
+            filled.pop("priority", None)
+        else:
+            filled["priority"] = normalized_priority
+        state_id = filled.get("state_id")
+        if state_id in (None, ""):
+            filled.pop("state_id", None)
+        elif isinstance(state_id, str):
+            normalized_state_id = state_id.strip()
+            if normalized_state_id and _looks_like_linear_internal_issue_id(normalized_state_id):
+                filled["state_id"] = normalized_state_id
+            else:
+                filled.pop("state_id", None)
+        else:
+            filled.pop("state_id", None)
+        normalized_archived = _normalize_stepwise_bool(filled.get("archived"))
+        if normalized_archived is True:
+            filled["archived"] = True
+        else:
+            filled.pop("archived", None)
 
     if "linear_create_comment" in tool_name:
         issue_ref = str(filled.get("issue_id") or "").strip()
@@ -2447,6 +3913,8 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
                     payload.get(key) not in (None, "")
                     for key in ("title", "description", "state_id", "priority")
                 )
+                if payload.get("archived") is True:
+                    has_update_field = True
                 if not has_update_field:
                     return AgentExecutionResult(
                         success=False,
@@ -2502,7 +3970,32 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
                     else:
                         raise
                 else:
-                    raise
+                    settings = get_settings()
+                    retry_max_attempts = max(1, int(getattr(settings, "stepwise_tool_retry_max_attempts", 2) or 2))
+                    retry_backoff_ms = max(0, int(getattr(settings, "stepwise_tool_retry_backoff_ms", 300) or 300))
+                    if not _is_retryable_tool_http_detail(detail) or retry_max_attempts <= 1:
+                        raise
+                    retry_exc: HTTPException = exc
+                    recovered = False
+                    for retry_count in range(2, retry_max_attempts + 1):
+                        await asyncio.sleep(retry_backoff_ms / 1000.0)
+                        try:
+                            tool_result = await execute_tool(user_id=user_id, tool_name=tool_name, payload=payload)
+                            steps.append(
+                                AgentExecutionStep(
+                                    name=f"{task.id}_retry",
+                                    status="success",
+                                    detail=f"tool={tool_name} transient_retry={retry_count - 1}",
+                                )
+                            )
+                            recovered = True
+                            break
+                        except HTTPException as retry_e:
+                            retry_exc = retry_e
+                            if not _is_retryable_tool_http_detail(str(retry_e.detail or "")):
+                                raise
+                    if not recovered:
+                        raise retry_exc
             _update_slot_context_from_tool_result(slot_context=slot_context, tool_name=tool_name, tool_result=tool_result)
             task_outputs[task.id] = {"kind": "tool", "tool_name": tool_name, "tool_result": tool_result}
             steps.append(AgentExecutionStep(name=task.id, status="success", detail=f"tool={tool_name}"))
@@ -3097,12 +4590,33 @@ def _extract_linear_update_fields(user_text: str) -> dict:
     title_match = re.search(r'(?i)(?:제목|title)\s*[:：]\s*(.+?)(?:\s+(?:설명|description|본문|내용|상태|state_id)\s*[:：]|$)', user_text)
     if title_match:
         fields["title"] = title_match.group(1).strip(" \"'`")
+    if "title" not in fields:
+        title_natural = re.search(r'(?i)(?:제목|title)\s*(?:을|를)?\s*(.+?)\s*(?:로|으로)\s*(?:변경|수정|업데이트|바꿔)', user_text)
+        if title_natural:
+            fields["title"] = title_natural.group(1).strip(" \"'`")
     description_match = re.search(r'(?i)(?:설명|description|본문|내용)\s*[:：]\s*(.+?)(?:\s+(?:제목|title|상태|state_id)\s*[:：]|$)', user_text)
     if description_match:
         fields["description"] = description_match.group(1).strip(" \"'`")
-    state_match = re.search(r'(?i)(?:상태|state_id)\s*[:：]\s*([0-9a-fA-F\-]{8,})', user_text)
+    if "description" not in fields:
+        description_natural = re.search(
+            r'(?is)(?:설명|description|본문|내용)\s*(?:을|를)?\s*(.+?)\s*(?:로|으로)?\s*(?:업데이트|수정|변경|바꿔)',
+            user_text,
+        )
+        if description_natural:
+            fields["description"] = description_natural.group(1).strip(" \"'`")
+    state_match = re.search(r'(?i)(?:상태|state_id|state)\s*[:：]\s*([^\s,;]+(?:\s+[^\s,;]+)?)', user_text)
     if state_match:
         fields["state_id"] = state_match.group(1).strip()
+    if "state_id" not in fields:
+        state_natural = re.search(
+            r'(?i)(?:상태|state)\s*(?:를|을)?\s*([^\s,;]+(?:\s+[^\s,;]+)?)\s*(?:으로|로)\s*(?:변경|수정|업데이트|바꿔|전환)',
+            user_text,
+        )
+        if state_natural:
+            value = state_natural.group(1).strip()
+            value = re.sub(r"(으|로)$", "", value).strip()
+            if value:
+                fields["state_id"] = value
     return {k: v for k, v in fields.items() if v}
 
 
@@ -4177,6 +5691,9 @@ async def execute_agent_plan(user_id: str, plan: AgentPlan) -> AgentExecutionRes
         pipeline_result = await _execute_pipeline_dag_task(user_id=user_id, plan=plan)
         if pipeline_result is not None:
             return pipeline_result
+        stepwise_result = await _execute_stepwise_pipeline_task(user_id=user_id, plan=plan)
+        if stepwise_result is not None:
+            return stepwise_result
         plan = _ensure_common_tool_tasks(plan)
         calendar_pipeline_result = await _execute_google_calendar_to_notion_linear_flow(
             user_id=user_id,

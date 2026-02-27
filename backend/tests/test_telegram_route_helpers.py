@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from app.routes.telegram import (
     _agent_error_guide,
     _autonomous_fallback_hint,
+    _build_structured_pipeline_log,
     _compose_telegram_response_text,
     _build_user_preface_template,
     _build_user_facing_message,
@@ -10,6 +11,7 @@ from app.routes.telegram import (
     _is_capabilities_query,
     _should_use_preface_llm,
     _truncate_telegram_message,
+    _record_pipeline_step_logs,
 )
 
 
@@ -199,3 +201,129 @@ def test_compose_telegram_response_text_no_debug_hides_report():
         report_text="에이전트 실행 결과",
     )
     assert out == "대화형 응답"
+
+
+def test_record_pipeline_step_logs_from_stepwise_results(monkeypatch):
+    inserted_rows: list[dict] = []
+
+    class _FakeTable:
+        def insert(self, payload):
+            if isinstance(payload, list):
+                inserted_rows.extend(payload)
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=[])
+
+    class _FakeSupabase:
+        def table(self, name: str):
+            assert name == "pipeline_step_logs"
+            return _FakeTable()
+
+    class _Settings:
+        supabase_url = "https://example.supabase.co"
+        supabase_service_role_key = "service-role"
+
+    monkeypatch.setattr("app.routes.telegram.get_settings", lambda: _Settings())
+    monkeypatch.setattr("app.routes.telegram.create_client", lambda *_args, **_kwargs: _FakeSupabase())
+
+    execution = SimpleNamespace(
+        artifacts={
+            "router_mode": "STEPWISE_PIPELINE",
+            "pipeline_run_id": "prun_stepwise_1",
+            "catalog_id": "catalog_abc",
+            "stepwise_results_json": '[{"task_id":"step_1","tool_name":"notion_search","result":{"ok":true}}]',
+        }
+    )
+    _record_pipeline_step_logs(user_id="u1", request_id="req_1", execution=execution)
+    assert len(inserted_rows) == 1
+    assert inserted_rows[0].get("run_id") == "prun_stepwise_1"
+    assert inserted_rows[0].get("task_id") == "step_1"
+    assert inserted_rows[0].get("service") == "notion"
+    assert inserted_rows[0].get("api") == "notion_search"
+    assert inserted_rows[0].get("catalog_id") == "catalog_abc"
+
+
+def test_record_pipeline_step_logs_from_stepwise_failure(monkeypatch):
+    inserted_rows: list[dict] = []
+
+    class _FakeTable:
+        def insert(self, payload):
+            if isinstance(payload, list):
+                inserted_rows.extend(payload)
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=[])
+
+    class _FakeSupabase:
+        def table(self, name: str):
+            assert name == "pipeline_step_logs"
+            return _FakeTable()
+
+    class _Settings:
+        supabase_url = "https://example.supabase.co"
+        supabase_service_role_key = "service-role"
+
+    monkeypatch.setattr("app.routes.telegram.get_settings", lambda: _Settings())
+    monkeypatch.setattr("app.routes.telegram.create_client", lambda *_args, **_kwargs: _FakeSupabase())
+
+    execution = SimpleNamespace(
+        artifacts={
+            "router_mode": "STEPWISE_PIPELINE",
+            "error_code": "missing_required_fields",
+            "failed_task_id": "step_2",
+            "failure_reason": "missing_required_fields:title",
+            "missing_required_fields": "[\"title\"]",
+            "failed_service": "linear",
+            "failed_api": "linear_create_issue",
+        }
+    )
+    _record_pipeline_step_logs(user_id="u1", request_id="req_fail", execution=execution)
+    assert len(inserted_rows) == 1
+    assert inserted_rows[0].get("task_id") == "step_2"
+    assert inserted_rows[0].get("call_status") == "skipped"
+    assert inserted_rows[0].get("service") == "linear"
+    assert inserted_rows[0].get("api") == "linear_create_issue"
+    assert inserted_rows[0].get("missing_required_fields") == ["title"]
+
+
+def test_build_structured_pipeline_log_stepwise_metrics_success():
+    execution = SimpleNamespace(
+        steps=[
+            SimpleNamespace(name="step_1", status="success"),
+            SimpleNamespace(name="step_2", status="success"),
+        ],
+        artifacts={
+            "router_mode": "STEPWISE_PIPELINE",
+            "stepwise_results_json": (
+                '[{"task_id":"step_1","tool_name":"google_calendar_list_events","attempts":1,"result":{"events":[]}},'
+                '{"task_id":"step_2","tool_name":"linear_create_issue","attempts":2,"result":{"issue":{"id":"I-1"}}}]'
+            ),
+        },
+    )
+    payload = _build_structured_pipeline_log(execution=execution, dag_pipeline=False)
+    assert payload.get("router_mode") == "STEPWISE_PIPELINE"
+    assert payload.get("stepwise_step_count") == 2
+    assert payload.get("stepwise_success_step_count") == 2
+    assert payload.get("stepwise_failed_step_count") == 0
+    assert payload.get("stepwise_retry_step_count") == 1
+    assert payload.get("stepwise_retry_total") == 1
+    assert payload.get("stepwise_validation_fail_count") == 0
+
+
+def test_build_structured_pipeline_log_stepwise_metrics_failure():
+    execution = SimpleNamespace(
+        steps=[SimpleNamespace(name="step_1", status="error")],
+        artifacts={
+            "router_mode": "STEPWISE_PIPELINE",
+            "error_code": "missing_required_fields",
+            "failed_task_id": "step_1",
+        },
+    )
+    payload = _build_structured_pipeline_log(execution=execution, dag_pipeline=False)
+    assert payload.get("stepwise_step_count") == 0
+    assert payload.get("stepwise_success_step_count") == 0
+    assert payload.get("stepwise_failed_step_count") == 1
+    assert payload.get("stepwise_validation_fail_count") == 1
+    assert payload.get("stepwise_failed_task_id") == "step_1"

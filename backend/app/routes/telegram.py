@@ -469,6 +469,13 @@ def _record_command_log(
     llm_provider: str | None = None,
     llm_model: str | None = None,
     verification_reason: str | None = None,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    catalog_id: str | None = None,
+    final_status: str | None = None,
+    failed_task_id: str | None = None,
+    failure_reason: str | None = None,
+    missing_required_fields: list[str] | None = None,
 ):
     try:
         settings = get_settings()
@@ -487,10 +494,175 @@ def _record_command_log(
             "llm_provider": llm_provider,
             "llm_model": llm_model,
             "verification_reason": verification_reason,
+            "run_id": run_id,
+            "request_id": request_id,
+            "catalog_id": catalog_id,
+            "final_status": final_status,
+            "failed_task_id": failed_task_id,
+            "failure_reason": failure_reason,
+            "missing_required_fields": missing_required_fields or [],
         }
         supabase.table("command_logs").insert(payload).execute()
     except Exception as exc:
         logger.exception("failed to record command log: %s", exc)
+
+
+def _record_pipeline_step_logs(
+    *,
+    user_id: str | None,
+    request_id: str,
+    execution,
+):
+    if execution is None:
+        return
+    artifacts = execution.artifacts or {}
+    router_mode = str(artifacts.get("router_mode") or "").strip()
+    run_id = str(artifacts.get("pipeline_run_id") or request_id).strip() or request_id
+    if not run_id:
+        return
+
+    rows: list[dict] = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+    def _parse_missing(raw: str | None) -> list[str]:
+        text = str(raw or "").strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+        except Exception:
+            pass
+        return []
+
+    # DAG node runs -> step logs
+    dag_node_runs_json = str(artifacts.get("dag_node_runs_json") or "").strip()
+    if dag_node_runs_json:
+        try:
+            parsed = json.loads(dag_node_runs_json)
+        except Exception:
+            parsed = []
+        if isinstance(parsed, list):
+            for idx, row in enumerate(parsed, start=1):
+                if not isinstance(row, dict):
+                    continue
+                node_id = str(row.get("node_id") or f"node_{idx}").strip()
+                status = str(row.get("status") or "").strip().lower()
+                node_type = str(row.get("node_type") or "").strip().lower()
+                validation_status = "passed" if status == "success" else "failed"
+                call_status = "succeeded" if status == "success" else ("failed" if status == "error" else "skipped")
+                rows.append(
+                    {
+                        "run_id": run_id,
+                        "request_id": request_id,
+                        "user_id": user_id,
+                        "task_index": idx,
+                        "task_id": node_id,
+                        "sentence": f"{node_type}:{node_id}",
+                        "service": None,
+                        "api": None,
+                        "catalog_id": str(artifacts.get("catalog_id") or "").strip() or None,
+                        "contract_version": "v1",
+                        "llm_status": "success" if (node_type == "llm_transform" and status == "success") else ("failed" if node_type == "llm_transform" else "success"),
+                        "validation_status": validation_status,
+                        "call_status": call_status,
+                        "missing_required_fields": [],
+                        "validation_error_code": str(row.get("error_code") or "").strip() or None,
+                        "failure_reason": str(row.get("error_code") or "").strip() or None,
+                        "request_payload": None,
+                        "normalized_response": None,
+                        "raw_response": None,
+                        "created_at": now_iso,
+                    }
+                )
+
+    # STEPWISE results -> step logs
+    stepwise_results_json = str(artifacts.get("stepwise_results_json") or "").strip()
+    if stepwise_results_json:
+        try:
+            parsed = json.loads(stepwise_results_json)
+        except Exception:
+            parsed = []
+        if isinstance(parsed, list):
+            for idx, row in enumerate(parsed, start=1):
+                if not isinstance(row, dict):
+                    continue
+                rows.append(
+                    {
+                        "run_id": run_id,
+                        "request_id": request_id,
+                        "user_id": user_id,
+                        "task_index": idx,
+                        "task_id": str(row.get("task_id") or f"step_{idx}").strip(),
+                        "sentence": str(row.get("task_id") or f"step_{idx}").strip(),
+                        "service": str(row.get("service") or "").strip() or _infer_service_from_api(str(row.get("tool_name") or "").strip()),
+                        "api": str(row.get("tool_name") or "").strip() or None,
+                        "catalog_id": str(artifacts.get("catalog_id") or "").strip() or None,
+                        "contract_version": "v1",
+                        "llm_status": "success",
+                        "validation_status": "passed",
+                        "call_status": "succeeded",
+                        "missing_required_fields": [],
+                        "validation_error_code": None,
+                        "failure_reason": None,
+                        "request_payload": row.get("request_payload"),
+                        "normalized_response": row.get("result"),
+                        "raw_response": None,
+                        "created_at": now_iso,
+                    }
+                )
+
+    # Failure-only fallback row for stepwise when no stepwise_results_json is present.
+    if not rows and router_mode == "STEPWISE_PIPELINE":
+        missing_raw = str(artifacts.get("missing_required_fields") or "[]").strip() or "[]"
+        failed_request_payload = artifacts.get("failed_request_payload")
+        parsed_failed_request_payload = None
+        if isinstance(failed_request_payload, dict):
+            parsed_failed_request_payload = failed_request_payload
+        elif isinstance(failed_request_payload, str) and failed_request_payload.strip():
+            try:
+                maybe_payload = json.loads(failed_request_payload)
+                if isinstance(maybe_payload, dict):
+                    parsed_failed_request_payload = maybe_payload
+            except Exception:
+                parsed_failed_request_payload = None
+        failed_api = str(artifacts.get("failed_api") or "").strip() or None
+        failed_service = str(artifacts.get("failed_service") or "").strip() or _infer_service_from_api(failed_api)
+        rows.append(
+            {
+                "run_id": run_id,
+                "request_id": request_id,
+                "user_id": user_id,
+                "task_index": 1,
+                "task_id": str(artifacts.get("failed_task_id") or "step_1"),
+                "sentence": str(artifacts.get("failed_task_id") or "step_1"),
+                "service": failed_service,
+                "api": failed_api,
+                "catalog_id": str(artifacts.get("catalog_id") or "").strip() or None,
+                "contract_version": "v1",
+                "llm_status": "failed",
+                "validation_status": "failed",
+                "call_status": "skipped",
+                "missing_required_fields": _parse_missing(missing_raw),
+                "validation_error_code": str(artifacts.get("error_code") or "").strip() or None,
+                "failure_reason": str(artifacts.get("failure_reason") or artifacts.get("reason") or "").strip() or None,
+                "request_payload": parsed_failed_request_payload,
+                "normalized_response": None,
+                "raw_response": None,
+                "created_at": now_iso,
+            }
+        )
+
+    if not rows:
+        return
+
+    try:
+        settings = get_settings()
+        supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+        supabase.table("pipeline_step_logs").insert(rows).execute()
+    except Exception as exc:
+        # Table may not exist before migration rollout; keep runtime non-blocking.
+        logger.warning("pipeline_step_logs best-effort insert skipped: %s", exc)
 
 
 def _parse_detail_pairs(detail: str | None) -> dict[str, str]:
@@ -505,6 +677,27 @@ def _parse_detail_pairs(detail: str | None) -> dict[str, str]:
         key, value = token.split("=", 1)
         out[key.strip()] = value.strip()
     return out
+
+
+def _parse_missing_required_fields(value: object) -> list[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        parsed = []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item).strip() for item in parsed if str(item).strip()]
+
+
+def _infer_service_from_api(api: str | None) -> str | None:
+    name = str(api or "").strip().lower()
+    if not name or "_" not in name:
+        return None
+    prefix = name.split("_", 1)[0].strip()
+    return prefix or None
 
 
 def _note_value(notes: list[str], prefix: str) -> str:
@@ -610,6 +803,7 @@ def _build_structured_pipeline_log(
             "verify_fail_before_write": False,
         }
     artifacts = execution.artifacts or {}
+    router_mode = str(artifacts.get("router_mode") or "").strip()
     node_runs_raw = str(artifacts.get("dag_node_runs_json") or "").strip()
     node_runs: list[dict] = []
     if node_runs_raw:
@@ -641,8 +835,9 @@ def _build_structured_pipeline_log(
         except Exception:
             created_count = 0
 
-    return {
+    base_payload = {
         "composed_pipeline": bool(dag_pipeline),
+        "router_mode": router_mode or None,
         "pipeline_run_id": str(artifacts.get("pipeline_run_id") or "").strip() or None,
         "created_count": created_count,
         "transform_success_count": transform_success_count,
@@ -650,6 +845,51 @@ def _build_structured_pipeline_log(
         "verify_error_count": verify_error_count,
         "verify_fail_before_write": bool(verify_error_count > 0 and write_success_count == 0),
     }
+    if router_mode != "STEPWISE_PIPELINE":
+        return base_payload
+
+    stepwise_results_raw = str(artifacts.get("stepwise_results_json") or "").strip()
+    stepwise_results: list[dict] = []
+    if stepwise_results_raw:
+        try:
+            parsed = json.loads(stepwise_results_raw)
+            if isinstance(parsed, list):
+                stepwise_results = [item for item in parsed if isinstance(item, dict)]
+        except Exception:
+            stepwise_results = []
+
+    step_count = len(stepwise_results)
+    retry_total = 0
+    retry_step_count = 0
+    for item in stepwise_results:
+        attempts_raw = item.get("attempts")
+        attempts = 1
+        try:
+            attempts = max(1, int(attempts_raw))
+        except Exception:
+            attempts = 1
+        if attempts > 1:
+            retry_step_count += 1
+            retry_total += attempts - 1
+
+    error_code = str(artifacts.get("error_code") or "").strip()
+    failed_task_id = str(artifacts.get("failed_task_id") or "").strip()
+    validation_fail_count = 1 if error_code in {"validation_error", "missing_required_fields"} else 0
+    successful_steps = sum(1 for step in (execution.steps or []) if getattr(step, "status", "") == "success")
+    failed_steps = sum(1 for step in (execution.steps or []) if getattr(step, "status", "") == "error")
+
+    base_payload.update(
+        {
+            "stepwise_step_count": step_count,
+            "stepwise_success_step_count": successful_steps,
+            "stepwise_failed_step_count": failed_steps,
+            "stepwise_retry_total": retry_total,
+            "stepwise_retry_step_count": retry_step_count,
+            "stepwise_validation_fail_count": validation_fail_count,
+            "stepwise_failed_task_id": failed_task_id or None,
+        }
+    )
+    return base_payload
 
 
 def _append_structured_log_detail(
@@ -1161,6 +1401,18 @@ async def telegram_webhook(
                 llm_provider=llm_provider,
                 llm_model=llm_model,
                 verification_reason=verification_reason,
+                run_id=str(exec_artifacts.get("pipeline_run_id") or request_id or ""),
+                request_id=request_id,
+                catalog_id=str(exec_artifacts.get("catalog_id") or "").strip() or None,
+                final_status="success" if analysis.ok else "error",
+                failed_task_id=str(exec_artifacts.get("failed_task_id") or exec_artifacts.get("failed_step") or "").strip() or None,
+                failure_reason=str(exec_artifacts.get("failure_reason") or exec_artifacts.get("reason") or "").strip() or None,
+                missing_required_fields=_parse_missing_required_fields(exec_artifacts.get("missing_required_fields")),
+            )
+            _record_pipeline_step_logs(
+                user_id=user_id,
+                request_id=request_id,
+                execution=analysis.execution,
             )
 
             report_text = (

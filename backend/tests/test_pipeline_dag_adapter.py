@@ -103,12 +103,64 @@ def test_execute_agent_plan_pipeline_dag_failure_contract(monkeypatch):
     assert result.artifacts.get("error_code") == "VERIFY_COUNT_MISMATCH"
     assert "failed_step" in result.artifacts
     assert "reason" in result.artifacts
+    assert "failure_reason" in result.artifacts
+    assert "failed_task_id" in result.artifacts
+    assert "missing_required_fields" in result.artifacts
     assert "retry_hint" in result.artifacts
     assert "compensation_status" in result.artifacts
     assert result.artifacts.get("pipeline_links_failure_persisted") == "1"
     assert result.artifacts.get("pipeline_links_failure_status") == "failed"
     assert persisted_failure.get("error_code") == "VERIFY_COUNT_MISMATCH"
     assert persisted_failure.get("compensation_status") == "not_required"
+
+
+def test_execute_agent_plan_pipeline_dag_missing_required_fields_artifact(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict) -> dict:
+        _ = (user_id, payload)
+        if tool_name == "notion_search":
+            return {"ok": True, "data": {"events": [{"id": "evt-1"}]}}
+        raise AssertionError(f"unexpected tool {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._validate_dag_policy_guards", lambda **kwargs: (True, None, None, None))
+    monkeypatch.setattr("agent.executor.persist_pipeline_links", lambda *, links: True)
+    monkeypatch.setattr("agent.executor.persist_pipeline_failure_link", lambda **kwargs: True)
+
+    pipeline = {
+        "pipeline_id": "p_missing_required_fields",
+        "version": "1.0",
+        "limits": {"max_nodes": 6, "max_fanout": 50, "max_tool_calls": 200, "pipeline_timeout_sec": 300},
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "skill",
+                "name": "notion.page_search",
+                "depends_on": [],
+                "input": {},
+                "timeout_sec": 20,
+            },
+            {
+                "id": "n2",
+                "type": "llm_transform",
+                "name": "unknown_transform",
+                "depends_on": ["n1"],
+                "input": {},
+                "output_schema": {
+                    "type": "object",
+                    "required": ["title"],
+                    "properties": {"title": {"type": "string"}},
+                },
+                "fallback_policy": {"fail_closed": True},
+                "timeout_sec": 20,
+            },
+        ],
+    }
+    result = asyncio.run(execute_agent_plan("u1", _build_dag_plan(pipeline)))
+
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "LLM_AUTOFILL_FAILED"
+    assert result.artifacts.get("failure_reason") == "missing_required_slots:title"
+    assert result.artifacts.get("missing_required_fields") == "[\"title\"]"
 
 
 def test_execute_agent_plan_pipeline_dag_sets_compensation_status_completed(monkeypatch):
@@ -461,3 +513,31 @@ def test_validate_dag_policy_guards_accepts_google_scope_alias(monkeypatch):
     assert reason is None
     assert failed_step is None
     assert code is None
+
+
+def test_validate_dag_policy_guards_blocks_when_api_profile_disallows_runtime_tool(monkeypatch):
+    class _Settings:
+        llm_stepwise_pipeline_enabled = True
+        delete_operations_enabled = False
+
+    monkeypatch.setattr("agent.executor.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.executor.required_scopes_for_skill", lambda _skill: [])
+    monkeypatch.setattr("agent.executor.service_for_skill", lambda _skill: "linear")
+    monkeypatch.setattr("agent.executor.runtime_tools_for_skill", lambda _skill: ["linear_create_issue"])
+    monkeypatch.setattr(
+        "agent.executor.build_runtime_api_profile",
+        lambda **_kwargs: {"enabled_api_ids": [], "blocked_api_ids": ["linear_create_issue"], "blocked_reason": []},
+    )
+
+    ok, reason, failed_step, code = _validate_dag_policy_guards(
+        user_id="u1",
+        pipeline={
+            "nodes": [
+                {"id": "n1", "type": "skill", "name": "linear.issue_create"},
+            ]
+        },
+    )
+    assert ok is False
+    assert reason == "api_profile_blocked:linear_create_issue"
+    assert failed_step == "n1"
+    assert code == PipelineErrorCode.TOOL_AUTH_ERROR

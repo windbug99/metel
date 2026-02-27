@@ -95,6 +95,10 @@ class Settings(BaseSettings):
     skill_llm_transform_pipeline_shadow_mode: bool = False
     skill_llm_transform_pipeline_traffic_percent: int = 100
     skill_llm_transform_pipeline_allowlist: str | None = None
+    llm_stepwise_pipeline_enabled: bool = False
+    stepwise_force_enabled: bool = False
+    stepwise_tool_retry_max_attempts: int = 2
+    stepwise_tool_retry_backoff_ms: int = 300
     telegram_debug_report_enabled: bool = False
     telegram_message_max_chars: int = 3500
     rule_reparse_for_llm_plan_enabled: bool = False

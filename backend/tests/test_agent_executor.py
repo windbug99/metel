@@ -22,6 +22,8 @@ from agent.executor import (
     _extract_target_page_title,
     _extract_linear_issue_reference,
     _extract_linear_update_fields,
+    _ensure_linear_update_patch_field,
+    _sanitize_stepwise_request_payload,
 )
 from agent.types import AgentPlan, AgentRequirement
 from agent.types import AgentTask
@@ -51,6 +53,20 @@ def test_map_execution_error_validation_includes_field_hint():
     assert "`description`" in user_message
 
 
+def test_map_execution_error_tool_failed_status_400_maps_validation():
+    summary, user_message, code = _map_execution_error("linear_search_issues:TOOL_FAILED|status=400|message=query required")
+    assert summary == "요청 형식이 올바르지 않습니다."
+    assert code == "validation_error"
+    assert "query required" in user_message
+
+
+def test_map_execution_error_tool_failed_status_401_maps_auth():
+    summary, user_message, code = _map_execution_error("linear_search_issues:TOOL_FAILED|status=401|message=expired")
+    assert summary == "외부 서비스 권한 오류가 발생했습니다."
+    assert code == "auth_error"
+    assert "권한" in user_message
+
+
 def test_extract_output_title():
     title = _extract_output_title("노션에서 최근 3개 페이지를 요약해서 주간 회의록으로 생성해줘")
     assert title == "주간 회의록"
@@ -76,6 +92,76 @@ def test_extract_requested_line_count():
     assert count == 10
 
 
+def test_sanitize_stepwise_request_payload_google_calendar_defaults_and_coercion():
+    payload = _sanitize_stepwise_request_payload(
+        tool_name="google_calendar_list_events",
+        sentence="",
+        request_payload={"calendar_id": "", "max_results": "25"},
+    )
+    assert payload["calendar_id"] == "primary"
+    assert payload["max_results"] == 25
+
+    payload_calendars = _sanitize_stepwise_request_payload(
+        tool_name="google_calendar_list_calendars",
+        sentence="",
+        request_payload={"max_results": "bad", "min_access_role": 1},
+    )
+    assert payload_calendars["max_results"] == 50
+    assert "min_access_role" not in payload_calendars
+
+    payload_calendars2 = _sanitize_stepwise_request_payload(
+        tool_name="google_calendar_list_calendars",
+        sentence="",
+        request_payload={"min_access_role": "readonly", "show_deleted": "true", "show_hidden": "no"},
+    )
+    assert payload_calendars2["min_access_role"] == "reader"
+    assert payload_calendars2["show_deleted"] is True
+    assert payload_calendars2["show_hidden"] is False
+
+    payload_events = _sanitize_stepwise_request_payload(
+        tool_name="google_calendar_list_events",
+        sentence="",
+        request_payload={
+            "calendar_id": "",
+            "time_min": "not-date",
+            "single_events": "1",
+            "page_token": 1,
+            "order_by": "startTime",
+        },
+    )
+    assert payload_events["calendar_id"] == "primary"
+    assert payload_events["single_events"] is True
+    assert "time_min" not in payload_events
+    assert "page_token" not in payload_events
+    assert payload_events["order_by"] == "startTime"
+
+
+def test_sanitize_stepwise_request_payload_linear_create_issue_due_date_normalization():
+    payload = _sanitize_stepwise_request_payload(
+        tool_name="linear_create_issue",
+        sentence="리니어 이슈 생성",
+        request_payload={"title": "t1", "due_date": datetime(2026, 2, 27, 9, 0, tzinfo=timezone.utc)},
+    )
+    assert payload["due_date"] == "2026-02-27"
+
+
+def test_sanitize_stepwise_request_payload_linear_list_issues_due_date_normalization():
+    payload = _sanitize_stepwise_request_payload(
+        tool_name="linear_list_issues",
+        sentence="",
+        request_payload={"first": "3", "due_date": datetime(2026, 2, 27, 9, 0, tzinfo=timezone.utc)},
+    )
+    assert payload["first"] == 3
+    assert payload["due_date"] == "2026-02-27"
+
+    payload2 = _sanitize_stepwise_request_payload(
+        tool_name="linear_list_issues",
+        sentence="",
+        request_payload={"due_date": 12345},
+    )
+    assert payload2["first"] == 5
+    assert "due_date" not in payload2
+
 def test_extract_append_target_and_content():
     title, content = _extract_append_target_and_content("노션에서 Metel test page에 액션 아이템 추가해줘")
     assert title == "Metel test page"
@@ -96,6 +182,21 @@ def test_extract_page_rename_request():
     title2, new_title2 = _extract_page_rename_request('더 코어 페이지 제목을 "더 코어 2"로 바꾸고')
     assert title2 == "더 코어"
     assert new_title2 == "더 코어 2"
+
+
+def test_extract_linear_update_fields_natural_state_expression():
+    fields = _extract_linear_update_fields("linear OPT-46 이슈 상태를 In Progress로 변경해줘")
+    assert fields.get("state_id") == "In Progress"
+
+
+def test_extract_linear_update_fields_natural_korean_state_expression():
+    fields = _extract_linear_update_fields("linear OPT-46 이슈 상태를 진행중으로 변경해줘")
+    assert fields.get("state_id") == "진행중"
+
+
+def test_extract_linear_update_fields_natural_description_expression():
+    fields = _extract_linear_update_fields("linear OPT-46 이슈 설명을 API 타임아웃 재현 조건으로 업데이트해줘")
+    assert fields.get("description") == "API 타임아웃 재현 조건"
 
 
 def test_extract_data_source_query_request():
@@ -220,6 +321,1190 @@ def test_extract_linear_issue_reference_with_body_keyword():
 def test_extract_linear_update_fields_supports_body_keyword():
     fields = _extract_linear_update_fields("linear 이슈 업데이트 이슈:OPT-36 본문: 로그인 버튼 클릭 시 오류")
     assert fields.get("description") == "로그인 버튼 클릭 시 오류"
+
+
+def test_execute_agent_plan_stepwise_pipeline_success(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        if tool_name == "google_calendar_list_events":
+            return {"ok": True, "data": {"events": [{"id": "evt-1", "title": "회의"}]}}
+        if tool_name == "notion_search":
+            return {"ok": True, "data": {"results": [{"id": "page-1"}]}}
+        raise AssertionError(f"unexpected tool: {tool_name} {payload}")
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = system_prompt
+        if "google_calendar_list_events" in user_prompt:
+            return {"request_payload": {"calendar_id": "primary"}}
+        if "notion_search" in user_prompt:
+            return {"request_payload": {"query": "회의"}}
+        return {"request_payload": {}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="단계형 실행 테스트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["google", "notion"],
+        selected_tools=["google_calendar_list_events", "notion_search"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "오늘 일정 조회", "tool_name": "google_calendar_list_events"},
+                        {"task_id": "step_2", "sentence": "조회 결과 기반 검색", "tool_name": "notion_search"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert result.artifacts.get("router_mode") == "STEPWISE_PIPELINE"
+    assert result.artifacts.get("step_count") == "2"
+
+
+def test_execute_agent_plan_stepwise_pipeline_fail_closed_on_missing_required(monkeypatch):
+    called = {"tool": False}
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, tool_name, payload)
+        called["tool"] = True
+        return {"ok": True, "data": {"events": []}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="단계형 실패 테스트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["notion"],
+        selected_tools=["notion_retrieve_page"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "페이지 조회", "tool_name": "notion_retrieve_page"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is False
+    assert result.artifacts.get("router_mode") == "STEPWISE_PIPELINE"
+    assert result.artifacts.get("error_code") == "missing_required_fields"
+    assert result.artifacts.get("failed_task_id") == "step_1"
+    assert called["tool"] is False
+
+
+def test_execute_agent_plan_stepwise_pipeline_passes_previous_result_to_next_step(monkeypatch):
+    prompts: list[str] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        if tool_name == "google_calendar_list_events":
+            return {"ok": True, "data": {"events": [{"id": "evt-1", "summary": "회의"}]}}
+        if tool_name == "notion_search":
+            return {"ok": True, "data": {"results": []}}
+        raise AssertionError(f"unexpected tool: {tool_name} {payload}")
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = system_prompt
+        prompts.append(user_prompt)
+        if "google_calendar_list_events" in user_prompt:
+            return {"request_payload": {"calendar_id": "primary"}}
+        if "notion_search" in user_prompt:
+            return {"request_payload": {"query": "회의"}}
+        return {"request_payload": {}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="체인 전달 테스트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["google", "notion"],
+        selected_tools=["google_calendar_list_events", "notion_search"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "오늘 일정 조회", "tool_name": "google_calendar_list_events"},
+                        {"task_id": "step_2", "sentence": "조회 결과 검색", "tool_name": "notion_search"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert len(prompts) >= 2
+    second_prompt = prompts[1]
+    assert "previous_result=" in second_prompt
+    assert '"event_count": 1' in second_prompt
+    assert '"events": [{"id": "evt-1"' in second_prompt
+
+
+def test_execute_agent_plan_stepwise_pipeline_semantic_validation_blocks_api_call(monkeypatch):
+    called = {"tool": False}
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, tool_name, payload)
+        called["tool"] = True
+        return {"ok": True, "data": {}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"calendar_id": "primary", "time_min": "not-datetime"}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="단계형 semantic validation 테스트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["google"],
+        selected_tools=["google_calendar_list_events"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "일정 조회", "tool_name": "google_calendar_list_events"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "validation_error"
+    assert result.artifacts.get("failed_task_id") == "step_1"
+    assert str(result.artifacts.get("failure_reason") or "").startswith("semantic_validation_failed:")
+    assert called["tool"] is False
+
+
+def test_execute_agent_plan_stepwise_pipeline_blocks_on_autofill_response_schema_invalid(monkeypatch):
+    called = {"tool": False}
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, tool_name, payload)
+        called["tool"] = True
+        return {"ok": True, "data": {"issues": {"nodes": []}}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": ["invalid-payload-type"]}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="autofill 응답 스키마 오류 테스트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_list_issues"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "이슈 목록 조회", "tool_name": "linear_list_issues"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "validation_error"
+    assert str(result.artifacts.get("failure_reason") or "").startswith("autofill_response_schema_invalid:")
+    assert called["tool"] is False
+
+
+def test_execute_agent_plan_stepwise_pipeline_blocks_when_autofill_response_missing_request_payload(monkeypatch):
+    called = {"tool": False}
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, tool_name, payload)
+        called["tool"] = True
+        return {"ok": True, "data": {"issues": {"nodes": []}}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"notes": "payload missing"}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="autofill payload 누락 테스트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_list_issues"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "이슈 목록 조회", "tool_name": "linear_list_issues"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "validation_error"
+    assert str(result.artifacts.get("failure_reason") or "").startswith("autofill_response_schema_invalid:")
+    assert called["tool"] is False
+
+
+def test_execute_agent_plan_stepwise_pipeline_blocks_semantic_time_inversion(monkeypatch):
+    called = {"tool": False}
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, tool_name, payload)
+        called["tool"] = True
+        return {"ok": True, "data": {"events": []}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {
+            "request_payload": {
+                "calendar_id": "primary",
+                "time_min": "2026-02-27T12:00:00Z",
+                "time_max": "2026-02-27T09:00:00Z",
+            }
+        }
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="시간 역전 검증 테스트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["google"],
+        selected_tools=["google_calendar_list_events"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "일정 조회", "tool_name": "google_calendar_list_events"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "validation_error"
+    assert result.artifacts.get("failed_task_id") == "step_1"
+    assert str(result.artifacts.get("failure_reason") or "").endswith("semantic_time_range_invalid")
+    assert called["tool"] is False
+
+
+def test_execute_agent_plan_stepwise_pipeline_retries_retryable_failure(monkeypatch):
+    calls = {"count": 0}
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, tool_name, payload)
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {"ok": False, "error_code": "rate_limited", "detail": "rate_limited"}
+        return {"ok": True, "data": {"issues": {"nodes": []}}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"first": 5}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="단계형 재시도 테스트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_list_issues"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "이슈 목록 조회", "tool_name": "linear_list_issues"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert calls["count"] == 2
+    assert result.steps and result.steps[0].detail == "executed:retried1"
+
+
+def test_execute_agent_plan_stepwise_pipeline_recovers_from_tool_timeout(monkeypatch):
+    calls = {"count": 0}
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, tool_name, payload)
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {"ok": False, "error_code": "tool_timeout", "detail": "upstream timed out"}
+        return {"ok": True, "data": {"issues": {"nodes": []}}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"first": 5}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="타임아웃 복구 테스트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_list_issues"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "이슈 목록 조회", "tool_name": "linear_list_issues"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert calls["count"] == 2
+    assert result.steps and result.steps[0].detail == "executed:retried1"
+
+
+def test_execute_agent_plan_stepwise_pipeline_retries_http_exception_transient(monkeypatch):
+    calls = {"count": 0}
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, tool_name, payload)
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise HTTPException(status_code=502, detail="linear_list_issues:TOOL_FAILED|status=502|message=bad gateway")
+        return {"ok": True, "data": {"issues": {"nodes": []}}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"first": 5}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="HTTPException 재시도 테스트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_list_issues"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "이슈 목록 조회", "tool_name": "linear_list_issues"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert calls["count"] == 2
+    assert result.steps and result.steps[0].detail == "executed:retried1"
+
+
+def test_execute_agent_plan_stepwise_pipeline_write_retry_uses_stable_idempotency_key(monkeypatch):
+    captured_payloads: list[dict] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        captured_payloads.append({"tool_name": tool_name, "payload": dict(payload)})
+        if len(captured_payloads) == 1:
+            return {"ok": False, "error_code": "rate_limited", "detail": "rate_limited"}
+        return {"ok": True, "data": {"issueCreate": {"issue": {"id": "iss-1"}}}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"team_id": "team-1", "title": "테스트 이슈"}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="단계형 write idempotency 테스트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_create_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "이슈 생성", "tool_name": "linear_create_issue"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert len(captured_payloads) == 2
+    first_payload = captured_payloads[0]["payload"]
+    second_payload = captured_payloads[1]["payload"]
+    first_key = str(first_payload.get("idempotency_key") or "")
+    second_key = str(second_payload.get("idempotency_key") or "")
+    assert captured_payloads[0]["tool_name"] == "linear_create_issue"
+    assert captured_payloads[1]["tool_name"] == "linear_create_issue"
+    assert first_key.startswith("sw:")
+    assert first_key == second_key
+    assert len({first_key, second_key}) == 1
+    stepwise_results_json = str(result.artifacts.get("stepwise_results_json") or "")
+    assert '"idempotency_key"' in stepwise_results_json
+    assert first_key in stepwise_results_json
+
+
+def test_execute_agent_plan_stepwise_pipeline_fails_on_normalization_validation(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = (user_id, tool_name, payload)
+        return {"ok": True}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"first": 5}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="단계형 normalization 실패 테스트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_list_issues"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "이슈 목록 조회", "tool_name": "linear_list_issues"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "validation_error"
+    assert result.artifacts.get("failed_task_id") == "step_1"
+    assert str(result.artifacts.get("failure_reason") or "").startswith("normalization_validation_failed:")
+
+
+def test_execute_agent_plan_stepwise_pipeline_coerces_linear_search_first(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, dict(payload)))
+        assert isinstance(payload.get("first"), int)
+        return {
+            "ok": True,
+            "data": {
+                "issues": {"nodes": []},
+            },
+        }
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"query": "배포", "first": "5"}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="linear 이슈 검색",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_search_issues"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "리니어 이슈 검색", "tool_name": "linear_search_issues"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert calls and calls[0][1].get("first") == 5
+
+
+def test_execute_agent_plan_stepwise_pipeline_falls_back_linear_search_query(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, dict(payload)))
+        assert tool_name == "linear_search_issues"
+        assert str(payload.get("query") or "").strip() != ""
+        return {"ok": True, "data": {"issues": {"nodes": []}}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"first": 5}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="linear 검색",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_search_issues"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "linear 검색", "tool_name": "linear_search_issues"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert calls and str(calls[0][1].get("query") or "").strip() != ""
+
+
+def test_execute_agent_plan_stepwise_pipeline_prunes_payload_by_input_schema(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, dict(payload)))
+        assert tool_name == "notion_retrieve_bot_user"
+        assert payload == {}
+        return {"ok": True, "data": {"bot": {"id": "bot-1"}}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {
+            "request_payload": {
+                "timezone": "Asia/Seoul",
+                "tool_name": "notion_retrieve_bot_user",
+                "input_schema": {"type": "object"},
+                "previous_result": {},
+            }
+        }
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="노션 봇 사용자 조회",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["notion"],
+        selected_tools=["notion_retrieve_bot_user"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "노션 봇 사용자 조회", "tool_name": "notion_retrieve_bot_user"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert calls and calls[0][1] == {}
+
+
+def test_execute_agent_plan_stepwise_pipeline_falls_back_title_from_sentence(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, dict(payload)))
+        assert str(payload.get("title") or "").strip() != ""
+        return {
+            "ok": True,
+            "data": {
+                "issueCreate": {"issue": {"id": "iss-1", "url": "https://linear.app/issue/ISS-1"}},
+            },
+        }
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"team_id": "team-1"}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="리니어 이슈 생성",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_create_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "리니어 후속 이슈 생성", "tool_name": "linear_create_issue"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert calls and str(calls[0][1].get("title") or "").startswith("리니어 후속 이슈 생성")
+
+
+def test_execute_agent_plan_stepwise_pipeline_backfills_linear_team_id_from_previous_step(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, dict(payload)))
+        if tool_name == "linear_list_teams":
+            return {
+                "ok": True,
+                "data": {"teams": {"nodes": [{"id": "team-1", "name": "Operate"}]}},
+            }
+        if tool_name == "linear_create_issue":
+            assert payload.get("team_id") == "team-1"
+            return {
+                "ok": True,
+                "data": {"issueCreate": {"issue": {"id": "iss-1", "url": "https://linear.app/issue/ISS-1"}}},
+            }
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = system_prompt
+        if "tool_name=linear_list_teams" in user_prompt:
+            return {"request_payload": {"first": 20}}
+        if "tool_name=linear_create_issue" in user_prompt:
+            return {"request_payload": {"title": "후속 이슈 자동 생성"}}
+        return {"request_payload": {}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="리니어에 후속 이슈 생성",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_list_teams", "linear_create_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "팀 조회", "tool_name": "linear_list_teams"},
+                        {"task_id": "step_2", "sentence": "이슈 생성", "tool_name": "linear_create_issue"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert [name for name, _ in calls] == ["linear_list_teams", "linear_create_issue"]
+
+
+def test_execute_agent_plan_stepwise_pipeline_sets_notion_retrieve_user_me(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, dict(payload)))
+        assert tool_name == "notion_retrieve_user"
+        assert payload.get("user_id") == "me"
+        return {"ok": True, "data": {"id": "me"}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="노션 사용자 조회",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["notion"],
+        selected_tools=["notion_retrieve_user"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "노션 사용자 조회", "tool_name": "notion_retrieve_user"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert calls and calls[0][0] == "notion_retrieve_user"
+
+
+def test_execute_agent_plan_stepwise_pipeline_normalizes_linear_update_priority(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, dict(payload)))
+        assert tool_name == "linear_update_issue"
+        assert payload.get("priority") == 2
+        return {"ok": True, "data": {"issueUpdate": {"issue": {"id": "12345678-1234-1234-1234-1234567890ab"}}}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"issue_id": "12345678-1234-1234-1234-1234567890ab", "priority": "P2"}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="리니어 이슈 우선순위 업데이트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_update_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "우선순위 수정", "tool_name": "linear_update_issue"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert calls and calls[0][1].get("priority") == 2
+
+
+def test_execute_agent_plan_stepwise_pipeline_backfills_linear_update_issue_id_from_previous_step(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, dict(payload)))
+        if tool_name == "linear_search_issues":
+            return {
+                "ok": True,
+                "data": {"issues": {"nodes": [{"id": "issue-internal-52", "identifier": "OPT-52", "title": "로그인 오류"}]}},
+            }
+        if tool_name == "linear_update_issue":
+            assert payload.get("issue_id") == "issue-internal-52"
+            return {"ok": True, "data": {"issueUpdate": {"issue": {"id": "issue-internal-52"}}}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = system_prompt
+        if "tool_name=linear_search_issues" in user_prompt:
+            return {"request_payload": {"query": "로그인 오류", "first": 5}}
+        if "tool_name=linear_update_issue" in user_prompt:
+            return {"request_payload": {"description": "본문 업데이트"}}
+        return {"request_payload": {}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="리니어 이슈 검색 후 본문 업데이트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_search_issues", "linear_update_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "리니어 이슈 검색", "tool_name": "linear_search_issues"},
+                        {"task_id": "step_2", "sentence": "리니어 이슈 본문 업데이트", "tool_name": "linear_update_issue"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert [name for name, _ in calls] == ["linear_search_issues", "linear_update_issue"]
+
+
+def test_execute_agent_plan_stepwise_pipeline_resolves_linear_update_issue_id_from_sentence(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, dict(payload)))
+        if tool_name == "linear_search_issues":
+            return {
+                "ok": True,
+                "data": {"issues": {"nodes": [{"id": "issue-internal-43", "identifier": "OPT-43", "title": "로그인 버튼 클릭 오류"}]}},
+            }
+        if tool_name == "linear_list_issues":
+            return {
+                "ok": True,
+                "data": {"issues": {"nodes": [{"id": "issue-internal-43", "identifier": "OPT-43", "title": "로그인 버튼 클릭 오류"}]}},
+            }
+        if tool_name == "linear_update_issue":
+            assert payload.get("issue_id") == "issue-internal-43"
+            return {"ok": True, "data": {"issueUpdate": {"issue": {"id": "issue-internal-43"}}}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"description": "수정 본문"}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="OPT-43 이슈 본문 업데이트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_update_issue", "linear_search_issues"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "OPT-43 이슈 본문 업데이트", "tool_name": "linear_update_issue"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert calls and calls[-1][0] == "linear_update_issue"
+
+
+def test_execute_agent_plan_stepwise_pipeline_resolves_identifier_like_issue_id(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, dict(payload)))
+        if tool_name == "linear_search_issues":
+            return {
+                "ok": True,
+                "data": {"issues": {"nodes": [{"id": "issue-internal-43", "identifier": "OPT-43", "title": "로그인 버튼 클릭 오류"}]}},
+            }
+        if tool_name == "linear_list_issues":
+            return {
+                "ok": True,
+                "data": {"issues": {"nodes": [{"id": "issue-internal-43", "identifier": "OPT-43", "title": "로그인 버튼 클릭 오류"}]}},
+            }
+        if tool_name == "linear_update_issue":
+            assert payload.get("issue_id") == "issue-internal-43"
+            return {"ok": True, "data": {"issueUpdate": {"issue": {"id": "issue-internal-43"}}}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"issue_id": "OPT-43", "description": "수정 본문"}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="OPT-43 이슈 본문 업데이트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_update_issue", "linear_search_issues"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "OPT-43 이슈 본문 업데이트", "tool_name": "linear_update_issue"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert any(name == "linear_search_issues" for name, _ in calls)
+    assert calls[-1][0] == "linear_update_issue"
+
+
+def test_execute_agent_plan_stepwise_pipeline_drops_invalid_linear_update_state_id(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, dict(payload)))
+        assert tool_name == "linear_update_issue"
+        assert "state_id" not in payload
+        return {"ok": True, "data": {"issueUpdate": {"issue": {"id": "12345678-1234-1234-1234-1234567890ab"}}}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"issue_id": "12345678-1234-1234-1234-1234567890ab", "description": "수정", "state_id": 123}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="리니어 이슈 상태/본문 업데이트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_update_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "이슈 업데이트", "tool_name": "linear_update_issue"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert calls and calls[0][0] == "linear_update_issue"
+
+
+def test_execute_agent_plan_stepwise_pipeline_normalizes_linear_update_archived_boolean(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, dict(payload)))
+        assert tool_name == "linear_update_issue"
+        assert payload.get("archived") is True
+        return {"ok": True, "data": {"issueUpdate": {"issue": {"id": "12345678-1234-1234-1234-1234567890ab"}}}}
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"issue_id": "12345678-1234-1234-1234-1234567890ab", "archived": "true"}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="리니어 이슈 보관",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_update_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "이슈 보관", "tool_name": "linear_update_issue"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert calls and calls[0][1].get("archived") is True
+
+
+def test_execute_agent_plan_stepwise_pipeline_fallbacks_description_when_update_fields_missing(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, dict(payload)))
+        if tool_name == "linear_update_issue":
+            assert payload.get("issue_id") == "12345678-1234-1234-1234-1234567890ab"
+            assert isinstance(payload.get("description"), str) and payload.get("description")
+            return {"ok": True, "data": {"issueUpdate": {"issue": {"id": "12345678-1234-1234-1234-1234567890ab"}}}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    async def _fake_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"request_payload": {"issue_id": "12345678-1234-1234-1234-1234567890ab"}}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_autofill_json)
+
+    plan = AgentPlan(
+        user_text="linear OPT-52 이슈 업데이트",
+        requirements=[AgentRequirement(summary="stepwise")],
+        target_services=["linear"],
+        selected_tools=["linear_update_issue"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_stepwise_pipeline",
+                title="stepwise pipeline",
+                task_type="STEPWISE_PIPELINE",
+                payload={
+                    "tasks": [
+                        {"task_id": "step_1", "sentence": "OPT-52 이슈 업데이트", "tool_name": "linear_update_issue"},
+                    ]
+                },
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("u1", plan))
+    assert result.success is True
+    assert calls and calls[0][0] == "linear_update_issue"
+
+
+def test_ensure_linear_update_patch_field_uses_default_description_when_basis_empty():
+    payload = {"issue_id": "12345678-1234-1234-1234-1234567890ab"}
+    normalized = _ensure_linear_update_patch_field(payload=payload, sentence="", user_text="")
+    assert normalized.get("issue_id") == "12345678-1234-1234-1234-1234567890ab"
+    assert normalized.get("description") == "요청 기반 자동 업데이트"
 
 
 def test_task_orchestration_autofills_linear_create_issue_team_from_context(monkeypatch):
@@ -1049,6 +2334,46 @@ def test_task_orchestration_linear_update_retries_with_re_resolved_issue_id(monk
         "linear_update_issue",
     ]
     assert result.artifacts.get("linear_issue_url") == "https://linear.app/issue/OPT-43"
+
+
+def test_task_orchestration_retries_transient_http_tool_failure(monkeypatch):
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        _ = user_id
+        calls.append((tool_name, dict(payload)))
+        if len(calls) == 1:
+            raise HTTPException(status_code=502, detail="linear_search_issues:TOOL_FAILED|status=502|message=bad gateway")
+        if tool_name == "linear_search_issues":
+            return {"data": {"issues": {"nodes": []}}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text="linear 이슈 검색",
+        requirements=[AgentRequirement(summary="Linear 이슈 검색")],
+        target_services=["linear"],
+        selected_tools=["linear_search_issues"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_linear_search_issues",
+                title="Linear 이슈 검색",
+                task_type="TOOL",
+                service="linear",
+                tool_name="linear_search_issues",
+                payload={"query": "로그인", "first": 5},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert [name for name, _ in calls] == ["linear_search_issues", "linear_search_issues"]
+    assert any(step.name == "task_linear_search_issues_retry" for step in (result.steps or []))
 
 
 def test_task_orchestration_linear_update_drops_unresolved_identifier_issue_id(monkeypatch):

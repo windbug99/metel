@@ -428,6 +428,7 @@ def test_linear_query_and_variables_archive_issue():
     )
     assert "mutation ArchiveIssue" in query
     assert "issueArchive" in query
+    assert "issue {" not in query
     assert variables == {"id": "issue-1"}
 
 

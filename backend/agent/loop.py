@@ -21,6 +21,7 @@ from agent.orchestrator_v2 import try_run_v2_orchestration
 from agent.pipeline_fixtures import (
     build_google_calendar_to_linear_minutes_pipeline,
     build_google_calendar_to_notion_linear_pipeline,
+    build_google_calendar_to_notion_linear_stepwise_pipeline,
     build_google_calendar_to_notion_minutes_pipeline,
     build_google_calendar_to_notion_todo_pipeline,
 )
@@ -30,6 +31,7 @@ from agent.planner_llm import try_build_agent_plan_with_llm
 from agent.registry import load_registry
 from agent.slot_collector import collect_slots_from_user_reply, slot_prompt_example
 from agent.slot_schema import get_action_slot_schema, validate_slots
+from agent.stepwise_planner import try_build_stepwise_pipeline_plan
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentRequirement, AgentRunResult, AgentTask
 from app.core.config import get_settings
 
@@ -143,6 +145,9 @@ def _is_calendar_pipeline_intent(user_text: str, connected_services: list[str]) 
     has_notion = _mentions_service(text, "notion")
     has_linear = _mentions_service(text, "linear")
     if not (has_notion and has_linear):
+        return False
+    # Keep per-item fanout phrasing on generic planner path (v2/LLM), not fixed DAG template.
+    if any(token in text or token in lower for token in ("각 회의마다", "각 회의를", "for each", "each meeting")):
         return False
     return is_create_intent(text) or is_update_intent(text)
 
@@ -277,17 +282,13 @@ def _is_recent_lookup_intent(user_text: str) -> bool:
     has_lookup = any(token in lower for token in ("조회", "검색", "목록", "list", "search", "show"))
     if not has_lookup:
         return False
-    is_notion_recent = (
-        (("노션" in text) or ("notion" in lower))
-        and (("페이지" in text) or ("page" in lower))
-        and any(token in lower for token in ("최근", "마지막", "최신", "latest", "last"))
-    )
     is_linear_recent = (
         (("리니어" in text) or ("linear" in lower))
         and (("이슈" in text) or ("issue" in lower))
         and any(token in lower for token in ("최근", "최신", "latest"))
     )
-    return is_notion_recent or is_linear_recent
+    has_explicit_count = bool(re.search(r"\d+", lower)) and any(token in lower for token in ("개", "건", "first", "top"))
+    return is_linear_recent and has_explicit_count
 
 
 def _has_map_search_capability(connected_services: list[str]) -> bool:
@@ -949,11 +950,13 @@ def _precheck_plan_slots_for_policy(plan: AgentPlan) -> tuple[dict[str, str] | N
                 notes,
             )
 
-        if not missing_slots:
-            continue
         auto_fill = set(schema.auto_fill_slots or ())
+        auto_fill_missing = [slot for slot in auto_fill if (task.payload or {}).get(slot) in (None, "", [])]
         blocking = [slot for slot in missing_slots if slot not in auto_fill]
         non_blocking = [slot for slot in missing_slots if slot in auto_fill]
+        for slot in auto_fill_missing:
+            if slot not in non_blocking:
+                non_blocking.append(slot)
         if non_blocking:
             notes.append(f"slot_policy_non_blocking_autofill:{action}:{','.join(non_blocking)}")
         if blocking:
@@ -1516,6 +1519,31 @@ async def _try_resume_pending_action(
     )
 
 
+def _build_calendar_stepwise_pipeline_plan(user_text: str) -> AgentPlan:
+    pipeline = build_google_calendar_to_notion_linear_stepwise_pipeline(user_text=user_text)
+    return AgentPlan(
+        user_text=user_text,
+        requirements=[AgentRequirement(summary="calendar_notion_linear_stepwise_pipeline")],
+        target_services=["google", "notion", "linear"],
+        selected_tools=["google_calendar_list_events", "notion_create_page", "linear_create_issue"],
+        workflow_steps=[
+            "1. Google Calendar 오늘 일정 조회",
+            "2. 회의 일정만 필터링",
+            "3. 각 회의를 Notion 회의록 서식으로 생성",
+            "4. 각 회의를 Linear 이슈로 생성",
+        ],
+        tasks=[
+            AgentTask(
+                id="task_pipeline_dag_calendar_notion_linear_stepwise",
+                title="calendar->notion(minutes)->linear(issue) STEPWISE DAG",
+                task_type="PIPELINE_DAG",
+                payload={"pipeline": pipeline, "ctx": {"enabled": True}},
+            )
+        ],
+        notes=["planner=loop", "router_mode=PIPELINE_DAG", "plan_source=dag_template", "pipeline_mode=stepwise_v1"],
+    )
+
+
 async def run_agent_analysis(user_text: str, connected_services: list[str], user_id: str) -> AgentRunResult:
     """Run the agent flow with planning + execution.
 
@@ -1583,7 +1611,8 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
         )
 
     if _is_calendar_pipeline_intent(user_text, connected_services):
-        dag_plan = _build_calendar_pipeline_plan(user_text)
+        use_stepwise = bool(getattr(settings, "llm_stepwise_pipeline_enabled", False))
+        dag_plan = _build_calendar_stepwise_pipeline_plan(user_text) if use_stepwise else _build_calendar_pipeline_plan(user_text)
         execution = await execute_agent_plan(user_id=user_id, plan=dag_plan)
         finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
         execution.user_message = finalized_message
@@ -1598,6 +1627,33 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
             execution=execution,
             plan_source="dag_template",
         )
+
+    stepwise_enabled = bool(getattr(settings, "llm_stepwise_pipeline_enabled", False)) or bool(
+        getattr(settings, "stepwise_force_enabled", False)
+    )
+    if stepwise_enabled:
+        stepwise_plan = await try_build_stepwise_pipeline_plan(
+            user_text=user_text,
+            connected_services=connected_services,
+            user_id=user_id,
+        )
+        if stepwise_plan is not None:
+            execution = await execute_agent_plan(user_id=user_id, plan=stepwise_plan)
+            finalized_message, finalizer_mode = _apply_response_finalizer_template(execution=execution, settings=settings)
+            execution.user_message = finalized_message
+            if finalizer_mode != "disabled":
+                stepwise_plan.notes.append(f"response_finalizer={finalizer_mode}")
+            if bool(getattr(settings, "stepwise_force_enabled", False)):
+                stepwise_plan.notes.append("stepwise_force_enabled=1")
+            stepwise_plan.notes.append(f"slot_loop_enabled={1 if slot_loop_enabled else 0}")
+            return AgentRunResult(
+                ok=execution.success,
+                stage="execution",
+                plan=stepwise_plan,
+                result_summary=execution.summary,
+                execution=execution,
+                plan_source="stepwise_template",
+            )
 
     skill_llm_pre_notes: list[str] = []
     compiled_skill_llm_plan = _compile_skill_llm_transform_pipeline(
@@ -1929,7 +1985,16 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     slot_policy_violation, slot_policy_notes = _precheck_plan_slots_for_policy(plan)
     if slot_policy_notes:
         plan.notes.extend(slot_policy_notes)
-    if slot_policy_violation:
+    blocking_precheck_enabled = bool(
+        getattr(
+            settings,
+            "slot_policy_blocking_precheck_enabled",
+            bool(getattr(settings, "llm_autonomous_enabled", False))
+            or (not hasattr(settings, "slot_loop_enabled"))
+            or (slot_loop_enabled and not planner_rule_fallback_enabled),
+        )
+    )
+    if slot_policy_violation and blocking_precheck_enabled:
         slot_action = str(slot_policy_violation.get("slot_action") or "").strip()
         slot_task_id = str(slot_policy_violation.get("slot_task_id") or slot_action).strip()
         missing_slot = str(slot_policy_violation.get("missing_slot") or "").strip()
