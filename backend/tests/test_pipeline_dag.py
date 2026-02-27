@@ -487,3 +487,162 @@ def test_execute_pipeline_dag_maps_auth_required_to_tool_auth_error():
             )
         )
     assert exc.value.code == PipelineErrorCode.TOOL_AUTH_ERROR
+
+
+def test_execute_pipeline_dag_verify_on_fail_fallback_does_not_raise():
+    async def _fake_skill(user_id: str, skill_name: str, payload: dict) -> dict:
+        _ = (user_id, skill_name, payload)
+        return {"ok": True, "data": {"count": 1}}
+
+    async def _fake_transform(user_id: str, payload: dict, output_schema: dict) -> dict:
+        _ = (user_id, payload, output_schema)
+        return {}
+
+    pipeline = _base_pipeline()
+    pipeline["nodes"] = [
+        {"id": "n1", "type": "skill", "name": "google.list_today", "depends_on": [], "input": {}, "timeout_sec": 20},
+        {
+            "id": "n2",
+            "type": "verify",
+            "name": "verify_non_blocking",
+            "depends_on": ["n1"],
+            "input": {},
+            "rules": ["$n1.count == 2"],
+            "on_fail": "fallback",
+            "timeout_sec": 20,
+        },
+    ]
+    result = asyncio.run(
+        execute_pipeline_dag(
+            user_id="u1",
+            pipeline=pipeline,
+            ctx={},
+            execute_skill=_fake_skill,
+            execute_llm_transform=_fake_transform,
+        )
+    )
+    assert result["status"] == "succeeded"
+    assert result["artifacts"]["n2"]["action"] == "fallback"
+
+
+def test_execute_pipeline_dag_for_each_supports_items_ref_alias():
+    async def _fake_skill(user_id: str, skill_name: str, payload: dict) -> dict:
+        _ = (user_id, payload)
+        if skill_name == "google_calendar.list_today":
+            return {"ok": True, "data": {"events": [{"id": "evt-1", "title": "회의"}]}}
+        if skill_name == "notion.page_create":
+            return {"ok": True, "data": {"page_id": "pg-1"}}
+        raise AssertionError(f"unexpected skill {skill_name}")
+
+    async def _fake_transform(user_id: str, payload: dict, output_schema: dict) -> dict:
+        _ = (user_id, output_schema)
+        return {"title": payload["event_title"]}
+
+    pipeline = _base_pipeline()
+    pipeline["nodes"] = [
+        {"id": "n1", "type": "skill", "name": "google_calendar.list_today", "depends_on": [], "input": {}, "timeout_sec": 20},
+        {
+            "id": "n2",
+            "type": "for_each",
+            "name": "loop_events",
+            "depends_on": ["n1"],
+            "input": {},
+            "items_ref": "$n1.events",
+            "item_node_ids": ["n2_1", "n2_2"],
+            "timeout_sec": 20,
+        },
+        {
+            "id": "n2_1",
+            "type": "llm_transform",
+            "name": "transform",
+            "depends_on": ["n2"],
+            "input": {"event_title": "$item.title"},
+            "output_schema": {"type": "object"},
+            "timeout_sec": 20,
+        },
+        {
+            "id": "n2_2",
+            "type": "skill",
+            "name": "notion.page_create",
+            "depends_on": ["n2_1"],
+            "input": {"title": "$n2_1.title"},
+            "timeout_sec": 20,
+        },
+    ]
+
+    result = asyncio.run(
+        execute_pipeline_dag(
+            user_id="u1",
+            pipeline=pipeline,
+            ctx={},
+            execute_skill=_fake_skill,
+            execute_llm_transform=_fake_transform,
+        )
+    )
+    assert result["status"] == "succeeded"
+    assert result["artifacts"]["n2"]["item_count"] == 1
+
+
+def test_execute_pipeline_dag_for_each_skip_item_failure():
+    async def _fake_skill(user_id: str, skill_name: str, payload: dict) -> dict:
+        _ = user_id
+        if skill_name == "google_calendar.list_today":
+            return {
+                "ok": True,
+                "data": {"events": [{"id": "evt-1", "title": "ok"}, {"id": "evt-2", "title": "fail"}]},
+            }
+        if skill_name == "notion.page_create":
+            if payload.get("title") == "fail":
+                return {"ok": False, "error_code": "TOOL_TIMEOUT", "detail": "forced_failure"}
+            return {"ok": True, "data": {"id": f"page-{payload['title']}"}}
+        raise AssertionError(f"unexpected skill {skill_name}")
+
+    async def _fake_transform(user_id: str, payload: dict, output_schema: dict) -> dict:
+        _ = (user_id, output_schema)
+        return {"title": payload["event_title"]}
+
+    pipeline = _base_pipeline()
+    pipeline["nodes"] = [
+        {"id": "n1", "type": "skill", "name": "google_calendar.list_today", "depends_on": [], "input": {}, "timeout_sec": 20},
+        {
+            "id": "n2",
+            "type": "for_each",
+            "name": "loop_events",
+            "depends_on": ["n1"],
+            "input": {},
+            "source_ref": "$n1.events",
+            "item_node_ids": ["n2_1", "n2_2"],
+            "on_item_fail": "skip",
+            "timeout_sec": 20,
+        },
+        {
+            "id": "n2_1",
+            "type": "llm_transform",
+            "name": "transform",
+            "depends_on": ["n2"],
+            "input": {"event_title": "$item.title"},
+            "output_schema": {"type": "object", "required": ["title"]},
+            "timeout_sec": 20,
+        },
+        {
+            "id": "n2_2",
+            "type": "skill",
+            "name": "notion.page_create",
+            "depends_on": ["n2_1"],
+            "input": {"title": "$n2_1.title"},
+            "timeout_sec": 20,
+        },
+    ]
+
+    result = asyncio.run(
+        execute_pipeline_dag(
+            user_id="u1",
+            pipeline=pipeline,
+            ctx={},
+            execute_skill=_fake_skill,
+            execute_llm_transform=_fake_transform,
+        )
+    )
+    assert result["status"] == "succeeded"
+    assert result["artifacts"]["n2"]["item_count"] == 2
+    assert result["artifacts"]["n2"]["item_error_count"] == 1

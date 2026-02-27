@@ -27,6 +27,7 @@ from agent.skill_contracts import required_scopes_for_skill, runtime_tools_for_s
 from agent.slot_collector import collect_slots_from_user_reply
 from agent.slot_schema import get_action_slot_schema, validate_slots
 from agent.tool_runner import execute_tool
+from agent.transform_contracts import run_transform_contract
 from agent.types import AgentExecutionResult, AgentExecutionStep, AgentPlan, AgentTask
 from app.core.config import get_settings
 
@@ -90,6 +91,96 @@ def _normalize_timezone(value: str | None) -> str:
     candidate = str(value or "").strip()
     if not candidate:
         return "UTC"
+    try:
+        ZoneInfo(candidate)
+        return candidate
+    except Exception:
+        return "UTC"
+
+
+def _notion_paragraph_block(text: str) -> dict:
+    content = str(text or "").strip()[:1800]
+    return {
+        "object": "block",
+        "type": "paragraph",
+        "paragraph": {
+            "rich_text": [
+                {
+                    "type": "text",
+                    "text": {"content": content},
+                }
+            ]
+        },
+    }
+
+
+def _extract_text_from_rich_text_items(items: object) -> str:
+    if not isinstance(items, list):
+        return ""
+    chunks: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        text_obj = item.get("text")
+        if isinstance(text_obj, dict):
+            content = str(text_obj.get("content") or "").strip()
+            if content:
+                chunks.append(content)
+                continue
+        plain = str(item.get("plain_text") or "").strip()
+        if plain:
+            chunks.append(plain)
+    return " ".join(chunks).strip()
+
+
+def _normalize_notion_children(children_raw: object, *, limit: int = 80) -> list[dict]:
+    if not isinstance(children_raw, list):
+        return []
+    normalized: list[dict] = []
+    for raw in children_raw[:limit]:
+        if isinstance(raw, str):
+            text = raw.strip()
+            if text:
+                normalized.append(_notion_paragraph_block(text))
+            continue
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        block_type = str(item.get("type") or "").strip()
+        block_payload = item.get(block_type) if block_type else None
+        # Keep already valid notion block payloads.
+        if block_type and isinstance(block_payload, dict):
+            rich_text = block_payload.get("rich_text")
+            if isinstance(rich_text, list) and rich_text:
+                item.setdefault("object", "block")
+                normalized.append(item)
+                continue
+        # Normalize loosely structured LLM output into paragraph blocks.
+        text_value = item.get("text")
+        text_from_text_field = ""
+        if isinstance(text_value, dict):
+            text_from_text_field = str(text_value.get("content") or "").strip()
+        elif isinstance(text_value, str):
+            text_from_text_field = text_value.strip()
+        content_value = item.get("content")
+        content_from_field = content_value.strip() if isinstance(content_value, str) else ""
+        title_value = item.get("title")
+        title_from_field = title_value.strip() if isinstance(title_value, str) else ""
+        description_value = item.get("description")
+        description_from_field = description_value.strip() if isinstance(description_value, str) else ""
+        text_candidates = [
+            text_from_text_field,
+            content_from_field,
+            title_from_field,
+            description_from_field,
+            _extract_text_from_rich_text_items(item.get("rich_text")),
+        ]
+        if isinstance(item.get("paragraph"), dict):
+            text_candidates.append(_extract_text_from_rich_text_items((item.get("paragraph") or {}).get("rich_text")))
+        text = next((value for value in text_candidates if value), "")
+        if text:
+            normalized.append(_notion_paragraph_block(text))
+    return normalized
     try:
         ZoneInfo(candidate)
         return candidate
@@ -393,10 +484,12 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                         },
                     }
                 ]
+            # Remove helper-only fields so they are never forwarded to Notion API.
+            intro_text_raw = str(normalized_payload.pop("todo_intro", "") or "").strip()
             todo_items = normalized_payload.pop("todo_items", None)
             if isinstance(todo_items, list) and todo_items and "children" not in normalized_payload:
                 children: list[dict] = []
-                intro_text = str(normalized_payload.pop("todo_intro", "") or "").strip()
+                intro_text = intro_text_raw
                 if intro_text:
                     children.append(
                         {
@@ -433,6 +526,30 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
                     )
                 if children:
                     normalized_payload["children"] = children
+            # Fail-closed validation before write: title and body blocks must be materially present.
+            title_prop = (
+                (((normalized_payload.get("properties") or {}).get("title") or {}).get("title"))
+                if isinstance((normalized_payload.get("properties") or {}).get("title"), dict)
+                else None
+            )
+            title_text = ""
+            if isinstance(title_prop, list) and title_prop:
+                text_obj = ((title_prop[0] or {}).get("text") or {}) if isinstance(title_prop[0], dict) else {}
+                title_text = str(text_obj.get("content") or "").strip()
+            children_payload = normalized_payload.get("children")
+            if not title_text:
+                raise PipelineExecutionError(
+                    code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
+                    reason="notion_payload_invalid:missing_title",
+                )
+            if children_payload is not None:
+                normalized_children = _normalize_notion_children(children_payload)
+                if not normalized_children:
+                    raise PipelineExecutionError(
+                        code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
+                        reason="notion_payload_invalid:children_schema",
+                    )
+                normalized_payload["children"] = normalized_children
         if skill_name == "linear.issue_create":
             team_ref = str(normalized_payload.get("team_ref") or "").strip()
             team_id = str(normalized_payload.get("team_id") or "").strip()
@@ -523,14 +640,87 @@ async def _execute_pipeline_dag_task(user_id: str, plan: AgentPlan) -> AgentExec
         output_schema: dict,
     ) -> dict:
         _ = run_user_id
-        transformed = dict(payload or {})
+        raw_payload = dict(payload or {})
+        transform_name = str(raw_payload.pop("__transform_name", "") or raw_payload.get("transform_name", "")).strip()
+        fallback_policy = raw_payload.pop("__fallback_policy", {})
+        fail_closed = True
+        if isinstance(fallback_policy, dict) and fallback_policy.get("fail_closed") is False:
+            fail_closed = False
+        transformed: dict | None = None
+        llm_transform_targets = {"format_detailed_minutes", "format_linear_meeting_issue"}
+        if transform_name in llm_transform_targets:
+            output_schema_text = json.dumps(output_schema or {}, ensure_ascii=False)
+            payload_text = json.dumps(raw_payload, ensure_ascii=False)
+            system_prompt = (
+                "You are a strict JSON transformer. "
+                "Return only one JSON object that follows the target schema. "
+                "Do not include markdown or explanations."
+            )
+            if transform_name == "format_detailed_minutes":
+                user_prompt = (
+                    "Transform calendar event payload into detailed meeting minutes payload for Notion page creation.\n"
+                    "Requirements:\n"
+                    "- Output keys must include `title` and `children`.\n"
+                    "- `children` must be a non-empty Notion block array.\n"
+                    "- Use Korean business writing style.\n"
+                    f"- Target schema: {output_schema_text}\n"
+                    f"- Input payload: {payload_text}"
+                )
+            else:
+                user_prompt = (
+                    "Transform calendar event payload into Linear meeting issue payload.\n"
+                    "Requirements:\n"
+                    "- Output keys must include `title` and `description`.\n"
+                    "- `description` must include sections for 목적/논의/결정/액션 아이템.\n"
+                    "- Use Korean business writing style.\n"
+                    f"- Target schema: {output_schema_text}\n"
+                    f"- Input payload: {payload_text}"
+                )
+            llm_parsed = await _request_autofill_json(system_prompt=system_prompt, user_prompt=user_prompt)
+            if isinstance(llm_parsed, dict):
+                if transform_name == "format_detailed_minutes":
+                    llm_parsed["children"] = _normalize_notion_children(llm_parsed.get("children"))
+                transformed = llm_parsed
+        try:
+            if transformed is None:
+                transformed = run_transform_contract(transform_name, raw_payload)
+        except Exception as exc:
+            if not fail_closed:
+                transformed = dict(raw_payload)
+            else:
+                raise PipelineExecutionError(
+                    code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
+                    reason=f"transform_contract_error:{transform_name}:{exc.__class__.__name__}",
+                ) from exc
         required = [str(key).strip() for key in (output_schema or {}).get("required", []) if str(key).strip()]
         missing = [key for key in required if transformed.get(key) in (None, "")]
+        if transform_name == "format_detailed_minutes" and not isinstance(transformed.get("children"), list):
+            missing.append("children")
+        if transform_name == "format_detailed_minutes" and isinstance(transformed.get("children"), list) and not transformed.get("children"):
+            missing.append("children_non_empty")
         if missing:
-            raise PipelineExecutionError(
-                code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
-                reason=f"missing_required_slots:{','.join(missing)}",
-            )
+            try:
+                transformed_fallback = run_transform_contract(transform_name, raw_payload)
+                transformed = transformed_fallback
+                missing = [key for key in required if transformed.get(key) in (None, "")]
+                if transform_name == "format_detailed_minutes" and (
+                    not isinstance(transformed.get("children"), list) or not transformed.get("children")
+                ):
+                    missing.append("children")
+            except Exception as exc:
+                if not fail_closed:
+                    return dict(raw_payload)
+                raise PipelineExecutionError(
+                    code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
+                    reason=f"transform_contract_error:{transform_name}:{exc.__class__.__name__}",
+                ) from exc
+            if missing:
+                if not fail_closed:
+                    return dict(raw_payload)
+                raise PipelineExecutionError(
+                    code=PipelineErrorCode.LLM_AUTOFILL_FAILED,
+                    reason=f"missing_required_slots:{','.join(missing)}",
+                )
         return transformed
 
     async def _execute_compensation_for_dag(
@@ -782,15 +972,24 @@ def _extract_dag_created_links(artifacts: dict[str, Any]) -> tuple[list[str], li
 def _extract_dag_processed_count(artifacts: dict[str, Any], notion_urls: list[str], linear_urls: list[str]) -> int:
     if not isinstance(artifacts, dict):
         return max(len(notion_urls), len(linear_urls))
+    has_item_count = any(isinstance(value, dict) and value.get("item_count") is not None for value in artifacts.values())
     count = 0
     for value in artifacts.values():
         if not isinstance(value, dict):
             continue
         todo_count = value.get("todo_count")
         source_count = value.get("source_count")
+        meeting_count = value.get("meeting_count")
         item_count = value.get("item_count")
         event_count = value.get("event_count")
-        for candidate in (todo_count, source_count, item_count, event_count):
+        candidates: list[Any] = [todo_count, item_count]
+        if not has_item_count:
+            candidates.append(event_count)
+        if meeting_count is not None:
+            candidates.append(meeting_count)
+        elif not has_item_count:
+            candidates.append(source_count)
+        for candidate in candidates:
             try:
                 parsed = int(candidate)
             except Exception:

@@ -74,6 +74,12 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def validate_tool_specs() -> None:
+    logger.info(
+        "skill_llm_transform_pipeline enabled=%s shadow_mode=%s traffic_percent=%s",
+        settings.skill_llm_transform_pipeline_enabled,
+        settings.skill_llm_transform_pipeline_shadow_mode,
+        settings.skill_llm_transform_pipeline_traffic_percent,
+    )
     if not settings.tool_specs_validate_on_startup:
         logger.info("tool_specs_validation skipped (TOOL_SPECS_VALIDATE_ON_STARTUP=false)")
         return

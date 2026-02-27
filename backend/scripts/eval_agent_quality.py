@@ -101,6 +101,7 @@ def _dedupe_rows_by_request_id(rows: list[dict]) -> list[dict]:
         row["_intent_json"] = _parse_detail_json(detail_pairs, "intent_json")
         row["_autonomous_json"] = _parse_detail_json(detail_pairs, "autonomous_json")
         row["_verifier_json"] = _parse_detail_json(detail_pairs, "verifier_json")
+        row["_pipeline_json"] = _parse_detail_json(detail_pairs, "pipeline_json")
         request_id = str(detail_pairs.get("request_id") or "").strip()
         if not request_id:
             request_id = f"fallback_row_{idx}"
@@ -454,6 +455,7 @@ def main() -> int:
         default=0,
         help="Optional UTC day window filter (created_at >= now-days). 0 disables the filter.",
     )
+    parser.add_argument("--since", type=str, default="", help="Optional UTC ISO cutoff (overrides --days).")
     parser.add_argument("--output", type=str, default="", help="Optional markdown output path")
     parser.add_argument("--output-json", type=str, default="", help="Optional JSON output path")
     args = parser.parse_args()
@@ -462,7 +464,9 @@ def main() -> int:
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
 
     day_window = max(0, int(args.days or 0))
-    window_start_utc = _window_start_iso_utc(day_window) if day_window > 0 else ""
+    window_start_utc = str(args.since or "").strip()
+    if not window_start_utc and day_window > 0:
+        window_start_utc = _window_start_iso_utc(day_window)
 
     try:
         query = (
@@ -533,6 +537,11 @@ def main() -> int:
     execution_mode_count: dict[str, int] = {}
     slot_missing_count: dict[str, int] = {}
     verifier_failed_rule_count: dict[str, int] = {}
+    transform_success_total = 0
+    transform_error_total = 0
+    verify_fail_before_write_count = 0
+    composed_pipeline_count = 0
+    created_count_total = 0
     for row in rows:
         fallback_reason = (row.get("autonomous_fallback_reason") or "").strip()
         if fallback_reason:
@@ -560,6 +569,24 @@ def main() -> int:
             missing_slot = str(intent_meta.get("missing_slot") or "").strip()
             if missing_slot:
                 slot_missing_count[missing_slot] = slot_missing_count.get(missing_slot, 0) + 1
+        pipeline_meta = row.get("_pipeline_json")
+        if isinstance(pipeline_meta, dict):
+            if bool(pipeline_meta.get("composed_pipeline")):
+                composed_pipeline_count += 1
+            if bool(pipeline_meta.get("verify_fail_before_write")):
+                verify_fail_before_write_count += 1
+            try:
+                transform_success_total += int(pipeline_meta.get("transform_success_count") or 0)
+            except Exception:
+                pass
+            try:
+                transform_error_total += int(pipeline_meta.get("transform_error_count") or 0)
+            except Exception:
+                pass
+            try:
+                created_count_total += int(pipeline_meta.get("created_count") or 0)
+            except Exception:
+                pass
 
     top_fallback = _top_items(fallback_reason_count)
     top_verification = _top_items(verification_reason_count)
@@ -611,6 +638,11 @@ def main() -> int:
         f"({guardrail_degrade_count}/{total}, target <= {args.max_guardrail_degrade_rate * 100:.1f}%)"
     )
     print(f"- fallback rate: {fallback_rate * 100:.1f}% ({fallback_count}/{total}, target <= {args.max_fallback_rate * 100:.1f}%)")
+    print(
+        f"- composed pipeline requests: {composed_pipeline_count}/{total} "
+        f"(created_total={created_count_total}, transform_success={transform_success_total}, transform_error={transform_error_total})"
+    )
+    print(f"- verify fail before write: {verify_fail_before_write_count}/{total}")
 
     if top_fallback:
         print("- top fallback reasons:")
@@ -737,6 +769,11 @@ def main() -> int:
                         "top_guardrail_degrade": top_guardrail_degrade,
                         "top_verifier_failed_rule": top_verifier_failed_rule,
                         "top_slot_missing": top_slot_missing,
+                        "composed_pipeline_count": composed_pipeline_count,
+                        "created_count_total": created_count_total,
+                        "transform_success_total": transform_success_total,
+                        "transform_error_total": transform_error_total,
+                        "verify_fail_before_write_count": verify_fail_before_write_count,
                         "top_plan_source": top_plan_source,
                         "top_execution_mode": top_execution_mode,
                         "tuning_hints": tuning_hints,
@@ -814,8 +851,13 @@ def main() -> int:
                     "error_code_counts": error_code_count,
                     "top_guardrail_degrade": top_guardrail_degrade,
                     "top_verifier_failed_rule": top_verifier_failed_rule,
-                    "top_slot_missing": top_slot_missing,
-                    "top_plan_source": top_plan_source,
+                "top_slot_missing": top_slot_missing,
+                "composed_pipeline_count": composed_pipeline_count,
+                "created_count_total": created_count_total,
+                "transform_success_total": transform_success_total,
+                "transform_error_total": transform_error_total,
+                "verify_fail_before_write_count": verify_fail_before_write_count,
+                "top_plan_source": top_plan_source,
                     "top_execution_mode": top_execution_mode,
                     "tuning_hints": tuning_hints,
                     "policy_recommendations": policy_recommendations,

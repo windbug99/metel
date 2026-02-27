@@ -1,0 +1,29 @@
+{
+  "window_days": 1,
+  "window_start_utc": "2026-02-25T11:51:47Z",
+  "sample_size": 140,
+  "min_sample": 30,
+  "target_count": 43,
+  "served_count": 9,
+  "served_success_count": 7,
+  "served_success_rate": 0.7777777777777778,
+  "served_error_rate": 0.2222222222222222,
+  "served_latency_p50_ms": 9972,
+  "served_latency_p95_ms": 13828,
+  "shadow_count": 4,
+  "shadow_ok_count": 4,
+  "shadow_ok_rate": 1.0,
+  "shadow_latency_p50_ms": 27928,
+  "shadow_latency_p95_ms": 42240,
+  "rollout_reasons": {
+    "rollout_30_miss": 30,
+    "rollout_100": 9,
+    "rollout_0_shadow": 4
+  },
+  "verdict": "FAIL",
+  "reasons": [
+    "served_success_rate_below_target:0.778<0.950",
+    "served_error_rate_above_target:0.222>0.050",
+    "served_p95_latency_above_target:13828>12000"
+  ]
+}

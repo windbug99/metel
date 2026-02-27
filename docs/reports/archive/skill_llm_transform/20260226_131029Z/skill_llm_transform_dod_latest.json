@@ -1,0 +1,32 @@
+{
+  "inputs": {
+    "rollout_report": "/Users/tomato/cursor/metel/backend/../docs/reports/skill_llm_transform_rollout_latest.json",
+    "slo_report": "/Users/tomato/cursor/metel/backend/../docs/reports/skill_llm_transform_slo_latest.json"
+  },
+  "metrics": {
+    "served_success_rate": 1.0,
+    "served_count": 22,
+    "sample_size": 24,
+    "min_sample": 30,
+    "transform_error_rate": 0.0,
+    "transform_success_total": 0,
+    "transform_error_total": 0,
+    "verify_fail_before_write_count": 0,
+    "fallback_rate": 0.0
+  },
+  "checklist": {
+    "primary_success_3d_ge_95": false,
+    "transform_fallback_rate_le_10": false,
+    "verify_fail_before_write_eq_0": true,
+    "stage6_core_regression_pass": true,
+    "canary_100_no_rollback": false,
+    "new_service_onboarded_without_hardcoding": false,
+    "intent_error_rate_2w_improved": false,
+    "n_to_n_e2e_verified": true,
+    "zero_match_success_e2e_verified": true
+  },
+  "pending_manual_checks": [
+    "new_service_onboarded_without_hardcoding",
+    "intent_error_rate_2w_improved"
+  ]
+}

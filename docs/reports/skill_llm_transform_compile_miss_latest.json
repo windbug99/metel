@@ -1,0 +1,9 @@
+{
+  "since_utc": "2026-02-27T03:25:45Z",
+  "scanned_rows": 41,
+  "rollout_miss_rows": 0,
+  "top_miss_reasons": [],
+  "top_services": [],
+  "verdict": "PASS",
+  "reasons": []
+}

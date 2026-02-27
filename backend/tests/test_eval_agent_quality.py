@@ -33,6 +33,29 @@ def test_parse_detail_pairs_reads_structured_fields():
     assert "target_scope" in parsed["intent_json"]
 
 
+def test_dedupe_rows_parses_pipeline_json():
+    rows = [
+        {
+            "status": "success",
+            "execution_mode": "rule",
+            "autonomous_fallback_reason": "",
+            "verification_reason": "",
+            "error_code": "",
+            "detail": (
+                "request_id=tg_update:99;"
+                "pipeline_json={\"composed_pipeline\":true,\"created_count\":2,\"transform_success_count\":3}"
+            ),
+            "created_at": "2026-02-26T00:00:00Z",
+        }
+    ]
+    deduped = _dedupe_rows_by_request_id(rows)
+    assert len(deduped) == 1
+    pipeline_payload = deduped[0].get("_pipeline_json")
+    assert isinstance(pipeline_payload, dict)
+    assert pipeline_payload.get("composed_pipeline") is True
+    assert pipeline_payload.get("created_count") == 2
+
+
 def test_dedupe_rows_by_request_id_prefers_success_over_failed():
     rows = [
         {

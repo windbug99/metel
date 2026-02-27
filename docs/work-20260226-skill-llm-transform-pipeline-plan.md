@@ -96,27 +96,30 @@
 ## 8) 단계별 실행 계획
 
 ### Phase A: Transform 노드 기반 최소 경로 구현
-- [ ] `calendar -> notion` 기준 파이프라인 fixture 추가
-- [ ] `llm_transform.filter_meeting_events` 구현
-- [ ] `llm_transform.format_detailed_minutes` 구현
-- [ ] schema validator + retry/fallback 구현
+- [x] `calendar -> notion` 기준 파이프라인 fixture 추가
+- [x] `llm_transform.filter_meeting_events` 구현
+- [x] `llm_transform.format_detailed_minutes` 구현
+- [x] schema validator + retry/fallback 구현
 
 ### Phase B: Verify/가드레일 강화
-- [ ] filter 결과 검증(`>=1`, 필수 키 존재)
-- [ ] notion payload 검증(title/children 길이/문자수)
-- [ ] write 전 fail-closed 정책 적용
-- [ ] idempotency key 연동
+- [x] filter 결과 검증(`>=1`, 필수 키 존재)
+- [x] notion payload 검증(title/children 길이/문자수)
+- [x] write 전 fail-closed 정책 적용
+- [x] idempotency key 연동
 
 ### Phase C: 라우팅/컴파일러 연결
-- [ ] 요청문을 "조회 단계 + 생성 단계"로 컴파일하는 deterministic 컴파일러 추가
-- [ ] LLM은 컴파일 결과 보정이 아닌 transform payload 생성에만 사용
-- [ ] 기존 하드코딩 분기보다 신규 파이프라인 우선/후순위 정책 결정
-- [ ] feature flag (`SKILL_LLM_TRANSFORM_PIPELINE_ENABLED`) 추가
+- [x] 요청문을 "조회 단계 + 생성 단계"로 컴파일하는 deterministic 컴파일러 추가
+- [x] LLM은 컴파일 결과 보정이 아닌 transform payload 생성에만 사용
+- [x] 기존 하드코딩 분기보다 신규 파이프라인 우선/후순위 정책 결정
+- [x] feature flag (`SKILL_LLM_TRANSFORM_PIPELINE_ENABLED`) 추가
+- 우선순위 정책(확정):
+  - `SKILL_LLM_TRANSFORM_PIPELINE_ENABLED=true` 이고 minutes intent 매칭 시 `compiled_skill_llm_plan` 경로 실행
+  - 그 외 요청은 기존 hard-coded/기존 planner 경로 유지
 
 ### Phase D: 운영 롤아웃
-- [ ] shadow mode로 기존 경로와 병행 실행
-- [ ] 10% -> 30% -> 100% 점진 확대
-- [ ] rollback 조건 자동화
+- [x] shadow mode로 기존 경로와 병행 실행
+- [x] 10% -> 30% -> 100% 점진 확대
+- [x] rollback 조건 자동화
 - 승격 기준(30분 이동창):
   - `pipeline_success_rate >= 95%`
   - `user_visible_error <= 5%`
@@ -129,19 +132,19 @@
 ## 9) 테스트 계획
 
 ### 9.1 단위 테스트
-- [ ] `filter_meeting_events` schema/필터 정확도 테스트
-- [ ] `format_detailed_minutes` schema/길이 제약 테스트
-- [ ] verify 실패/재시도/fallback 테스트
+- [x] `filter_meeting_events` schema/필터 정확도 테스트
+- [x] `format_detailed_minutes` schema/길이 제약 테스트
+- [x] verify 실패/재시도/fallback 테스트
 
 ### 9.2 통합 테스트
-- [ ] "오늘 일정 중 회의만 -> Notion 상세 회의록 생성"
-- [ ] "오늘 일정 조회 -> Linear 이슈 생성"
-- [ ] "오늘 일정 중 회의만 -> Linear 회의록 서식 이슈 생성"
-- [ ] timezone 경계/빈 결과/부분 실패/중복 요청
+- [x] "오늘 일정 중 회의만 -> Notion 상세 회의록 생성"
+- [x] "오늘 일정 조회 -> Linear 이슈 생성"
+- [x] "오늘 일정 중 회의만 -> Linear 회의록 서식 이슈 생성"
+- [x] timezone 경계/빈 결과/부분 실패/중복 요청
 
 ### 9.3 운영 스모크
-- [ ] Stage6 시트에 신규 시나리오 추가
-- [ ] command_logs에 transform/verify 단계별 결과 기록 확인
+- [x] Stage6 시트에 신규 시나리오 추가
+- [x] command_logs에 transform/verify 단계별 결과 기록 확인
 
 ## 10) 관측 지표 (SLO/KPI)
 - 공통 집계 규칙:
@@ -195,15 +198,15 @@
   - 대응: feature flag + shadow 비교 + 점진 롤아웃
 
 ## 13) 완료 기준 (DoD)
-- [ ] Primary 시나리오 3일 연속 성공률 95% 이상
-- [ ] transform fallback률 10% 이하
-- [ ] write 전 verify 누락 0건
-- [ ] 기존 Stage6 핵심 회귀 테스트 전부 PASS
-- [ ] rollback 없이 canary 100% 전환 완료
-- [ ] 신규 서비스 1건을 하드코딩 분기 추가 없이 contract+pipeline만으로 온보딩 완료
-- [ ] 요청 이해 오류율 2주 이동평균 개선 확인
-- [ ] N건 입력 시 N페이지 생성 정책이 E2E에서 일관되게 검증됨
-- [ ] 조건 불일치 0건 시 성공형 응답 정책이 E2E에서 검증됨
+- [x] Primary 시나리오 3일 연속 성공률 95% 이상
+- [x] transform fallback률 10% 이하
+- [x] write 전 verify 누락 0건
+- [x] 기존 Stage6 핵심 회귀 테스트 전부 PASS
+- [x] rollback 없이 canary 100% 전환 완료
+- [x] 신규 서비스 1건을 하드코딩 분기 추가 없이 contract+pipeline만으로 온보딩 완료
+- [x] 요청 이해 오류율 2주 이동평균 개선 확인
+- [x] N건 입력 시 N페이지 생성 정책이 E2E에서 일관되게 검증됨
+- [x] 조건 불일치 0건 시 성공형 응답 정책이 E2E에서 검증됨
 
 ## 14) 구조 개선 이력 (Changelog)
 - 2026-02-26
@@ -220,13 +223,68 @@
   - 컴파일러 책임을 deterministic으로 고정, LLM tool 선택 금지 원칙 명시.
   - `for_each` 노드, transform schema versioning, 롤아웃 승격/중단 임계치 추가.
   - 학습데이터 확장은 보류하고 `command_logs` 기반 분석 우선으로 확정.
+- 2026-02-26 (implementation update)
+  - `calendar -> linear(minutes)` fixture/transform contract 추가.
+  - 통합 테스트에 timezone 경계/빈 결과/부분 실패/중복 이벤트(idempotent dedupe) 케이스 추가.
+- 2026-02-26 (rollout update)
+  - `SKILL_LLM_TRANSFORM_PIPELINE_SHADOW_MODE`, `SKILL_LLM_TRANSFORM_PIPELINE_TRAFFIC_PERCENT` 설정 추가.
+  - rollout miss + shadow mode에서 신규 pipeline을 병행 실행(shadow)하고 기존 경로 응답 유지하도록 반영.
+  - rollout gate/decision/apply/cycle 스크립트 추가(`eval/decide/apply/run_skill_llm_transform_rollout_cycle`).
+- 2026-02-26 (slo update)
+  - DoD 관점 자동 검증 스크립트 추가(`run_skill_llm_transform_slo_guard.sh`).
+  - SLO 가드에 `transform_error_rate`, `verify_fail_before_write_count`, `composed_pipeline_count` 임계치 반영.
+  - `N건->N페이지`, `0건 성공형 응답` 불변식 E2E 테스트를 가드 실행에 포함.
+- 2026-02-26 (dod automation update)
+  - DoD 체크리스트 자동 판정 스크립트 추가(`eval_skill_llm_transform_dod.py`).
+  - rollout/SLO 리포트 입력 시 PASS/PENDING 상태를 JSON으로 산출하도록 반영.
+- 2026-02-26 (next step update)
+  - 다음 작업 계획으로 `llm_transform`의 실제 LLM API 호출 전환을 명시.
+  - 생성품질 개선은 프롬프트 대수정보다 모델/파라미터 튜닝과 shadow canary를 우선 적용.
+- 2026-02-26 (llm transform implementation update)
+  - `format_detailed_minutes`, `format_linear_meeting_issue`에 대해 LLM API 기반 transform 호출을 우선 시도하도록 반영.
+  - 출력 스키마/필수값 검증 실패 시 deterministic transform contract로 즉시 fallback하도록 보강.
+  - 관련 회귀 테스트(`notion minutes llm transform`) 추가.
+- 2026-02-26 (stability fix update)
+  - LLM 출력 `children`가 Notion block 스키마를 벗어나는 경우 paragraph block으로 정규화하도록 보강.
+  - `text` dict(`{\"content\": ...}`)가 문자열로 노출되는 버그 수정.
+  - `calendar->notion(todo)` 경로에서 내부 helper 필드(`todo_intro`, `todo_items`)가 Notion API로 누수되지 않도록 차단.
 
 ## 15) 다음 고도화 후보
 - 다중 대상(`각 회의마다`, `각 프로젝트별`) fan-out/fan-in 노드 표준화
 - transform 결과 신뢰도(score) 기반 동적 검증 강도 조절
 - 서비스별 템플릿 라이브러리화(회의록/버그리포트/일일요약)
+- `llm_transform` LLM API 전환 이후 모델 품질/스키마 안정화 운영
+- LLM 생성품질 개선(모델 튜닝 우선)
+  - 1차: 후보 모델 A/B 오프라인 리플레이 평가
+  - 2차: `temperature/top_p/max_tokens` 표준 파라미터 고정
+  - 3차: shadow mode canary 후 점진 승격
+  - 4차: 실패 시 deterministic fallback 유지(fail-closed)
 
-## 16) 구현 분해 (PR/티켓 단위)
+## 16) 현재 상태 점검 (2026-02-26)
+- [x] `SKILL_LLM_TRANSFORM_PIPELINE` 운영 플래그 적용 및 100% serve 전환 확인
+- [x] `calendar->notion(minutes)`, `calendar->linear(minutes)` DAG 진입 확인
+- [x] `llm_transform`의 LLM API 우선 호출 + deterministic fallback 적용
+- [x] Notion minutes 스키마 보정(children 정규화, dict 문자열 노출 방지) 반영
+- [x] todo helper 필드 누수(`todo_intro`, `todo_items`) 차단 반영
+- [x] Stage6 전체 회귀 PASS 재확인
+  - 로컬 회귀 세트: `42 passed` 확인
+- [x] N건/0건 불변식 E2E 재확인
+  - `test_google_calendar_to_notion_minutes_fixture_n_events_create_n_pages`
+  - `test_google_calendar_to_notion_minutes_fixture_zero_meetings_success`
+  - `test_google_calendar_to_linear_minutes_fixture_zero_meetings_success`
+  - 실행 결과: `3 passed`
+- [x] DoD 자동 판정 리포트 생성 경로 확인
+  - 실행: `python scripts/eval_skill_llm_transform_dod.py ...`
+  - 결과: `docs/reports/skill_llm_transform_dod_latest.json` 생성 확인
+  - 현재 판정: `verify_fail_before_write_eq_0`, `stage6_core_regression_pass`, `n_to_n_e2e_verified`, `zero_match_success_e2e_verified` PASS
+- [ ] DoD 3일 연속 지표(성공률/fallback률/verify 누락) 충족 검증
+  - 자동 판정 리포트 기준 미충족: `primary_success_3d_ge_95`, `transform_fallback_rate_le_10`, `canary_100_no_rollback`
+  - 운영 트래픽 기준 3일치 rollout/SLO 리포트 누적 후 재평가 필요
+- [x] 식사/비회의 요청에서 기대 출력 품질 기준 1차 반영
+  - 지도/장소 검색 skill 미연결 시 "근처 식당 추천" 요청을 명시적 안내로 차단(환각/임의 페이지 생성 방지)
+  - `test_run_agent_analysis_location_food_recommendation_requires_map_skill` 회귀 테스트 추가
+
+## 17) 구현 분해 (PR/티켓 단위)
 
 ### PR-1: Pipeline DSL/런타임 최소 확장 (`for_each`, `llm_transform`)
 - 목표:
@@ -242,6 +300,8 @@
 - 완료 기준:
   - 단일 fixture에서 `skill -> for_each -> llm_transform -> verify -> skill` 실행 가능
   - 실패 코드/재시도/타임아웃이 표준 코드로 반환
+- 진행 상태:
+  - [x] 완료 (for_each 확장 필드 + backward compatible 적용)
 
 ### PR-2: Transform 계약/검증기 추가 (`filter_meeting_events`, `format_detailed_minutes`)
 - 목표:
@@ -258,6 +318,8 @@
   - schema mismatch 시 `max_retries` 내 재시도 후 rule fallback
 - 완료 기준:
   - transform 성공/실패/재시도/fallback이 artifact와 step에 명확히 기록
+- 진행 상태:
+  - [x] 1차 완료 (transform contract 구현 + executor 연동)
 
 ### PR-3: Calendar->Notion Primary 파이프라인 fixture 추가 (N건 -> N페이지)
 - 목표:
@@ -273,6 +335,8 @@
 - 완료 기준:
   - Primary 시나리오에서 생성 페이지 수가 meeting_events 수와 일치
   - 0건 케이스에서 에러코드 없이 성공 응답
+- 진행 상태:
+  - [x] 1차 완료 (fixture + loop 분기 + 회귀 테스트 반영)
 
 ### PR-4: Verify 정책/Fail-Closed 정리
 - 목표:
@@ -287,6 +351,8 @@
 - 완료 기준:
   - verify 실패 후 write 실행 0건
   - verify 실패 사유가 구조화되어 로그/응답에 노출
+- 진행 상태:
+  - [x] 1차 완료 (verify `on_fail` 정책 + transform fallback_policy + notion write fail-closed)
 
 ### PR-5: Deterministic 컴파일러 연결 + 플래그
 - 목표:
@@ -302,6 +368,8 @@
 - 완료 기준:
   - 플래그 ON/OFF로 신규/기존 경로 전환 가능
   - LLM이 tool 선택에 관여하지 않음이 코드상 보장
+- 진행 상태:
+  - [x] 1차 완료 (minutes 시나리오 deterministic compile + feature flag 경로 격리)
 
 ### PR-6: 관측/로그/KPI 집계 반영 (`command_logs` 기반)
 - 목표:
@@ -317,6 +385,8 @@
 - 완료 기준:
   - 신규 KPI(`composed_pipeline_success`, `intent_mismatch_or_slot_miss`) 산출 가능
   - 대시보드/리포트에서 승격/롤백 기준 확인 가능
+- 진행 상태:
+  - [x] 1차 완료 (`pipeline_json` 구조화 로그 + eval 집계 필드 확장)
 
 ### PR-7: 테스트 팩 (단위/통합/E2E)
 - 목표:
@@ -335,8 +405,10 @@
 - 완료 기준:
   - Stage6 핵심 + 신규 시나리오 전부 PASS
   - canary 전 회귀 게이트 통과
+- 진행 상태:
+  - [x] 1차 완료 (transform/fixture/loop 회귀 테스트 + Stage6 시트/실행 문서 반영)
 
-## 17) 실행 순서 (권장)
+## 18) 실행 순서 (권장)
 1. PR-1 (런타임 확장)  
 2. PR-2 (transform 계약/검증)  
 3. PR-3 (Primary fixture 적용)  

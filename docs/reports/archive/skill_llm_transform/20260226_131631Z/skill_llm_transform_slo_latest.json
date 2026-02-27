@@ -1,0 +1,58 @@
+{
+  "sample_size": 24,
+  "min_sample": 30,
+  "window_days": 0,
+  "window_start_utc": "2026-02-26T12:13:45Z",
+  "autonomous_success": 0,
+  "autonomous_count": 0,
+  "autonomous_success_rate": 0.0,
+  "autonomous_attempt_count": 0,
+  "autonomous_attempt_rate": 0.0,
+  "autonomous_success_over_attempt_rate": 0.0,
+  "planner_failed_count": 0,
+  "planner_failed_rate": 0.0,
+  "verification_failed_count": 0,
+  "verification_failed_rate": 0.0,
+  "guardrail_degrade_count": 0,
+  "guardrail_degrade_rate": 0.0,
+  "fallback_count": 0,
+  "fallback_rate": 0.0,
+  "top_fallback": [],
+  "top_verification": [],
+  "top_error_codes": [],
+  "error_code_counts": {},
+  "top_guardrail_degrade": [],
+  "top_verifier_failed_rule": [],
+  "top_slot_missing": [],
+  "composed_pipeline_count": 0,
+  "created_count_total": 0,
+  "transform_success_total": 0,
+  "transform_error_total": 0,
+  "verify_fail_before_write_count": 0,
+  "top_plan_source": [
+    [
+      "dag_template",
+      22
+    ],
+    [
+      "llm",
+      1
+    ],
+    [
+      "rule",
+      1
+    ]
+  ],
+  "top_execution_mode": [
+    [
+      "rule",
+      24
+    ]
+  ],
+  "tuning_hints": [],
+  "policy_recommendations": [],
+  "gate_reasons": [
+    "insufficient_sample: 24 < 30"
+  ],
+  "verdict": "FAIL"
+}

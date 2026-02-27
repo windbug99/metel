@@ -1,0 +1,13 @@
+{
+  "action": "promote",
+  "current_percent": 30,
+  "next_percent": 100,
+  "reasons": [
+    "gate passed and sample is sufficient"
+  ],
+  "suggested_env": {
+    "SKILL_LLM_TRANSFORM_PIPELINE_ENABLED": "true",
+    "SKILL_LLM_TRANSFORM_PIPELINE_SHADOW_MODE": "false",
+    "SKILL_LLM_TRANSFORM_PIPELINE_TRAFFIC_PERCENT": "100"
+  }
+}
