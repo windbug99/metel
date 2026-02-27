@@ -1,0 +1,25 @@
+{
+  "window_days": 0,
+  "window_start_utc": "2026-02-26T15:10:00Z",
+  "sample_size": 87,
+  "min_sample": 30,
+  "target_count": 49,
+  "served_count": 49,
+  "served_success_count": 49,
+  "served_success_rate": 1.0,
+  "served_error_rate": 0.0,
+  "served_latency_p50_ms": 7788,
+  "served_latency_p95_ms": 12810,
+  "shadow_count": 0,
+  "shadow_ok_count": 0,
+  "shadow_ok_rate": 0.0,
+  "shadow_latency_p50_ms": 0,
+  "shadow_latency_p95_ms": 0,
+  "rollout_reasons": {
+    "allowlist": 49
+  },
+  "verdict": "FAIL",
+  "reasons": [
+    "served_p95_latency_above_target:12810>12000"
+  ]
+}
