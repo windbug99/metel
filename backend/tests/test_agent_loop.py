@@ -1381,6 +1381,38 @@ def test_run_agent_analysis_falls_back_to_legacy_when_v2_realtime_unavailable(mo
     assert "router_v2_fallback=realtime_data_unavailable" in result.plan.notes
 
 
+def test_run_agent_analysis_falls_back_to_legacy_when_v2_raises(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        skill_router_v2_enabled = True
+        skill_runner_v2_enabled = True
+        llm_response_finalizer_enabled = False
+
+    llm_plan = _sample_plan()
+
+    async def _fake_v2(**kwargs):
+        raise RuntimeError("v2_crash")
+
+    async def _fake_try_build(**kwargs):
+        return llm_plan, None
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        _ = user_id
+        assert plan is llm_plan
+        return AgentExecutionResult(success=True, user_message="legacy-ok", summary="legacy-done")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.loop.try_run_v2_orchestration", _fake_v2)
+    monkeypatch.setattr("agent.loop.try_build_agent_plan_with_llm", _fake_try_build)
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(run_agent_analysis("노션 페이지 하나 요약해줘", ["notion"], "user-v2-error-fallback"))
+    assert result.ok is True
+    assert result.execution is not None
+    assert result.execution.user_message == "legacy-ok"
+    assert any(note == "skill_v2_exception=RuntimeError" for note in result.plan.notes)
+
+
 def test_run_agent_analysis_returns_v2_result_in_shadow_mode(monkeypatch):
     class _Settings:
         llm_autonomous_enabled = False

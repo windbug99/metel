@@ -1723,11 +1723,15 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
         pre_notes.append(f"skill_v2_rollout={rollout_reason}")
         pre_notes.append(f"skill_v2_shadow_mode={1 if shadow_mode else 0}")
         if use_v2:
-            v2_result = await try_run_v2_orchestration(
-                user_text=user_text,
-                connected_services=connected_services,
-                user_id=user_id,
-            )
+            try:
+                v2_result = await try_run_v2_orchestration(
+                    user_text=user_text,
+                    connected_services=connected_services,
+                    user_id=user_id,
+                )
+            except Exception as exc:
+                pre_notes.append(f"skill_v2_exception={exc.__class__.__name__}")
+                v2_result = None
             if v2_result is not None:
                 pre_notes.append(f"skill_v2_shadow_ok={1 if v2_result.ok else 0}")
                 if shadow_mode:

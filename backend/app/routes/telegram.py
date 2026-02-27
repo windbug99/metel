@@ -872,7 +872,26 @@ async def telegram_webhook(
                 )
                 return {"ok": True}
             analysis_started_at = time.perf_counter()
-            analysis = await run_agent_analysis(text, connected_services, user_id)
+            try:
+                analysis = await run_agent_analysis(text, connected_services, user_id)
+            except Exception as exc:
+                logger.exception("telegram agent analysis failed chat_id=%s user_id=%s", chat_id, user_id)
+                _record_command_log(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    command="agent_plan",
+                    status="error",
+                    error_code="agent_analysis_exception",
+                    detail=f"exception={exc.__class__.__name__}",
+                )
+                await _telegram_api(
+                    "sendMessage",
+                    {
+                        "chat_id": chat_id,
+                        "text": "요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+                    },
+                )
+                return {"ok": True}
             analysis_latency_ms = int((time.perf_counter() - analysis_started_at) * 1000)
 
             requirements_text = "\n".join(f"- {item.summary}" for item in analysis.plan.requirements) or "- (없음)"
