@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
@@ -741,6 +742,51 @@ def test_try_run_v2_orchestration_skill_then_llm_linear_recent_list(monkeypatch)
     assert "Linear 최근 이슈" in result.execution.user_message
     assert "[OPT-1]" in result.execution.user_message
     assert "https://linear.app/issue/OPT-1" in result.execution.user_message
+
+
+def test_try_run_v2_orchestration_skill_then_llm_linear_due_today_list(monkeypatch):
+    calls = {"list": 0}
+
+    async def _fake_tool(*, user_id: str, tool_name: str, payload: dict):
+        assert user_id == "user-1"
+        if tool_name == "linear_list_issues":
+            calls["list"] += 1
+            assert payload.get("due_date") == datetime.now(timezone.utc).date().isoformat()
+            return {
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "i1",
+                                "identifier": "OPT-283",
+                                "title": "스프린트 피드백 회의",
+                                "url": "https://linear.app/issue/OPT-283",
+                            }
+                        ]
+                    }
+                }
+            }
+        raise AssertionError(f"unexpected tool call: {tool_name}")
+
+    async def _fake_llm(*, prompt: str):
+        raise AssertionError("llm should not be called for list intent")
+
+    monkeypatch.setattr("agent.orchestrator_v2.execute_tool", _fake_tool)
+    monkeypatch.setattr("agent.orchestrator_v2._request_llm_text", _fake_llm)
+
+    result = asyncio.run(
+        try_run_v2_orchestration(
+            user_text="linear에서 오늘 마감 이슈 조회해줘",
+            connected_services=["linear"],
+            user_id="user-1",
+        )
+    )
+
+    assert result is not None
+    assert result.ok is True
+    assert result.execution is not None
+    assert calls["list"] == 1
+    assert "[OPT-283]" in result.execution.user_message
 
 
 def test_try_run_v2_orchestration_skill_then_llm_linear_recent_list_handles_non_numeric_first(monkeypatch):

@@ -459,15 +459,20 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
         )
     if tool_name == "linear_list_issues":
         first = int(payload.get("first", 5))
+        due_date = str(payload.get("due_date", "")).strip()
+        issue_filter: dict[str, Any] = {}
+        if due_date:
+            issue_filter["dueDate"] = {"eq": due_date}
         return (
             """
-            query Issues($first: Int!) {
-              issues(first: $first, orderBy: updatedAt) {
+            query Issues($first: Int!, $filter: IssueFilter) {
+              issues(first: $first, orderBy: updatedAt, filter: $filter) {
                 nodes {
                   id
                   identifier
                   title
                   url
+                  dueDate
                   priority
                   state {
                     name
@@ -479,7 +484,10 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
               }
             }
             """,
-            {"first": max(1, min(20, first))},
+            {
+                "first": max(1, min(20, first)),
+                "filter": issue_filter or None,
+            },
         )
     if tool_name == "linear_search_issues":
         first = int(payload.get("first", 5))

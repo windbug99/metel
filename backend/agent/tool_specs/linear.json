@@ -43,7 +43,8 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "first": { "type": "integer", "minimum": 1, "maximum": 20 }
+          "first": { "type": "integer", "minimum": 1, "maximum": 20 },
+          "due_date": { "type": "string" }
         }
       },
       "error_map": {

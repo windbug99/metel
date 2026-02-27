@@ -461,6 +461,14 @@ def test_linear_query_and_variables_search_issues_uses_title_filter():
     assert variables["first"] == 7
 
 
+def test_linear_query_and_variables_list_issues_with_due_date_filter():
+    query, variables = _linear_query_and_variables("linear_list_issues", {"first": 10, "due_date": "2026-02-27"})
+    assert "query Issues" in query
+    assert "filter: $filter" in query
+    assert variables["first"] == 10
+    assert variables["filter"] == {"dueDate": {"eq": "2026-02-27"}}
+
+
 def test_execute_tool_web_fetch_url_text_extracts_plain_text(monkeypatch):
     tool = ToolDefinition(
         service="web",

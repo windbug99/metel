@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
@@ -395,6 +396,30 @@ def test_build_task_tool_payload_linear_recent_lookup_does_not_force_query():
     payload = _build_task_tool_payload(plan=plan, task=task, task_outputs={})
     assert payload["first"] == 5
     assert "query" not in payload
+
+
+def test_build_task_tool_payload_linear_due_today_lookup_adds_due_date():
+    plan = AgentPlan(
+        user_text="리니어에서 오늘 마감 이슈 조회",
+        requirements=[AgentRequirement(summary="이슈 조회")],
+        target_services=["linear"],
+        selected_tools=["linear_list_issues"],
+        workflow_steps=[],
+        notes=[],
+    )
+    task = AgentTask(
+        id="task_linear_issues",
+        title="Linear 이슈 조회",
+        task_type="TOOL",
+        service="linear",
+        tool_name="linear_list_issues",
+        payload={},
+        depends_on=[],
+    )
+
+    payload = _build_task_tool_payload(plan=plan, task=task, task_outputs={}, user_timezone="UTC")
+    assert payload["first"] == 20
+    assert payload["due_date"] == datetime.now(timezone.utc).date().isoformat()
 
 
 def test_execute_agent_plan_linear_lookup_empty_result_is_not_generic(monkeypatch):

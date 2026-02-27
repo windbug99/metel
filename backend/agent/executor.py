@@ -1803,7 +1803,11 @@ def _build_task_tool_payload(
         return payload
 
     if "linear_list_issues" in tool_name:
-        payload.setdefault("first", 5)
+        if _is_linear_due_today_lookup(plan.user_text):
+            payload.setdefault("first", 20)
+            payload["due_date"] = _today_local_date_for_timezone(user_timezone)
+        else:
+            payload.setdefault("first", 5)
         return payload
 
     if "notion_create_page" in tool_name:
@@ -2575,7 +2579,10 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
         if linear_lookup_ran and notion_lookup_ran:
             final_user_message = "Linear/Notion 조회 결과가 없습니다."
         elif linear_lookup_ran:
-            final_user_message = "Linear 최근 이슈 조회 결과가 없습니다."
+            if _is_linear_due_today_lookup(plan.user_text):
+                final_user_message = "Linear 오늘 마감 이슈 조회 결과가 없습니다."
+            else:
+                final_user_message = "Linear 최근 이슈 조회 결과가 없습니다."
         elif notion_lookup_ran:
             final_user_message = "Notion 최근 페이지 조회 결과가 없습니다."
 
@@ -2961,6 +2968,17 @@ def _is_linear_recent_issue_lookup(text: str) -> bool:
     return has_linear and has_issue and has_recent and has_lookup
 
 
+def _is_linear_due_today_lookup(text: str) -> bool:
+    raw = (text or "").strip()
+    lower = raw.lower()
+    has_linear = ("리니어" in raw) or ("linear" in lower)
+    has_issue = ("이슈" in raw) or ("issue" in lower)
+    has_today = ("오늘" in raw) or ("today" in lower)
+    has_due = any(token in lower for token in ("마감", "종료", "due", "deadline"))
+    has_lookup = any(token in lower for token in ("조회", "검색", "목록", "불러", "보여", "list", "search"))
+    return has_linear and has_issue and has_today and has_due and has_lookup
+
+
 def _extract_linear_issue_reference(user_text: str) -> str | None:
     keyed = re.search(r"(?i)(?:issue_id|issueid|이슈ID|이슈_id)\s*[:=]?\s*([^\s,]+)", user_text.strip())
     if keyed:
@@ -3256,6 +3274,14 @@ def _today_utc_range_for_timezone(tz_name: str) -> tuple[str, str]:
         day_start.isoformat().replace("+00:00", "Z"),
         day_end.isoformat().replace("+00:00", "Z"),
     )
+
+
+def _today_local_date_for_timezone(tz_name: str) -> str:
+    try:
+        tzinfo = ZoneInfo(_normalize_timezone(tz_name))
+    except ZoneInfoNotFoundError:
+        tzinfo = timezone.utc
+    return datetime.now(tzinfo).date().isoformat()
 
 
 async def _copy_read_from_notion(

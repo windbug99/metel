@@ -699,6 +699,15 @@ def _is_linear_recent_list_intent(text: str) -> bool:
     return has_issue_token and has_list_token
 
 
+def _is_linear_due_today_lookup(text: str) -> bool:
+    lower = (text or "").lower()
+    has_issue_token = ("이슈" in text) or ("issue" in lower)
+    has_today = ("오늘" in text) or ("today" in lower)
+    has_due = any(token in lower for token in ("마감", "종료", "due", "deadline"))
+    has_lookup = any(token in lower for token in ("조회", "검색", "목록", "list", "search", "show"))
+    return has_issue_token and has_today and has_due and has_lookup
+
+
 def _is_notion_recent_list_intent(text: str) -> bool:
     lower = (text or "").lower()
     has_page_token = ("페이지" in text) or ("page" in lower)
@@ -1583,10 +1592,13 @@ async def _execute_skill_then_llm_from_intent(
             tool_result = await _linear_search_with_issue_ref_fallback(user_id=user_id, issue_ref=issue_ref)
         else:
             if _is_linear_recent_list_intent(user_text) or not query:
+                list_payload: dict[str, object] = {"first": first}
+                if _is_linear_due_today_lookup(user_text):
+                    list_payload["due_date"] = datetime.now(timezone.utc).date().isoformat()
                 tool_result = await execute_tool(
                     user_id=user_id,
                     tool_name="linear_list_issues",
-                    payload={"first": first},
+                    payload=list_payload,
                 )
             else:
                 tool_result = await execute_tool(
