@@ -737,9 +737,20 @@ async def telegram_webhook(
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ):
     settings = _require_telegram_settings()
+    logger.info(
+        "telegram webhook ingress update_id=%s has_message=%s secret_header=%s",
+        update.get("update_id"),
+        bool(update.get("message") or update.get("edited_message")),
+        1 if x_telegram_bot_api_secret_token else 0,
+    )
 
     if settings.telegram_webhook_secret:
         if x_telegram_bot_api_secret_token != settings.telegram_webhook_secret:
+            logger.warning(
+                "telegram webhook secret mismatch update_id=%s header_present=%s",
+                update.get("update_id"),
+                1 if x_telegram_bot_api_secret_token else 0,
+            )
             raise HTTPException(status_code=401, detail="유효하지 않은 webhook secret입니다.")
 
     message = update.get("message") or update.get("edited_message")
