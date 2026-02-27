@@ -1,5 +1,5 @@
 {
-  "sample_size": 71,
+  "sample_size": 41,
   "min_sample": 30,
   "window_days": 0,
   "window_start_utc": "2026-02-27T03:25:45Z",
@@ -7,7 +7,7 @@
   "autonomous_count": 0,
   "autonomous_success_rate": 0.0,
   "autonomous_attempt_count": 1,
-  "autonomous_attempt_rate": 0.014084507042253521,
+  "autonomous_attempt_rate": 0.024390243902439025,
   "autonomous_success_over_attempt_rate": 0.0,
   "planner_failed_count": 0,
   "planner_failed_rate": 0.0,
@@ -16,7 +16,7 @@
   "guardrail_degrade_count": 0,
   "guardrail_degrade_rate": 0.0,
   "fallback_count": 1,
-  "fallback_rate": 0.014084507042253521,
+  "fallback_rate": 0.024390243902439025,
   "top_fallback": [
     [
       "TOOL_TIMEOUT",
@@ -44,17 +44,21 @@
   "top_plan_source": [
     [
       "dag_template",
-      71
+      41
     ]
   ],
   "top_execution_mode": [
     [
       "rule",
-      71
+      41
     ]
   ],
   "tuning_hints": [],
   "policy_recommendations": [],
-  "gate_reasons": [],
-  "verdict": "PASS"
+  "gate_reasons": [
+    "autonomous_success_rate_below_target: 0.000 < 0.800",
+    "autonomous_attempt_rate_below_target: 0.024 < 0.500",
+    "autonomous_success_over_attempt_below_target: 0.000 < 0.700"
+  ],
+  "verdict": "FAIL"
 }

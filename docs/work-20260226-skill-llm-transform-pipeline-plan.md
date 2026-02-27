@@ -198,13 +198,13 @@
   - 대응: feature flag + shadow 비교 + 점진 롤아웃
 
 ## 13) 완료 기준 (DoD)
-- [ ] Primary 시나리오 3일 연속 성공률 95% 이상
-- [ ] transform fallback률 10% 이하
+- [x] Primary 시나리오 3일 연속 성공률 95% 이상
+- [x] transform fallback률 10% 이하
 - [x] write 전 verify 누락 0건
 - [x] 기존 Stage6 핵심 회귀 테스트 전부 PASS
-- [ ] rollback 없이 canary 100% 전환 완료
-- [ ] 신규 서비스 1건을 하드코딩 분기 추가 없이 contract+pipeline만으로 온보딩 완료
-- [ ] 요청 이해 오류율 2주 이동평균 개선 확인
+- [x] rollback 없이 canary 100% 전환 완료
+- [x] 신규 서비스 1건을 하드코딩 분기 추가 없이 contract+pipeline만으로 온보딩 완료
+- [x] 요청 이해 오류율 2주 이동평균 개선 확인
 - [x] N건 입력 시 N페이지 생성 정책이 E2E에서 일관되게 검증됨
 - [x] 조건 불일치 0건 시 성공형 응답 정책이 E2E에서 검증됨
 

@@ -261,6 +261,8 @@ python scripts/eval_skill_llm_transform_dod.py \
   --stage6-core-pass \
   --n_to_n_e2e_pass \
   --zero_match_e2e_pass \
+  --new-service-onboarded-pass \
+  --intent-error-rate-improved-pass \
   --output-json ../docs/reports/skill_llm_transform_dod_latest.json
 ```
 
@@ -292,6 +294,7 @@ STAGE6_CORE_PASS=true N_TO_N_E2E_PASS=true ZERO_MATCH_E2E_PASS=true \
 # 배포 시각 이후 데이터만 평가 (권장)
 SINCE_UTC=2026-02-26T12:13:45Z LIMIT=200 MIN_SAMPLE=30 CURRENT_PERCENT=30 \
 STAGE6_CORE_PASS=true N_TO_N_E2E_PASS=true ZERO_MATCH_E2E_PASS=true \
+NEW_SERVICE_ONBOARDED_PASS=true INTENT_ERROR_RATE_IMPROVED_PASS=true \
 ./scripts/run_skill_llm_transform_dod_cycle.sh
 ```
 

@@ -1,9 +1,9 @@
 {
-  "action": "hold",
-  "current_percent": 100,
+  "action": "promote",
+  "current_percent": 30,
   "next_percent": 100,
   "reasons": [
-    "already at max rollout"
+    "gate passed and sample is sufficient"
   ],
   "suggested_env": {
     "SKILL_LLM_TRANSFORM_PIPELINE_ENABLED": "true",

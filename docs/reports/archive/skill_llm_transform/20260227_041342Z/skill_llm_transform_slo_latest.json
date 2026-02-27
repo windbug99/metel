@@ -55,6 +55,10 @@
   ],
   "tuning_hints": [],
   "policy_recommendations": [],
-  "gate_reasons": [],
-  "verdict": "PASS"
+  "gate_reasons": [
+    "autonomous_success_rate_below_target: 0.000 < 0.800",
+    "autonomous_attempt_rate_below_target: 0.014 < 0.500",
+    "autonomous_success_over_attempt_below_target: 0.000 < 0.700"
+  ],
+  "verdict": "FAIL"
 }

@@ -20,6 +20,8 @@ SINCE_UTC="${SINCE_UTC:-}"
 STAGE6_CORE_PASS="${STAGE6_CORE_PASS:-true}"
 N_TO_N_E2E_PASS="${N_TO_N_E2E_PASS:-true}"
 ZERO_MATCH_E2E_PASS="${ZERO_MATCH_E2E_PASS:-true}"
+NEW_SERVICE_ONBOARDED_PASS="${NEW_SERVICE_ONBOARDED_PASS:-false}"
+INTENT_ERROR_RATE_IMPROVED_PASS="${INTENT_ERROR_RATE_IMPROVED_PASS:-false}"
 
 mkdir -p "${REPORT_DIR}" "${ARCHIVE_DIR}"
 
@@ -55,6 +57,12 @@ if [[ "${N_TO_N_E2E_PASS}" == "true" ]]; then
 fi
 if [[ "${ZERO_MATCH_E2E_PASS}" == "true" ]]; then
   DOD_ARGS+=(--zero_match_e2e_pass)
+fi
+if [[ "${NEW_SERVICE_ONBOARDED_PASS}" == "true" ]]; then
+  DOD_ARGS+=(--new-service-onboarded-pass)
+fi
+if [[ "${INTENT_ERROR_RATE_IMPROVED_PASS}" == "true" ]]; then
+  DOD_ARGS+=(--intent-error-rate-improved-pass)
 fi
 python scripts/eval_skill_llm_transform_dod.py "${DOD_ARGS[@]}"
 

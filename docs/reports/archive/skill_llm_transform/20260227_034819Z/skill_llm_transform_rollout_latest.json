@@ -1,22 +1,22 @@
 {
   "window_days": 0,
   "window_start_utc": "2026-02-27T03:25:45Z",
-  "sample_size": 71,
+  "sample_size": 41,
   "min_sample": 30,
-  "target_count": 71,
-  "served_count": 71,
-  "served_success_count": 70,
-  "served_success_rate": 0.9859154929577465,
-  "served_error_rate": 0.014084507042253502,
-  "served_latency_p50_ms": 8261,
-  "served_latency_p95_ms": 13224,
+  "target_count": 41,
+  "served_count": 41,
+  "served_success_count": 40,
+  "served_success_rate": 0.975609756097561,
+  "served_error_rate": 0.024390243902439046,
+  "served_latency_p50_ms": 7466,
+  "served_latency_p95_ms": 10922,
   "shadow_count": 0,
   "shadow_ok_count": 0,
   "shadow_ok_rate": 0.0,
   "shadow_latency_p50_ms": 0,
   "shadow_latency_p95_ms": 0,
   "rollout_reasons": {
-    "allowlist": 71
+    "allowlist": 41
   },
   "verdict": "PASS",
   "reasons": []

@@ -18,6 +18,8 @@
   "rollout_reasons": {
     "allowlist": 71
   },
-  "verdict": "PASS",
-  "reasons": []
+  "verdict": "FAIL",
+  "reasons": [
+    "served_p95_latency_above_target:13224>12000"
+  ]
 }

@@ -15,14 +15,14 @@
     "slo_min_sample": 30,
     "verify_fail_before_write_count": 0,
     "fallback_rate": 0.014084507042253521,
-    "rollout_verdict": "PASS"
+    "rollout_verdict": "FAIL"
   },
   "checklist": {
     "primary_success_3d_ge_95": true,
     "transform_fallback_rate_le_10": true,
     "verify_fail_before_write_eq_0": true,
     "stage6_core_regression_pass": true,
-    "canary_100_no_rollback": true,
+    "canary_100_no_rollback": false,
     "new_service_onboarded_without_hardcoding": true,
     "intent_error_rate_2w_improved": true,
     "n_to_n_e2e_verified": true,
