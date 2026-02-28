@@ -1,1299 +1,642 @@
-아래는 **metel 멀티에이전트 아키텍처 설계 + 구현 계획 + 예시 시나리오 포함 MD 문서**입니다.
-그대로 `.md` 파일로 저장해서 사용하셔도 됩니다.
+# metel Multi-Agent Architecture Plan (v3)
+
+## SaaS 통합 자율 LLM 자동화 플랫폼 구현 전략
 
 ---
 
-# metel 멀티에이전트 아키텍처 설계 문서
+# 1. 문서 목적
 
-*(Planner / Executor / Verifier / Policy 구조 기반)*
+본 문서는 metel을 **SaaS 통합 자율 LLM 자동화 플랫폼**으로 구현하기 위한:
 
----
+* 제품 기획 명확화
+* OpenClaw 구조적 장점 분석 및 수용 전략
+* 멀티 에이전트 아키텍처 설계
+* 실행 런타임 설계
+* 보안 모델
+* 실제 구현 단계별 로드맵
 
-# 1. 목표
-
-metel을 다음과 같은 구조로 고도화한다.
-
-* 자연어 요청 기반 자율 실행
-* n8n 수준의 결정적 워크플로우 안정성
-* Manus/OpenClaw 수준의 계획/추론 능력 일부 보유
-* LLM은 "의사결정", 시스템은 "강제 실행"
+을 통합 정의한다.
 
 ---
 
-# 2. 전체 아키텍처
+# 2. metel의 제품 정체성 재정의
 
+---
+
+## 2.1 metel은 무엇인가?
+
+metel은 다음과 같은 플랫폼이다:
+
+> 여러 SaaS를 연결하고
+> LLM이 자율적으로 작업을 계획하지만
+> 실행 통제권은 항상 플랫폼이 소유하는 자동화 시스템
+
+---
+
+## 2.2 OpenClaw와의 전략적 관계
+
+OpenClaw는 범용 OS 자율 에이전트다.
+metel은 SaaS 통합 자동화 플랫폼이다.
+
+### 비교
+
+| 항목    | OpenClaw      | metel                 |
+| ----- | ------------- | --------------------- |
+| 실행 범위 | OS/로컬 시스템     | SaaS API              |
+| 명령 실행 | system.run 가능 | HTTP API 호출만          |
+| 메모리   | 파일 기반         | 구조화 DB                |
+| 통제 구조 | LLM 중심        | Orchestrator 중심       |
+| 위험 모델 | OS 권한         | OAuth + Policy Engine |
+
+---
+
+## 2.3 metel의 목표 모델
+
+metel은 다음을 결합한다:
+
+* n8n의 안정성
+* OpenClaw의 자율 계획 능력
+* SaaS 보안 요구사항
+
+---
+
+# 3. OpenClaw에서 전략적으로 수용할 요소
+
+---
+
+## 3.1 Gateway 중심 통합 구조
+
+OpenClaw의 장점:
+
+* 모든 채널을 단일 Gateway로 통합
+* Runtime은 Gateway 뒤에 위치
+
+### metel 설계 적용
+
+```text
+User / Web / API
+        ↓
+Metel Gateway
+        ↓
+Orchestrator
+        ↓
+Multi-Agent Runtime
 ```
-User Request
+
+### 목적
+
+* 모든 SaaS 호출은 Orchestrator 통과
+* 실행 로그 중앙 통합
+* 승인/정책 통제 일원화
+
+---
+
+## 3.2 System Prompt 동적 구성
+
+OpenClaw는 매 실행마다:
+
+* Tool 목록
+* Safety 규칙
+* Memory 정보
+* Skill 목록
+
+을 동적으로 삽입한다.
+
+### metel 적용 전략
+
+Planner/Executor 호출 시:
+
+* 연결된 서비스만 노출
+* Top-K Tool만 제공
+* tenant policy 요약 포함
+* 위험도 태그 포함
+
+> Tool 전체 노출 금지 → Tool Retrieval 도입
+
+---
+
+## 3.3 Memory 분리 전략
+
+OpenClaw:
+
+* 파일 기반 기억
+
+metel:
+
+* 구조화 상태 기반
+
+### 3계층 Memory 구조
+
+1️⃣ Execution State
+
+* action produces 저장
+* 세션 단위
+
+2️⃣ Audit Log
+
+* append-only
+* 리플레이 가능
+
+3️⃣ Long-term Memory
+
+* 요약 기반 저장
+* tenant 격리
+* PII 필터링
+
+---
+
+## 3.4 Skill → Workflow Template로 재해석
+
+OpenClaw의 Markdown Skill 개념을 다음으로 전환:
+
+> Workflow Template
+
+구성:
+
+* Action Graph
+* 기본 Tool 조합
+* 정책 힌트
+* 성공 기준
+
+예:
+
+```yaml
+skill: notion_meeting_workflow
+description: 노션 회의 생성 및 슬랙 공유
+actions:
+  - notion.create_page
+  - slack.post_message
+```
+
+---
+
+## 3.5 Approval Gate (Policy 중심)
+
+OpenClaw의 실행 승인 개념을 SaaS 정책 모델로 변환
+
+| Risk                | 처리    |
+| ------------------- | ----- |
+| read                | 자동 허용 |
+| write               | 허용    |
+| destructive         | 승인 필요 |
+| financial           | 승인 필요 |
+| external_send + PII | 승인 필요 |
+
+---
+
+# 4. SaaS 자율 LLM 에이전트 아키텍처
+
+---
+
+## 4.1 전체 구조
+
+```text
+Gateway
+    ↓
+Orchestrator (State Machine)
     ↓
 Planner Agent
-    ↓
 Policy Agent
-    ↓
-Orchestrator (Execution Runtime)
-    ↓
-Executor Agent (action별)
-    ↓
-API Call
-    ↓
+Executor Agent
 Verifier Agent
+```
+
+---
+
+## 4.2 책임 분리
+
+### Planner Agent
+
+* 사용자 요청 → Action Plan JSON
+* requires / produces 명시
+* Tool 후보 제한
+
+### Policy Agent
+
+* 위험도 판단
+* OAuth scope 검증
+* 승인 요구
+
+### Executor Agent
+
+* input_schema 기반 payload 생성
+* MISSING 규칙
+
+### Verifier Agent
+
+* output_schema 검증
+* success_criteria 확인
+* retry / replan 결정
+
+### Orchestrator
+
+* 실행 루프
+* JSON Schema 강제
+* retry/backoff
+* 상태 저장
+* 승인 UX 연결
+
+---
+
+# 5. 실행 런타임 설계
+
+---
+
+## 5.1 Action Plan 기반 실행
+
+```text
+User Request
     ↓
-State Update
+Planner
     ↓
-Next Action
+Policy Check
     ↓
-Final Composer
+for action:
+    Executor → Payload
+    ↓
+    Schema Validation
+    ↓
+    API Call
+    ↓
+    produces_map 추출
+    ↓
+    Verifier
+    ↓
+    State Update
 ```
 
 ---
 
-# 3. 핵심 구성요소
+## 5.2 재플래닝 구조
+
+실패 조건:
+
+* requires 미충족
+* output_schema 실패
+* success_criteria 미충족
+
+→ Planner 재호출
 
 ---
 
-## 3.1 Tool Registry (Contract 기반 설계)
-
-모든 서비스 API는 다음 정보를 포함해야 한다.
-
-```json
-{
-  "tool": "notion.create_page",
-  "service": "notion",
-  "risk_level": "write",
-  "scopes_required": ["pages:write"],
-  "input_schema": {
-    "type": "object",
-    "required": ["title", "parent_id"],
-    "properties": {
-      "title": { "type": "string" },
-      "parent_id": { "type": "string" },
-      "content": { "type": "string" }
-    }
-  },
-  "output_schema": {
-    "type": "object",
-    "required": ["id", "url"]
-  },
-  "produces_map": {
-    "page_id": "$.id",
-    "page_url": "$.url"
-  }
-}
-```
+# 6. 실제 구현 계획
 
 ---
 
-## 3.2 Execution State
+# Phase 1 — Core Infrastructure (3주)
 
-```json
-{
-  "memory": {},
-  "history": [],
-  "errors": []
-}
-```
+### 1. Tool Registry 구현
 
-* memory: produces 필드 저장
-* history: 실행 기록
-* errors: 실패 정보
-
----
-
-# 4. Agent 역할 정의
-
----
-
-## 4.1 Planner Agent
-
-### 역할
-
-* 사용자 요청 → Action Plan(JSON) 생성
-* 의존성 명시 (requires / produces)
-
-### 출력 형식
-
-```json
-{
-  "goal": "...",
-  "timezone": "Asia/Seoul",
-  "actions": [
-    {
-      "id": "a1",
-      "tool": "notion.create_page",
-      "requires": [],
-      "produces": ["page_url"]
-    },
-    {
-      "id": "a2",
-      "tool": "slack.post_message",
-      "requires": ["page_url"],
-      "produces": []
-    }
-  ]
-}
-```
-
----
-
-## 4.2 Policy Agent
-
-### 역할
-
-* 위험도 검사
-* 권한 확인
-* 외부 전송 차단
-* 승인 필요 여부 판단
-
-### 출력
-
-```json
-{
-  "a1": "allow",
-  "a2": "require_confirm"
-}
-```
-
----
-
-## 4.3 Executor Agent
-
-### 역할
-
-* 특정 action의 input_schema 기반으로 payload 생성
-* 필수값이 없으면 `"MISSING"` 반환
-
-### 출력
-
-```json
-{
-  "title": "회의 기록",
-  "parent_id": "abc123",
-  "content": "회의 내용..."
-}
-```
-
----
-
-## 4.4 Verifier Agent
-
-### 역할
-
-* output_schema 충족 여부 확인
-* success_criteria 검사
-* 다음 action requires 충족 여부 확인
-
-### 출력
-
-```json
-{
-  "status": "pass"
-}
-```
-
-또는
-
-```json
-{
-  "status": "fail",
-  "reason": "page_url not found"
-}
-```
-
----
-
-# 5. 실행 흐름 (Orchestrator)
-
-1. Planner 호출 → Action Plan 생성
-2. Policy 검사
-3. Action 반복 실행:
-
-   * Executor → payload 생성
-   * JSON Schema 검증
-   * API 호출
-   * produces_map 기반 state 저장
-   * Verifier 검사
-4. 모든 action 완료 후 Final Composer 호출
-
----
-
-# 6. 예시 시나리오
-
----
-
-# 시나리오 1
-
-## 요청
-
-> "내일 오후 3시에 노션에 회의 기록을 만들고 슬랙에 공유해줘"
-
----
-
-## Step 1 — Planner 출력
-
-```json
-{
-  "goal": "회의 기록 생성 후 슬랙 공유",
-  "timezone": "Asia/Seoul",
-  "actions": [
-    {
-      "id": "a1",
-      "tool": "notion.create_page",
-      "requires": [],
-      "produces": ["page_url"]
-    },
-    {
-      "id": "a2",
-      "tool": "slack.post_message",
-      "requires": ["page_url"],
-      "produces": ["message_ts"]
-    }
-  ]
-}
-```
-
----
-
-## Step 2 — Policy 검사
-
-* notion.create_page → allow
-* slack.post_message → allow
-
----
-
-## Step 3 — a1 실행
-
-Executor 출력:
-
-```json
-{
-  "title": "회의 기록 - 2026-02-28 15:00",
-  "parent_id": "database_id",
-  "content": "회의 준비 문서"
-}
-```
-
-API 호출 → 결과:
-
-```json
-{
-  "id": "page_123",
-  "url": "https://notion.so/page_123"
-}
-```
-
-State 업데이트:
-
-```json
-{
-  "page_id": "page_123",
-  "page_url": "https://notion.so/page_123"
-}
-```
-
----
-
-## Step 4 — a2 실행
-
-Executor 입력에 page_url 포함
-
-```json
-{
-  "channel": "#general",
-  "text": "회의 기록이 생성되었습니다: https://notion.so/page_123"
-}
-```
-
-API 호출 → 성공
-
----
-
-## Step 5 — Final Response
-
-> 노션에 회의 기록을 생성했고 슬랙에 공유했습니다.
-> 링크: [https://notion.so/page_123](https://notion.so/page_123)
-
----
-
-# 시나리오 2 (의존성 실패 케이스)
-
-## 요청
-
-> "지난주 매출을 구글 시트에서 가져와서 슬랙에 요약해줘"
-
----
-
-### Planner
-
-* a1: google.sheets.get_range
-* a2: slack.post_message (requires summary)
-
----
-
-### 실행
-
-* a1 성공 → 데이터 획득
-* Verifier: summary 필드 없음
-* Verifier → Planner 재요청: "요약 단계 누락"
-
----
-
-### 재계획
-
-* a1: sheets.get_range
-* a2: summarize_data (LLM 내부 작업)
-* a3: slack.post_message
-
----
-
-이렇게 멀티에이전트 구조는
-**재플래닝이 가능**해야 진짜 자율 구조가 된다.
-
----
-
-# 7. 단계별 구현 계획
-
----
-
-## Phase 0 — 기반 구축
-
-* Tool Registry 설계
-* JSON Schema Validator 구현
+* JSON Schema 기반 정의
 * produces_map 추출기
-* Execution State 구조화
-* 로그/리플레이 시스템
+* OAuth scope 모델
+
+### 2. Orchestrator 구현
+
+* 실행 루프
+* retry/backoff
+* timeout
+* JSON Schema Validator
+* Result Extractor
+
+### 3. Execution State 저장
+
+* Redis (세션 상태)
+* PostgreSQL (audit log)
 
 ---
 
-## Phase 1 — 단일 에이전트 → 멀티 구조 준비
+# Phase 2 — LLM 기반 Action 실행 (2주)
 
-* Planner → Action Plan JSON 강제
-* Executor → schema-locked 출력
-* Policy → 규칙 기반 위험 통제
-* Verifier → 코드 중심
+### 4. Planner 구현
 
----
+* Action Plan JSON Schema 강제
+* Tool Retrieval 적용
 
-## Phase 2 — 멀티 에이전트 분리
+### 5. Executor 구현
 
-* Planner Agent 독립
-* Policy Agent 독립
-* Verifier Agent 독립
-* 재플래닝 루프 구현
+* schema-locked payload
+* MISSING 규칙
 
----
+### 6. Verifier 구현
 
-## Phase 3 — n8n 포지션 강화
-
-* 조건 분기
-* 병렬 실행
-* 사용자 승인 노드
-* 워크플로우 저장 기능
+* 코드 중심 검증
+* LLM 보조
 
 ---
 
-# 8. 핵심 설계 원칙
+# Phase 3 — Policy 및 승인 시스템 (2주)
 
-1. LLM은 제안만 한다
-2. 실행은 항상 코드가 한다
-3. 스키마 밖 필드는 허용하지 않는다
-4. 위험 작업은 정책이 최종 권한을 가진다
-5. requires / produces는 반드시 명시한다
-6. 실패는 재계획 가능해야 한다
+### 7. Policy Engine
 
----
+* risk_level 기반 제어
+* scope 확인
 
-# 9. 결론
+### 8. 승인 UX
 
-이 구조는:
-
-* n8n처럼 안정적이고
-* Manus/OpenClaw처럼 자율적이며
-* SaaS 환경에서 안전하게 운영 가능한
-
-**중간 포지션 최적 아키텍처**다.
+* destructive 승인
+* external_send 승인
 
 ---
 
-아래에 요청하신 4가지를 **각각 독립적으로 바로 붙여 넣어 쓸 수 있는 형태**로 정리했습니다.
+# Phase 4 — 멀티 에이전트 분리 (3주)
+
+### 9. Planner/Policy/Verifier 독립
+
+### 10. 재플래닝 루프 완성
 
 ---
 
-# 1) Action Plan JSON Schema 정식 정의 (Draft 2020-12)
+# Phase 5 — Workflow Template (Skill) 도입 (2주)
 
-> 목적: Planner Agent의 출력(= Action Plan)을 **항상 동일한 구조로 강제**하고, Orchestrator/Validator가 기계적으로 검증할 수 있게 함.
+### 11. Template Registry
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://metel.ai/schemas/action-plan.schema.json",
-  "title": "Metel Action Plan",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["version", "goal", "timezone", "actions"],
-  "properties": {
-    "version": {
-      "type": "string",
-      "const": "1.0"
-    },
-    "goal": {
-      "type": "string",
-      "minLength": 1
-    },
-    "timezone": {
-      "type": "string",
-      "minLength": 1,
-      "description": "IANA timezone (e.g., Asia/Seoul)"
-    },
-    "locale": {
-      "type": "string",
-      "default": "ko-KR"
-    },
-    "context": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "user_text": { "type": "string" },
-        "connected_services": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "tool_candidates": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Planner에 제공된 Top-K tool ids (optional)"
-        }
-      }
-    },
-    "actions": {
-      "type": "array",
-      "minItems": 1,
-      "items": { "$ref": "#/$defs/action" }
-    },
-    "final_response": {
-      "$ref": "#/$defs/final_response"
-    },
-    "constraints": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "max_actions": { "type": "integer", "minimum": 1, "default": 12 },
-        "allow_parallel": { "type": "boolean", "default": false }
-      }
-    }
-  },
-  "$defs": {
-    "action": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "tool", "intent", "requires", "produces"],
-      "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^[a-zA-Z][a-zA-Z0-9_\\-]{0,63}$"
-        },
-        "tool": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Tool ID from Tool Registry (e.g., notion.create_page)"
-        },
-        "intent": {
-          "type": "string",
-          "enum": ["read", "write", "notify", "summarize", "transform", "search", "other"]
-        },
-        "summary": {
-          "type": "string",
-          "description": "Human-readable one-liner for logs/UX"
-        },
-        "requires": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "description": "State keys required before executing this action"
-        },
-        "produces": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "description": "State keys expected to be produced by this action"
-        },
-        "success_criteria": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "description": "Verifier input - simple criteria list"
-        },
-        "risk": {
-          "$ref": "#/$defs/risk"
-        },
-        "policy_hints": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "needs_user_confirmation": { "type": "boolean" },
-            "contains_pii": { "type": "boolean" },
-            "external_send": { "type": "boolean" }
-          }
-        },
-        "depends_on": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Explicit dependency edges (optional). Usually redundant with requires."
-        },
-        "input_bindings": {
-          "type": "object",
-          "additionalProperties": { "type": "string" },
-          "description": "Optional mapping: payload_field -> state_key (executor can also infer)."
-        },
-        "retries": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "max_attempts": { "type": "integer", "minimum": 1, "maximum": 10, "default": 3 },
-            "backoff_ms": { "type": "integer", "minimum": 0, "default": 500 }
-          }
-        },
-        "timeout_ms": {
-          "type": "integer",
-          "minimum": 1000,
-          "default": 20000
-        }
-      }
-    },
-    "risk": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "level": {
-          "type": "string",
-          "enum": ["read", "write", "destructive"]
-        },
-        "tags": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": ["pii", "external_send", "financial", "admin", "delete", "share_public"]
-          }
-        }
-      }
-    },
-    "final_response": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "style": { "type": "string", "enum": ["concise", "detailed"], "default": "concise" },
-        "include_links": { "type": "boolean", "default": true },
-        "include_step_results": { "type": "boolean", "default": false }
-      }
-    }
-  }
-}
+### 12. 자동 추천
+
+---
+
+# 7. 보안 설계 원칙
+
+1. LLM은 직접 API 호출하지 않는다
+2. 모든 Tool은 Contract 기반
+3. 스키마 밖 필드 차단
+4. 승인 없는 destructive 실행 0%
+5. OAuth scope 검증 필수
+6. PII 외부 전송 시 승인
+
+---
+
+# 8. 성공 지표
+
+* 3-step 의존성 자동 처리 성공률 80%+
+* Tool 환각률 < 1%
+* 승인 없는 destructive 실행 0건
+* 실패 시 재플래닝 성공률 70%+
+* 완전 리플레이 가능
+
+---
+
+# 9. 최종 설계 철학
+
+metel은 OpenClaw를 모방하지 않는다.
+
+대신 다음을 흡수한다:
+
+* Gateway 중심 구조
+* 동적 System Prompt 구성
+* Skill 개념
+* Approval Gate
+* Agent Loop 구조
+
+그러나:
+
+* OS 실행은 배제
+* LLM 중심 실행 통제는 배제
+* SaaS API 중심으로 재설계
+
+---
+
+# 최종 정의
+
+metel은:
+
+> SaaS 통합 자율 LLM 자동화 플랫폼
+
+* 자율적이지만 통제 가능하고
+* 확장 가능하지만 안전하며
+* 지능적이지만 예측 가능한 시스템
+
+아래는 기존 문서 에 **“실제 코드 디렉토리 구조 설계”**와 **“MVP 범위 재정의”**를 목적(= OpenClaw 장점 흡수 + SaaS 통합 자율 LLM 에이전트) 관점으로 **통합 반영한 업데이트 본문**입니다.
+(그대로 `docs/multi_agent_architecture_plan.md`에 추가/교체해서 사용하시면 됩니다.)
+
+---
+
+# 10. MVP 범위 재정의 (SaaS 통합 자율 LLM 에이전트)
+
+## 10.1 MVP 목표
+
+MVP는 “완전 자율”이 아니라, **안전하고 예측 가능한 자율 실행 루프**를 최소 기능으로 제공한다.
+
+MVP에서 반드시 달성할 것:
+
+* 자연어 요청 → **Action Plan(JSON)** 생성
+* **Policy Gate**로 위험 작업 통제(승인/차단)
+* **Schema-locked Executor**로 payload 생성 (필수값은 `MISSING`)
+* Orchestrator가 **결정적으로 실행**(retry/timeout/state)
+* 실행 결과를 **State + Audit Log**로 남기고 리플레이 가능
+
+OpenClaw에서 MVP에 가져올 핵심:
+
+* **Gateway 중심 단일 진입점**
+* **런타임에서 동적 System Prompt 조립**
+* **Skill(= Workflow Template) 목록 기반 확장**
+* **Approval Gate(승인/정책)**
+* **Agent Loop(스트리밍/툴 이벤트/재시도/압축) 사고방식**
+
+## 10.2 MVP에서 “하지 않을 것”
+
+* OS/로컬 명령 실행 (OpenClaw의 system.run 류) ❌
+* 임의 HTTP 호출(LLM이 URL을 만들어 호출) ❌
+* 무제한 도구 노출(전체 도구 목록을 LLM에 제공) ❌
+* destructive/financial 자동 실행 ❌ (항상 승인)
+* 병렬/분기/조인 등 고급 워크플로우 엔진 (Phase 3+) ❌
+
+## 10.3 MVP 기능 범위
+
+### A. 채널/진입점(Gateway)
+
+* Web API(HTTP)로 요청 수신 (추후 Slack/Telegram 확장)
+* 실행 요청/상태 조회 엔드포인트
+* (선택) WebSocket 스트리밍: tool event / agent event / final
+
+### B. 지원 SaaS (최소 2~3개)
+
+* Notion: create_page / query_database (read+write)
+* Slack: post_message (notify)
+* (선택) Google Sheets: get_range (read)
+
+> MVP에서 중요한 건 “서비스 숫자”가 아니라 **requires/produces 의존성 연결이 안정적으로 동작**하는지다.
+
+### C. Tool Registry(Contract)
+
+* tool_id, risk_level, scopes_required
+* input_schema/output_schema(JSON Schema)
+* produces_map(state key 표준화)
+
+### D. Multi-Agent (초기 4개 유지)
+
+* Planner: Action Plan 생성
+* Policy: allow/deny/require_confirm
+* Executor: schema-locked payload 생성
+* Verifier: pass/fail + retry/ask_user/replan
+
+### E. Orchestrator(Runtime)
+
+* sequential action 실행 루프
+* retries/backoff/timeout
+* schema validation (input/output)
+* produces extraction → state update
+* 승인 요청 시 “중단 + 승인 대기” 상태 반환
+* audit log 저장(append-only) + replay key
+
+### F. 최소 승인 UX
+
+* require_confirm 상태 반환 시, 프론트/클라이언트에서 “승인/거절” 호출
+* 승인 후 동일 run을 이어서 실행
+
+## 10.4 MVP 성공 조건(명확한 테스트 기준)
+
+* 2-step 의존성 플로우 성공률 90%+ (Notion 생성 → Slack 공유)
+* `MISSING` 발생 시 “필요 정보만” 질문하고 재개 가능
+* 승인 없는 destructive 실행 0건
+* 모든 run은 audit log로 재현 가능(replay)
+* Tool 환각(등록되지 않은 tool 호출) 0건
+
+---
+
+# 11. 실제 코드 디렉토리 구조 설계 (Python 중심)
+
+> 원칙: OpenClaw처럼 “런타임이 조립하고(Gateway/Prompt/Skill), 실행은 통제된 Runtime(Orchestrator)이 한다”를 코드 구조로 강제한다.
+
+## 11.1 리포지토리 구조(권장)
+
+아래는 **Python + FastAPI** 기준의 현실적인 구조입니다. (단일 repo)
+
+```text
+metel/
+  apps/
+    api/                          # Gateway(API Hub): FastAPI, WebSocket streaming
+      main.py
+      routers/
+        runs.py                   # /runs (create, status, approve, replay)
+        tools.py                  # (optional) tool registry introspection
+      middleware/
+        auth.py                   # tenant/user auth, rate limit
+      deps.py
+      settings.py
+    worker/                       # background workers (Celery/RQ/Arq)
+      main.py
+      tasks/
+        run_execute.py            # execute run loop
+        tool_call.py              # tool call wrapper jobs (optional)
+  packages/
+    core/
+      __init__.py
+      orchestrator/
+        orchestrator.py           # main runtime loop
+        models.py                 # ActionPlan, Action, ExecutionState, ExecRecord
+        validator.py              # jsonschema validation
+        extractor.py              # produces_map extraction (jsonpath-lite)
+        replay.py                 # replay serializer & deterministic re-run helper
+        prompt_builder.py         # dynamic system prompt assembly (OpenClaw-like)
+        tool_retrieval.py         # top-k tools selection (RAG/embedding or rules)
+      agents/
+        planner.py                # LLM client wrapper + planner prompt
+        executor.py               # schema-locked payload generator
+        verifier.py               # verifier logic (code-first + LLM fallback)
+        policy.py                 # policy logic (rule engine + LLM fallback)
+        composer.py               # final response generator (optional)
+      registry/
+        tool_registry.py          # contract store interface
+        contracts/                # tool definitions (yaml/json)
+          notion.create_page.json
+          slack.post_message.json
+        skills/                   # workflow templates (OpenClaw skill-like)
+          notion_meeting_workflow.yaml
+      policy/
+        rules.py                  # allow/deny/require_confirm rules
+        pii.py                    # pii detectors/redactors
+        scopes.py                 # oauth scope checks
+      integrations/
+        notion/
+          client.py               # Notion API client wrapper (requests/httpx)
+          adapters.py             # tool_id -> actual endpoint mapping
+        slack/
+          client.py
+          adapters.py
+        google_sheets/
+          client.py
+          adapters.py
+      storage/
+        state_store.py            # Redis: session state
+        audit_log.py              # Postgres: append-only log
+        secrets.py                # token vault interface
+      observability/
+        tracing.py                # request/run correlation ids
+        logging.py                # structured logs
+        metrics.py                # counters (tool success rate, retry count)
+  docs/
+    multi_agent_architecture_plan.md
+    schemas/
+      action-plan.schema.json
+      action-plan.notion.schema.json
+    api/
+      openapi.md
+  scripts/
+    dev_run.sh
+    seed_contracts.py
+  tests/
+    unit/
+      test_schema_validation.py
+      test_produces_extractor.py
+      test_policy_rules.py
+    integration/
+      test_notion_to_slack_flow.py
+  pyproject.toml
+  README.md
 ```
 
----
+## 11.2 디렉토리 설계의 핵심 의도
 
-# 2) Notion Action Plan JSON Schema 정식 정의
+### A. `apps/api` = Gateway
 
-> 목적: “Notion 전용 플로우”를 만들 때 Planner가 **notion.* tool만** 사용하고, produces/requires 관례도 Notion 관점으로 정해 **일관성**을 확보.
+OpenClaw의 Gateway 장점(단일 진입점)을 metel에서도 강제합니다.
 
-아래 스키마는 “Notion-only Plan”을 강제합니다. (tool prefix 제한)
+* 인증/요금/레이트리밋
+* run 생성/조회/승인/리플레이 API
+* (선택) WebSocket 스트리밍으로 “에이전트 이벤트” 제공
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://metel.ai/schemas/action-plan.notion.schema.json",
-  "title": "Metel Notion Action Plan",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["version", "goal", "timezone", "actions"],
-  "properties": {
-    "version": { "type": "string", "const": "1.0" },
-    "goal": { "type": "string", "minLength": 1 },
-    "timezone": { "type": "string", "minLength": 1 },
-    "notion_context": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "workspace_id": { "type": "string" },
-        "default_parent_type": { "type": "string", "enum": ["page", "database"] },
-        "default_parent_id": { "type": "string" }
-      }
-    },
-    "actions": {
-      "type": "array",
-      "minItems": 1,
-      "items": { "$ref": "#/$defs/notion_action" }
-    }
-  },
-  "$defs": {
-    "notion_action": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "tool", "intent", "requires", "produces"],
-      "properties": {
-        "id": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_\\-]{0,63}$" },
-        "tool": {
-          "type": "string",
-          "pattern": "^notion\\.[a-zA-Z0-9_\\-]+$",
-          "description": "Only notion.* tools are allowed"
-        },
-        "intent": {
-          "type": "string",
-          "enum": ["read", "write", "search", "transform"]
-        },
-        "summary": { "type": "string" },
-        "requires": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 }
-        },
-        "produces": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 }
-        },
-        "notion_produces_convention": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "page_id": { "type": "boolean" },
-            "page_url": { "type": "boolean" },
-            "database_id": { "type": "boolean" },
-            "block_ids": { "type": "boolean" }
-          },
-          "description": "Optional hint to standardize state keys"
-        },
-        "success_criteria": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": []
-        },
-        "risk": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "level": { "type": "string", "enum": ["read", "write", "destructive"] },
-            "tags": {
-              "type": "array",
-              "items": { "type": "string", "enum": ["pii", "share_public", "delete"] }
-            }
-          }
-        },
-        "timeout_ms": { "type": "integer", "minimum": 1000, "default": 20000 }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": { "tool": { "const": "notion.create_page" } }
-          },
-          "then": {
-            "properties": {
-              "intent": { "const": "write" },
-              "produces": {
-                "contains": { "const": "page_url" }
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": { "tool": { "const": "notion.query_database" } }
-          },
-          "then": {
-            "properties": {
-              "intent": { "const": "read" },
-              "produces": {
-                "contains": { "const": "records" }
-              }
-            }
-          }
-        }
-      ]
-    }
-  }
-}
-```
+### B. `packages/core/orchestrator` = 실행 통제의 단일 소유자
 
-### Notion에서 추천하는 state key 표준(관례)
+* LLM이 아닌 코드가 실행을 통제(필수)
+* schema validation / retry / timeout / state update / audit log
+* 승인 대기 상태로 전환(Policy 결과에 따라)
 
-* `page_id`, `page_url`
-* `database_id`
-* `records` (query 결과)
-* `block_ids` (블록 추가/수정 결과)
-* `notion_object` (raw 응답 저장 시)
+### C. `packages/core/agents` = “제안자” 모듈
 
-이 관례를 고정하면 “다음 step requires”를 Planner/Verifier가 훨씬 잘 맞춥니다.
+* Planner/Executor/Verifier/Policy는 **출력 포맷 강제(JSON only)** 를 전제로 구현
+* 모델 교체가 쉬워야 하므로 “LLM client wrapper + prompt template”로 분리
+
+### D. `packages/core/registry/contracts` = Tool Contract 단일 진실
+
+* Tool 환각 방지의 핵심
+* 입력/출력 스키마, risk_level, produces_map 고정
+
+### E. `packages/core/registry/skills` = Workflow Template
+
+OpenClaw의 Skill 아이디어를 metel에서는 “템플릿 워크플로우”로 활용:
+
+* Planner 안정성 상승
+* 자주 쓰는 플로우를 표준화
+* 운영/디버깅 용이
+
+## 11.3 MVP에서 반드시 만들어야 하는 파일/모듈 (체크리스트)
+
+* [ ] `docs/schemas/action-plan.schema.json` (Planner 출력 검증)
+* [ ] `packages/core/orchestrator/orchestrator.py` (실행 루프)
+* [ ] `packages/core/registry/tool_registry.py` + `contracts/*`
+* [ ] `packages/core/agents/planner.py` + prompt
+* [ ] `packages/core/agents/executor.py` + schema-locked prompt
+* [ ] `packages/core/policy/rules.py` (최소 규칙 엔진)
+* [ ] `packages/core/storage/state_store.py` (Redis)
+* [ ] `packages/core/storage/audit_log.py` (Postgres)
+* [ ] `apps/api/routers/runs.py` (create/status/approve)
 
 ---
 
-# 3) Orchestrator 의사코드 (Python 버전)
-
-> 목표: **멀티 에이전트라도 실행은 Orchestrator가 “단일 루프”로 통제**
-> (LLM이 API를 직접 호출하지 않음)
-
-아래는 구현 가능한 수준의 의사코드입니다.
-
-```python
-from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
-import time
-import json
-
-# -------------------------
-# Data models
-# -------------------------
-
-@dataclass
-class ToolContract:
-    tool_id: str
-    risk_level: str  # read|write|destructive
-    scopes_required: List[str]
-    input_schema: Dict[str, Any]
-    output_schema: Dict[str, Any]
-    produces_map: Dict[str, str]  # state_key -> jsonpath (or extractor key)
-
-@dataclass
-class Action:
-    id: str
-    tool: str
-    intent: str
-    requires: List[str]
-    produces: List[str]
-    success_criteria: List[str] = field(default_factory=list)
-    timeout_ms: int = 20000
-    retries_max_attempts: int = 3
-    retries_backoff_ms: int = 500
-
-@dataclass
-class ActionPlan:
-    version: str
-    goal: str
-    timezone: str
-    actions: List[Action]
-    final_response: Dict[str, Any] = field(default_factory=dict)
-
-@dataclass
-class ExecRecord:
-    action_id: str
-    tool: str
-    status: str  # success|failed|skipped
-    attempts: int
-    started_at: float
-    ended_at: float
-    error: Optional[str] = None
-
-@dataclass
-class ExecutionState:
-    memory: Dict[str, Any] = field(default_factory=dict)
-    history: List[ExecRecord] = field(default_factory=list)
-    errors: List[Dict[str, Any]] = field(default_factory=list)
-
-# -------------------------
-# Interfaces (you will implement)
-# -------------------------
-
-class ToolRegistry:
-    def get_contract(self, tool_id: str) -> ToolContract:
-        raise NotImplementedError
-
-class PolicyEngine:
-    def check_action(self, action: Action, contract: ToolContract, state: ExecutionState) -> Tuple[str, str]:
-        """
-        Returns (decision, reason)
-        decision: allow | deny | require_confirm
-        """
-        raise NotImplementedError
-
-class LLMPlanner:
-    def plan(self, user_request: str, tool_candidates: List[str], timezone: str) -> Dict[str, Any]:
-        raise NotImplementedError
-
-class LLMExecutor:
-    def fill_params(self, action: Action, contract: ToolContract, state: ExecutionState, timezone: str) -> Dict[str, Any]:
-        raise NotImplementedError
-
-class LLMVerifier:
-    def verify(self, action: Action, contract: ToolContract, payload: Dict[str, Any], result: Dict[str, Any], state: ExecutionState) -> Dict[str, Any]:
-        """
-        Returns:
-          {"status": "pass"} or
-          {"status": "fail", "reason": "...", "next": "retry|ask_user|replan", "patch": {...optional...}}
-        """
-        raise NotImplementedError
-
-class ToolCaller:
-    def call(self, tool_id: str, payload: Dict[str, Any], timeout_ms: int) -> Dict[str, Any]:
-        raise NotImplementedError
-
-class SchemaValidator:
-    def validate(self, schema: Dict[str, Any], data: Dict[str, Any]) -> None:
-        """Raise exception if invalid."""
-        raise NotImplementedError
-
-class ResultExtractor:
-    def extract(self, produces_map: Dict[str, str], result: Dict[str, Any]) -> Dict[str, Any]:
-        """Map tool result to state keys. (Implement JSONPath or simple dotted paths)"""
-        raise NotImplementedError
-
-# -------------------------
-# Orchestrator
-# -------------------------
-
-class Orchestrator:
-    def __init__(
-        self,
-        tool_registry: ToolRegistry,
-        policy: PolicyEngine,
-        planner: LLMPlanner,
-        executor: LLMExecutor,
-        verifier: LLMVerifier,
-        caller: ToolCaller,
-        validator: SchemaValidator,
-        extractor: ResultExtractor,
-    ):
-        self.tool_registry = tool_registry
-        self.policy = policy
-        self.planner = planner
-        self.executor = executor
-        self.verifier = verifier
-        self.caller = caller
-        self.validator = validator
-        self.extractor = extractor
-
-    def run(self, user_request: str, tool_candidates: List[str], timezone: str = "Asia/Seoul") -> Dict[str, Any]:
-        state = ExecutionState()
-
-        # 1) Plan
-        plan_dict = self.planner.plan(user_request, tool_candidates, timezone)
-        plan = self._parse_plan(plan_dict)
-
-        # 2) Execute actions sequentially (MVP). Parallel/branch can be added later.
-        for action in plan.actions:
-            # 2.1 dependency check
-            if not self._requires_satisfied(action, state):
-                # Missing dependencies => fail fast or replan
-                state.errors.append({
-                    "action_id": action.id,
-                    "type": "missing_requires",
-                    "missing": [k for k in action.requires if k not in state.memory]
-                })
-                # In MVP: ask user or replan; here we choose replan
-                return self._finalize_with_replan(user_request, tool_candidates, timezone, state, reason="missing_requires")
-
-            contract = self.tool_registry.get_contract(action.tool)
-
-            # 2.2 Policy gate
-            decision, reason = self.policy.check_action(action, contract, state)
-            if decision == "deny":
-                state.history.append(ExecRecord(
-                    action_id=action.id, tool=action.tool, status="skipped",
-                    attempts=0, started_at=time.time(), ended_at=time.time(),
-                    error=f"Denied by policy: {reason}"
-                ))
-                return self._finalize(plan, state, user_message=f"정책상 실행할 수 없는 작업이 포함되어 중단했습니다: {reason}")
-
-            if decision == "require_confirm":
-                # In product: trigger approval UI. Here: stop and ask.
-                return self._finalize(plan, state, user_message=f"다음 작업은 승인 후 진행 가능합니다: {action.tool} / 사유: {reason}")
-
-            # 2.3 Execute with retry loop
-            started = time.time()
-            attempts = 0
-            last_error = None
-
-            while attempts < action.retries_max_attempts:
-                attempts += 1
-                try:
-                    payload = self.executor.fill_params(action, contract, state, plan.timezone)
-                    # Validate payload schema
-                    self.validator.validate(contract.input_schema, payload)
-
-                    # If payload contains "MISSING" => ask user
-                    missing_fields = self._find_missing(payload)
-                    if missing_fields:
-                        return self._finalize(plan, state, user_message=f"추가 정보가 필요합니다: {', '.join(missing_fields)}")
-
-                    # Call tool
-                    result = self.caller.call(action.tool, payload, action.timeout_ms)
-
-                    # Validate output
-                    self.validator.validate(contract.output_schema, result)
-
-                    # Extract produces -> state
-                    produced = self.extractor.extract(contract.produces_map, result)
-                    state.memory.update(produced)
-
-                    # Verify
-                    verdict = self.verifier.verify(action, contract, payload, result, state)
-                    if verdict.get("status") == "pass":
-                        state.history.append(ExecRecord(
-                            action_id=action.id, tool=action.tool, status="success",
-                            attempts=attempts, started_at=started, ended_at=time.time()
-                        ))
-                        break
-
-                    # Fail verdict
-                    next_step = verdict.get("next", "retry")
-                    if next_step == "retry":
-                        last_error = verdict.get("reason", "verifier_fail")
-                        time.sleep(action.retries_backoff_ms / 1000)
-                        continue
-                    if next_step == "ask_user":
-                        return self._finalize(plan, state, user_message=f"확인이 필요합니다: {verdict.get('reason','')}")
-                    if next_step == "replan":
-                        return self._finalize_with_replan(user_request, tool_candidates, timezone, state, reason=verdict.get("reason","replan"))
-
-                    # default => retry
-                    last_error = verdict.get("reason", "verifier_fail")
-                    time.sleep(action.retries_backoff_ms / 1000)
-
-                except Exception as e:
-                    last_error = str(e)
-                    time.sleep(action.retries_backoff_ms / 1000)
-
-            if attempts >= action.retries_max_attempts and last_error:
-                state.history.append(ExecRecord(
-                    action_id=action.id, tool=action.tool, status="failed",
-                    attempts=attempts, started_at=started, ended_at=time.time(),
-                    error=last_error
-                ))
-                return self._finalize(plan, state, user_message=f"작업 실행에 실패했습니다: {action.tool} / {last_error}")
-
-        # 3) Compose final response
-        return self._finalize(plan, state)
-
-    # -------------------------
-    # helpers
-    # -------------------------
-
-    def _parse_plan(self, plan_dict: Dict[str, Any]) -> ActionPlan:
-        actions = []
-        for a in plan_dict["actions"]:
-            r = a.get("retries", {})
-            actions.append(Action(
-                id=a["id"],
-                tool=a["tool"],
-                intent=a["intent"],
-                requires=a.get("requires", []),
-                produces=a.get("produces", []),
-                success_criteria=a.get("success_criteria", []),
-                timeout_ms=a.get("timeout_ms", 20000),
-                retries_max_attempts=r.get("max_attempts", 3),
-                retries_backoff_ms=r.get("backoff_ms", 500),
-            ))
-        return ActionPlan(
-            version=plan_dict["version"],
-            goal=plan_dict["goal"],
-            timezone=plan_dict["timezone"],
-            actions=actions,
-            final_response=plan_dict.get("final_response", {})
-        )
-
-    def _requires_satisfied(self, action: Action, state: ExecutionState) -> bool:
-        return all(k in state.memory for k in action.requires)
-
-    def _find_missing(self, payload: Any, path: str = "") -> List[str]:
-        missing = []
-        if isinstance(payload, dict):
-            for k, v in payload.items():
-                missing += self._find_missing(v, f"{path}.{k}" if path else k)
-        elif isinstance(payload, list):
-            for i, v in enumerate(payload):
-                missing += self._find_missing(v, f"{path}[{i}]")
-        else:
-            if payload == "MISSING":
-                missing.append(path or "unknown")
-        return missing
-
-    def _finalize_with_replan(self, user_request: str, tool_candidates: List[str], timezone: str, state: ExecutionState, reason: str) -> Dict[str, Any]:
-        # In product: feed failure + state summary back to planner
-        return {
-            "status": "need_replan",
-            "reason": reason,
-            "state": {"memory": state.memory, "history": [r.__dict__ for r in state.history], "errors": state.errors}
-        }
-
-    def _finalize(self, plan: ActionPlan, state: ExecutionState, user_message: Optional[str] = None) -> Dict[str, Any]:
-        # In product: call a Composer LLM. Here we return structured.
-        return {
-            "status": "ok" if user_message is None else "interrupted",
-            "message": user_message,
-            "goal": plan.goal,
-            "memory": state.memory,
-            "history": [r.__dict__ for r in state.history],
-            "errors": state.errors
-        }
-```
-
-### 구현 팁 (중요)
-
-* **Verifier/Policy는 “코드 우선 + LLM 보조”**로 설계하면 비용/리스크가 크게 줄어듭니다.
-* **Executor만 LLM이 payload 생성**을 담당하고, API 호출은 절대 LLM에게 맡기지 마세요.
-
----
-
-# 4) Agent별 실제 프롬프트 설계
-
-아래 프롬프트는 “출력 포맷 강제 + 환각 방지”에 최적화했습니다.
-(운영에서는 `SYSTEM` + `DEVELOPER` + `USER` 역할로 분리 추천)
-
-## 4.1 Planner Agent Prompt
-
-**SYSTEM**
-
-* 너는 워크플로우 플래너다.
-* 너의 임무는 사용자 요청을 실행 가능한 Action Plan(JSON)으로 변환하는 것이다.
-* 툴은 반드시 제공된 후보(tool_candidates) 중에서만 선택한다.
-* 의존성은 `requires/produces`로 반드시 명시한다.
-* 출력은 JSON만. 다른 텍스트 금지.
-
-**DEVELOPER**
-
-* 출력은 Action Plan JSON Schema(version=1.0)를 따라야 한다.
-* 각 action은 단일 tool 호출만 포함해야 한다.
-* `requires`는 state key 목록이다. 이전 action의 `produces`를 참조하라.
-* 불명확한 정보가 있어도 계획은 만들되, 해당 정보는 Executor가 `"MISSING"`으로 표기하도록 유도하라(즉, Planner 단계에서는 질문을 만들지 말고 plan을 만든다).
-* 위험한 tool(삭제/외부 공유/결제)이 포함될 것 같으면 action.risk.tags에 해당 태그를 추가하라.
-
-**USER 입력 템플릿**
-
-```json
-{
-  "user_request": "내일 오후 3시에 노션에 회의 기록 만들고 슬랙에 공유해줘",
-  "timezone": "Asia/Seoul",
-  "tool_candidates": [
-    "notion.create_page",
-    "notion.query_database",
-    "slack.post_message",
-    "slack.find_channel"
-  ],
-  "connected_services": ["notion", "slack"]
-}
-```
-
-**Planner 기대 출력 예**
-
-```json
-{
-  "version": "1.0",
-  "goal": "회의 기록 생성 후 슬랙 공유",
-  "timezone": "Asia/Seoul",
-  "actions": [
-    {
-      "id": "a1",
-      "tool": "notion.create_page",
-      "intent": "write",
-      "summary": "노션에 회의 기록 페이지 생성",
-      "requires": [],
-      "produces": ["page_url", "page_id"],
-      "success_criteria": ["page_url exists"],
-      "risk": { "level": "write", "tags": [] },
-      "retries": { "max_attempts": 3, "backoff_ms": 500 },
-      "timeout_ms": 20000
-    },
-    {
-      "id": "a2",
-      "tool": "slack.post_message",
-      "intent": "notify",
-      "summary": "슬랙 채널에 노션 링크 공유",
-      "requires": ["page_url"],
-      "produces": ["message_ts"],
-      "success_criteria": ["message_ts exists"],
-      "risk": { "level": "write", "tags": ["external_send"] },
-      "retries": { "max_attempts": 3, "backoff_ms": 500 },
-      "timeout_ms": 20000
-    }
-  ],
-  "final_response": { "style": "concise", "include_links": true }
-}
-```
-
----
-
-## 4.2 Policy Agent Prompt
-
-**SYSTEM**
-
-* 너는 정책 심사관이다.
-* 주어진 Action Plan의 각 action에 대해 allow/deny/require_confirm 중 하나를 결정한다.
-* 출력은 JSON만.
-
-**DEVELOPER**
-
-* 입력으로 `tenant_policy`, `user_scopes`, `actions`, `tool_contracts`가 주어진다.
-* 규칙:
-
-  * risk.level=destructive 또는 risk.tags에 delete/financial/share_public 포함 → 기본 require_confirm(또는 tenant_policy에 따라 deny)
-  * external_send 태그는 기본 allow지만 PII가 의심되면 require_confirm
-  * 필요한 OAuth scope가 user_scopes에 없으면 deny
-* 출력 포맷:
-
-```json
-{
-  "decisions": {
-    "a1": { "decision": "allow", "reason": "" },
-    "a2": { "decision": "require_confirm", "reason": "external_send" }
-  }
-}
-```
-
-**USER 입력 템플릿**
-
-```json
-{
-  "tenant_policy": {
-    "allow_external_send": true,
-    "allow_destructive": false
-  },
-  "user_scopes": ["pages:write", "chat:write"],
-  "actions": [ ... ],
-  "tool_contracts": {
-    "notion.create_page": { "risk_level": "write", "scopes_required": ["pages:write"] },
-    "slack.post_message": { "risk_level": "write", "scopes_required": ["chat:write"] }
-  }
-}
-```
-
----
-
-## 4.3 Executor Agent Prompt
-
-**SYSTEM**
-
-* 너는 API 파라미터 생성기다.
-* 반드시 제공된 `input_schema`에 맞춰 payload JSON만 출력한다.
-* 모르는 필수값은 `"MISSING"`으로 채운다.
-* 입력에 없는 사실을 지어내지 않는다(특히 id, 채널명, 사용자 정보).
-
-**DEVELOPER**
-
-* 네가 사용할 수 있는 정보는:
-
-  * action(요청 의도)
-  * tool input_schema
-  * state.memory (이전 결과)
-  * timezone
-  * user_request 일부(필요한 경우)
-* 금지:
-
-  * schema에 없는 필드 추가
-  * tool 변경 제안
-  * 설명 텍스트 출력
-
-**USER 입력 템플릿**
-
-```json
-{
-  "action": {
-    "id": "a2",
-    "tool": "slack.post_message",
-    "intent": "notify",
-    "summary": "슬랙 채널에 노션 링크 공유",
-    "requires": ["page_url"]
-  },
-  "input_schema": {
-    "type": "object",
-    "required": ["channel", "text"],
-    "properties": {
-      "channel": { "type": "string" },
-      "text": { "type": "string" }
-    }
-  },
-  "state_memory": {
-    "page_url": "https://notion.so/page_123"
-  },
-  "timezone": "Asia/Seoul",
-  "user_request": "내일 오후 3시에 노션에 회의 기록 만들고 슬랙에 공유해줘"
-}
-```
-
-**Executor 기대 출력 예**
-
-```json
-{
-  "channel": "MISSING",
-  "text": "회의 기록이 생성되었습니다: https://notion.so/page_123"
-}
-```
-
-(→ Orchestrator는 `"channel"`이 MISSING이므로 사용자에게 “어느 채널에 공유할까요?”만 물어봄)
-
----
-
-## 4.4 Verifier Agent Prompt
-
-**SYSTEM**
-
-* 너는 실행 검증자다.
-* action 실행 결과가 성공인지 판단하고 다음 행동(retry/ask_user/replan)을 결정한다.
-* 출력은 JSON만.
-
-**DEVELOPER**
-
-* 가능한 한 “명확한 기준”으로 판단한다:
-
-  * output_schema 충족 여부
-  * action.success_criteria 충족 여부(예: page_url exists)
-  * 다음 액션의 requires가 state에 생겼는지
-* 출력 포맷:
-
-```json
-{
-  "status": "pass"
-}
-```
-
-또는
-
-```json
-{
-  "status": "fail",
-  "reason": "...",
-  "next": "retry|ask_user|replan",
-  "patch": { "suggested_payload_overrides": { } }
-}
-```
-
-* retry는 동일 tool 재호출이 의미 있을 때만.
-* ask_user는 필수 정보 누락/승인 필요일 때.
-* replan은 step 누락/도구 선택 오류/의존성 설계 오류일 때.
-
-**USER 입력 템플릿**
-
-```json
-{
-  "action": { ... },
-  "success_criteria": ["page_url exists"],
-  "output_schema": { ... },
-  "result": { "id": "page_123", "url": "https://notion.so/page_123" },
-  "state_memory": { "page_url": "https://notion.so/page_123" }
-}
-```
-
-**Verifier 기대 출력 예**
-
-```json
-{ "status": "pass" }
-```
-
----
-
-## 4.5 (선택) Final Composer Prompt
-
-> 운영에서 응답 품질을 일정하게 만들고 싶으면 Composer를 분리하는 게 좋습니다.
-
-**SYSTEM**
-
-* 너는 결과 요약자다. 사용자가 이해하기 쉽게 최종 답변을 작성한다.
-
-**DEVELOPER**
-
-* 입력: goal, state.memory, history
-* 출력: 한국어, 간결, 링크 포함, 불필요한 내부정보(스키마/도구id) 노출 금지
-
----
-
-## 다음 작업 제안 (바로 구현 가능한 “세트”)
-
-원하시면 제가 위 설계에 맞춰서:
-
-1. **Action Plan JSON Schema 파일 2개**를 실제 파일로 만들어 드리고
-2. Notion/Slack Tool Registry 샘플(contracts)도 함께
-3. Orchestrator에 들어갈 **ResultExtractor(JSONPath-lite)**, **SchemaValidator(jsonschema)** 예시 코드
-
-까지 한 번에 정리해드릴 수 있어요.
-
+## 11.4 MVP 권장 API(최소)
+
+* `POST /runs` : run 생성(요청 + 연결된 서비스 + tool 후보)
+* `GET /runs/{run_id}` : 상태 조회(state, history 요약)
+* `POST /runs/{run_id}/approve` : 승인(특정 action 또는 전체)
+* `POST /runs/{run_id}/replay` : 리플레이 실행(디버깅/감사)
