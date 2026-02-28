@@ -1,642 +1,1033 @@
-# metel Multi-Agent Architecture Plan (v3)
+# metel 핵심 엔진 오버홀 기획서 (초안)
 
-## SaaS 통합 자율 LLM 자동화 플랫폼 구현 전략
-
----
-
-# 1. 문서 목적
-
-본 문서는 metel을 **SaaS 통합 자율 LLM 자동화 플랫폼**으로 구현하기 위한:
-
-* 제품 기획 명확화
-* OpenClaw 구조적 장점 분석 및 수용 전략
-* 멀티 에이전트 아키텍처 설계
-* 실행 런타임 설계
-* 보안 모델
-* 실제 구현 단계별 로드맵
-
-을 통합 정의한다.
+> 작성 목적: 핵심 실행 엔진 전면 재설계를 위한 기획 문서
+> 버전: v1.0 Draft
 
 ---
 
-# 2. metel의 제품 정체성 재정의
+# 1. 문제 정의
+
+## 1.1 현재 증상
+
+- 사용자 요청 인식률이 낮다
+- 실행은 되지만 사용자가 기대한 결과와 다르다
+- 복합 요청 처리 시 오류가 누적된다
+- 디버깅이 어렵다
+
+## 1.2 근본 원인
+
+- 자연어 입력을 복합 파이프라인 DAG로 바로 변환
+- Intent와 Slot이 불완전한 상태에서 실행 강행
+- 검증이 "API 호출 성공 여부" 중심으로만 동작
+- 기대 결과에 대한 계약(Contract)이 없음
 
 ---
 
-## 2.1 metel은 무엇인가?
+# 2. metel의 제품 정체성
+
+> metel = Claude Connector와 동일한 실행 구조.
+> 단, 커뮤니케이션 툴(텔레그램 등)을 인터페이스로 사용하며 LLM은 모델 직접 내장이 아닌 API로 호출한다.
 
 metel은 다음과 같은 플랫폼이다:
 
-> 여러 SaaS를 연결하고
-> LLM이 자율적으로 작업을 계획하지만
-> 실행 통제권은 항상 플랫폼이 소유하는 자동화 시스템
+> 텔레그램 등 커뮤니케이션 툴에서 자연어 요청을 입력하면
+> LLM API를 통해 의도를 해석하고
+> OAuth로 연결된 SaaS API를 호출하여
+> 자동으로 작업을 수행하는 SaaS 실행 커넥터
+
+## 2.1 Claude Connector와의 비교
+
+| 항목 | Claude Connector | metel |
+| --- | --- | --- |
+| 인터페이스 | Claude.ai / Claude 앱 | 텔레그램 등 커뮤니케이션 툴 |
+| LLM 사용 방식 | LLM 모델 직접 내장 | LLM API 호출 |
+| SaaS 연결 | OAuth 기반 | OAuth 기반 (동일) |
+| 실행 방식 | HTTP API 호출 | HTTP API 호출 (동일) |
+
+## 2.2 OpenClaw와의 비교
+
+| 항목 | OpenClaw | metel |
+| --- | --- | --- |
+| 실행 범위 | OS/화면 제어 | SaaS API |
+| 자율성 | 시스템 레벨 | 서비스 레벨 |
+| 실행 방식 | 화면 제어/명령 실행 | HTTP API 호출 |
+| 통제 구조 | LLM 중심 | Orchestrator 중심 |
+| 모델 사용 | 로컬 모델 가능 | LLM API 사용 |
 
 ---
 
-## 2.2 OpenClaw와의 전략적 관계
+# 3. 시장 포지셔닝
 
-OpenClaw는 범용 OS 자율 에이전트다.
-metel은 SaaS 통합 자동화 플랫폼이다.
+## 3.1 자동화 도구 스펙트럼
 
-### 비교
+```
+자율성 ←————————————————————————→ 명시성
 
-| 항목    | OpenClaw      | metel                 |
-| ----- | ------------- | --------------------- |
-| 실행 범위 | OS/로컬 시스템     | SaaS API              |
-| 명령 실행 | system.run 가능 | HTTP API 호출만          |
-| 메모리   | 파일 기반         | 구조화 DB                |
-| 통제 구조 | LLM 중심        | Orchestrator 중심       |
-| 위험 모델 | OS 권한         | OAuth + Policy Engine |
+OpenClaw          metel              n8n
+(자율 에이전트)   (오케스트레이터)    (명시적 워크플로우)
+
+LLM이 모든        코드가 흐름 통제    사람이 직접
+판단을 자율로      LLM은 필요시만      노드를 연결하여
+수행              호출               설계
+```
+
+## 3.2 포지션 비교
+
+| 항목 | OpenClaw | metel | n8n |
+| --- | --- | --- | --- |
+| 흐름 통제 | LLM 자율 | Orchestrator | 사람 (UI) |
+| LLM 역할 | 전체 판단 | Intent/Slot 추출 | 없음 (또는 선택) |
+| 유연성 | 최고 | 중간 | 낮음 |
+| 정확도 보장 | 어려움 | 가능 | 높음 |
+| 사용자 개입 | 최소 | Clarification만 | 설계 단계에서 전부 |
+| 자연어 입력 | ✅ | ✅ | ❌ |
+| 실행 안전성 | 낮음 | 높음 | 높음 |
+
+## 3.3 metel의 차별점
+
+> 자연어로 요청하면 안전하고 정확하게 실행된다.
+
+OpenClaw는 너무 자율적이어서 정확도 보장이 어렵고, n8n은 자연어 입력이 불가능하다. metel은 자연어의 편의성과 파이프라인의 안전성을 동시에 제공한다.
 
 ---
 
-## 2.3 metel의 목표 모델
+# 4. 설계 전략
 
-metel은 다음을 결합한다:
+## 4.1 핵심 전략: Atomic-First
 
-* n8n의 안정성
-* OpenClaw의 자율 계획 능력
-* SaaS 보안 요구사항
+> 먼저 하나의 작업을 완벽하게 수행한다.
+
+복합 요청은 Atomic이 안정화된 이후 명시적 Workflow Mode로 확장한다.
+
+## 4.2 Atomic Task 정의
+
+Atomic Task란:
+
+- 단일 SaaS 중심 작업
+- 하나의 명확한 intent
+- 외부 API 호출 1회
+- 기대 결과 명확히 정의 가능
+
+| 요청 | Atomic 여부 |
+| --- | --- |
+| 오늘 구글 캘린더 일정 조회 | ✅ |
+| 노션 페이지 생성 | ✅ |
+| 최근 Linear 이슈 5개 조회 | ✅ |
+| 일정 조회 후 노션 생성 후 슬랙 공유 | ❌ |
+
+## 4.3 엔진 구조: 오케스트레이터 중심 파이프라인
+
+멀티 에이전트 구조(LLM이 스스로 판단하며 루프)가 아닌, 코드가 흐름을 통제하고 LLM은 필요한 지점에서만 호출하는 파이프라인 구조를 채택한다.
+
+이유:
+- metel의 핵심 문제가 "정확도"이기 때문
+- 각 단계의 입출력이 명확해야 디버깅 가능
+- 자율 판단이 개입될수록 기대 결과와의 불일치가 심화됨
 
 ---
 
-# 3. OpenClaw에서 전략적으로 수용할 요소
+# 5. 실행 엔진 파이프라인
 
----
-
-## 3.1 Gateway 중심 통합 구조
-
-OpenClaw의 장점:
-
-* 모든 채널을 단일 Gateway로 통합
-* Runtime은 Gateway 뒤에 위치
-
-### metel 설계 적용
+## 5.1 전체 흐름
 
 ```text
-User / Web / API
-        ↓
-Metel Gateway
-        ↓
-Orchestrator
-        ↓
-Multi-Agent Runtime
+User Request (텔레그램 등)
+    ↓
+[OAuth 연결 확인]
+    ↓ 미연결 시 → 연결 안내 후 중단
+    ↓
+Request Understanding  ← LLM API 호출
+    ↓
+[요청 유형 판단]
+    ↓ 순수 LLM 대화 요청 → 미지원 안내 후 중단
+    ↓ SaaS 실행 요청
+[Clarification 루프 ①]  ← Intent/Slot 불완전 시 최대 2회 질문
+    ↓
+Request Contract
+    ↓
+[Clarification 루프 ②]  ← Hard Ask 파라미터 누락 시 질문
+    ↓
+Tool Retrieval (Top-K)
+    ↓
+Atomic Planner
+    ↓
+Executor → API Call
+    ↓
+Expectation Verification
+    ↓
+Response
 ```
 
-### 목적
+## 5.2 모듈별 역할 요약
 
-* 모든 SaaS 호출은 Orchestrator 통과
-* 실행 로그 중앙 통합
-* 승인/정책 통제 일원화
-
----
-
-## 3.2 System Prompt 동적 구성
-
-OpenClaw는 매 실행마다:
-
-* Tool 목록
-* Safety 규칙
-* Memory 정보
-* Skill 목록
-
-을 동적으로 삽입한다.
-
-### metel 적용 전략
-
-Planner/Executor 호출 시:
-
-* 연결된 서비스만 노출
-* Top-K Tool만 제공
-* tenant policy 요약 포함
-* 위험도 태그 포함
-
-> Tool 전체 노출 금지 → Tool Retrieval 도입
+| 모듈 | 역할 | LLM 사용 |
+| --- | --- | --- |
+| Request Understanding | 자연어 → Intent/Slot 추출 | ✅ |
+| Request Contract | Slot 완전성 검증, 기대 결과 정의 | ❌ |
+| Tool Retrieval | 연결 서비스 기반 Tool 후보 필터링 | ❌ |
+| Atomic Planner | API 파라미터 매핑 | ❌ |
+| Executor | SaaS API 호출 | ❌ |
+| Expectation Verification | 결과 조건 충족 여부 검사 | ❌ |
 
 ---
 
-## 3.3 Memory 분리 전략
+# 6. 모듈 상세 설계
 
-OpenClaw:
+## 6.1 Request Understanding
 
-* 파일 기반 기억
+자연어 요청을 LLM API로 분석하여 Intent와 Slot을 추출한다.
 
-metel:
+**입력**
+```json
+{
+  "user_message": "오늘 구글 캘린더 일정 알려줘",
+  "user_id": "string",
+  "connected_services": ["google", "notion", "linear"]
+}
+```
 
-* 구조화 상태 기반
+**출력**
+```json
+{
+  "intent": "list_events",
+  "service": "google",
+  "slots": {
+    "time_range": "today"
+  },
+  "missing_slots": [],
+  "confidence": 0.95
+}
+```
 
-### 3계층 Memory 구조
-
-1️⃣ Execution State
-
-* action produces 저장
-* 세션 단위
-
-2️⃣ Audit Log
-
-* append-only
-* 리플레이 가능
-
-3️⃣ Long-term Memory
-
-* 요약 기반 저장
-* tenant 격리
-* PII 필터링
+confidence가 운영 임계치(기본 0.8) 미만이면 사용자에게 재질문한다.
 
 ---
 
-## 3.4 Skill → Workflow Template로 재해석
+## 6.2 Clarification 루프
 
-OpenClaw의 Markdown Skill 개념을 다음으로 전환:
+Clarification은 두 시점에서 발생한다. 각 시점의 2회 제한은 독립적으로 계산한다.
 
-> Workflow Template
+### 루프 ① — Request Understanding 이후
 
-구성:
+Intent 또는 핵심 Slot이 불완전할 때 발생한다.
 
-* Action Graph
-* 기본 Tool 조합
-* 정책 힌트
-* 성공 기준
+- 트리거: confidence < 운영 임계치(기본 0.8) 또는 서비스/intent 특정 불가
+- 목적: 요청 자체를 명확히 하는 것
+- 예시: "어떤 서비스를 말씀하신 건가요? Notion인가요, Linear인가요?"
 
-예:
+### 루프 ② — Request Contract 이후
 
-```yaml
-skill: notion_meeting_workflow
-description: 노션 회의 생성 및 슬랙 공유
-actions:
-  - notion.create_page
-  - slack.post_message
+Hard Ask 파라미터가 누락된 경우 발생한다.
+
+- 트리거: fill 정책이 `hard_ask`인 파라미터가 MISSING 상태
+- 목적: 실행에 필요한 구체적 대상을 확정하는 것
+- 예시: "어느 Notion 데이터베이스에 생성할까요?"
+
+**공통 원칙**
+- 각 루프 최대 2회 질문
+- 선택지 기반 질문 우선
+- 2회 초과 시 요청 중단
+
+---
+
+## 6.3 Request Contract
+
+실행 전 Intent, Slot, 기대 결과를 계약 형태로 확정한다. Contract가 불완전하면 실행하지 않는다.
+
+**입력**: Request Understanding 출력
+
+**출력**
+```json
+{
+  "intent": "list_events",
+  "service": "google",
+  "slots": {
+    "time_range": "today",
+    "limit": 5,
+    "timezone": "Asia/Seoul"
+  },
+  "clarification_needed": [],
+  "autofilled": ["limit", "timezone"],
+  "expected_output": {
+    "type": "list",
+    "format": "bullet",
+    "count": 5
+  }
+}
 ```
 
 ---
 
-## 3.5 Approval Gate (Policy 중심)
+## 6.4 Hybrid Parameter Strategy
 
-OpenClaw의 실행 승인 개념을 SaaS 정책 모델로 변환
+파라미터 자동 채움과 사용자 질문을 안전성 기준으로 분리한다.
 
-| Risk                | 처리    |
-| ------------------- | ----- |
-| read                | 자동 허용 |
-| write               | 허용    |
-| destructive         | 승인 필요 |
-| financial           | 승인 필요 |
-| external_send + PII | 승인 필요 |
+### A. Hard Ask — 반드시 질문
+
+절대 자동 채우지 않는 파라미터:
+
+- 대상 선택형 ID (database_id, project_id, channel, page_id 등)
+- 외부 전송 대상
+- destructive 작업 대상
+- 권한/금전 관련 파라미터
+
+처리: `"MISSING"` 반환 → Clarification 질문
+
+### B. Safe Default — 자동 채움 가능
+
+- 타임존
+- 기본 limit (5 또는 10)
+- 기본 정렬
+- 명확한 날짜 표현 ("오늘")
+
+단, 응답에 가정을 명시한다:
+> 최근 5개 기준으로 조회했습니다.
+
+### C. Soft Autofill + Confirm
+
+- 후보 1개: 자동 선택
+- 후보 2~3개: 선택지 질문
 
 ---
 
-# 4. SaaS 자율 LLM 에이전트 아키텍처
+## 6.5 Tool Spec 설계
 
----
+Tool Spec은 각 SaaS 서비스의 API를 metel이 호출할 수 있도록 사전에 정의해 둔 명세서다. LLM은 Tool Spec을 참고해서 사용자 요청으로부터 파라미터를 추출하고, 코드 로직은 입력 스키마/슬롯 정책에 따라 파라미터를 자동 채우거나 사용자에게 질문한다.
 
-## 4.1 전체 구조
+### Tool Spec 구조
+
+```json
+{
+  "service": "google",
+  "version": "v1",
+  "base_url": "https://www.googleapis.com/calendar/v3",
+  "tools": [
+    {
+      "tool_name": "google_calendar_list_events",
+      "description": "List events in a calendar for a time range",
+      "method": "GET",
+      "path": "/calendars/{calendar_id}/events",
+      "adapter_function": "google_calendar_list_events",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "calendar_id": { "type": "string" },
+          "time_min": { "type": "string" },
+          "time_max": { "type": "string" },
+          "time_zone": { "type": "string" },
+          "max_results": { "type": "integer" }
+        },
+        "required": ["calendar_id"]
+      }
+    }
+  ]
+}
+```
+
+### fill 정책 정의
+
+| fill 값 | 동작 | 해당 파라미터 예시 |
+| --- | --- | --- |
+| `hard_ask` | 반드시 사용자에게 질문 | 대상 ID, 전송 채널, destructive 대상 |
+| `safe_default` | 기본값으로 자동 채움 + 응답에 명시 | 타임존, limit, 정렬 기준 |
+| `soft_confirm` | 후보 1개면 자동 선택, 2~3개면 질문 | 연결된 캘린더, 워크스페이스 |
+| `llm_extract` | LLM이 사용자 요청에서 직접 추출 | 날짜 표현, 키워드, 개수 |
+
+> 구현 기준: `fill`은 Tool Spec의 필수 필드가 아니라 런타임 정책(`slot_schema`, `slot_policy`)으로 관리한다.  
+> Tool Spec은 실행 계약(input schema/required scopes)에 집중하고, 질문/자동채움은 오케스트레이터 정책에서 판정한다.
+
+### LLM의 역할 범위
+
+LLM은 Tool Spec이라는 틀 안에서 사용자 요청을 파라미터로 변환하는 역할만 담당한다. 어떤 API를 쓸지, 파라미터가 부족한지, 실행할지 여부는 코드 로직이 처리한다.
+
+```
+사용자 요청: "오늘 구글 캘린더 일정 알려줘"
+    ↓
+LLM 추출 (llm_extract)
+  time_min → "오늘 00:00 KST" 변환
+  time_max → "오늘 23:59 KST" 변환
+    ↓
+코드 로직 처리
+  max_results → 5 (safe_default)
+  timezone    → "Asia/Seoul" (safe_default)
+    ↓
+모든 파라미터 확정 → Executor 실행
+```
+
+### Tool Spec 등록 위치
 
 ```text
-Gateway
-    ↓
-Orchestrator (State Machine)
-    ↓
-Planner Agent
-Policy Agent
-Executor Agent
-Verifier Agent
+backend/
+  agent/
+    tool_specs/
+      google.json
+      notion.json
+      linear.json
+      spotify.json
+      web.json
+```
+
+새로운 SaaS 서비스를 추가할 때는 해당 서비스의 Tool Spec JSON을 등록하는 것으로 확장한다.
+
+---
+
+## 6.6 Tool Retrieval
+
+모든 Tool을 LLM에 제공하면 환각이 증가한다. 연결된 서비스와 Intent 기반으로 Top-K 후보만 Planner에 전달한다.
+
+**입력**: intent, service
+
+**출력**
+```json
+{
+  "tools": [
+    {
+      "tool_name": "google_calendar_list_events",
+      "service": "google",
+      "schema": { }
+    }
+  ],
+  "top_k": 3
+}
 ```
 
 ---
 
-## 4.2 책임 분리
+## 6.7 Atomic Planner
 
-### Planner Agent
+Request Contract와 Tool Spec을 기반으로 API 호출 파라미터를 확정한다.
 
-* 사용자 요청 → Action Plan JSON
-* requires / produces 명시
-* Tool 후보 제한
+**입력**: Request Contract + Tool Retrieval 출력
 
-### Policy Agent
-
-* 위험도 판단
-* OAuth scope 검증
-* 승인 요구
-
-### Executor Agent
-
-* input_schema 기반 payload 생성
-* MISSING 규칙
-
-### Verifier Agent
-
-* output_schema 검증
-* success_criteria 확인
-* retry / replan 결정
-
-### Orchestrator
-
-* 실행 루프
-* JSON Schema 강제
-* retry/backoff
-* 상태 저장
-* 승인 UX 연결
+**출력**
+```json
+{
+  "plan": [
+    {
+      "step": 1,
+      "tool_name": "google_calendar_list_events",
+      "params": {
+        "time_min": "2026-02-28T00:00:00+09:00",
+        "time_max": "2026-02-28T23:59:59+09:00",
+        "max_results": 5
+      }
+    }
+  ]
+}
+```
 
 ---
 
-# 5. 실행 런타임 설계
+## 6.8 Executor
+
+Plan에 따라 SaaS API를 호출한다.
+
+**입력**: Atomic Planner 출력
+
+**출력**
+```json
+{
+  "status": "success",
+  "raw_response": { },
+  "executed_tool": "google_calendar_list_events"
+}
+```
 
 ---
 
-## 5.1 Action Plan 기반 실행
+## 6.9 Expectation Verification
+
+API 성공 여부가 아닌 사용자 요청 조건 충족 여부를 검사한다.
+
+**입력**: Executor 출력 + Request Contract의 expected_output
+
+**출력**
+```json
+{
+  "verified": true,
+  "checks": {
+    "count_match": true,
+    "date_range_match": true,
+    "format_match": true
+  },
+  "final_response": "오늘 일정 5건입니다:\n• 10:00 팀 미팅 ..."
+}
+```
+
+**검증 항목**
+- 개수 정확성: "최근 5개" → 정확히 5개인지
+- 기간 정확성: "오늘 일정" → timezone 기준 오늘인지
+- 필터 정확성: 조건에 맞는 데이터인지
+- 출력 형식: 요청한 포맷(bullet 등)인지
+
+---
+
+# 7. OAuth 연결 관리
+
+## 7.1 전제 조건
+
+모든 SaaS 작업은 사용자가 해당 서비스를 OAuth로 사전 연결한 경우에만 실행된다.
+
+## 7.2 연결 상태 확인 흐름
 
 ```text
 User Request
     ↓
-Planner
+Request Understanding
     ↓
-Policy Check
+서비스 연결 여부 확인
     ↓
-for action:
-    Executor → Payload
-    ↓
-    Schema Validation
-    ↓
-    API Call
-    ↓
-    produces_map 추출
-    ↓
-    Verifier
-    ↓
-    State Update
+연결됨   → Request Contract 진행
+미연결   → 연결 안내 메시지 반환 후 중단
+```
+
+**미연결 시 응답 예시**
+> Google Calendar가 연결되어 있지 않습니다.
+> 아래 링크에서 연결 후 다시 요청해 주세요.
+> 👉 [Google Calendar 연결하기](링크)
+
+## 7.3 토큰 만료 처리
+
+| 상황 | 처리 방식 |
+| --- | --- |
+| Access Token 만료 | Refresh Token으로 자동 갱신 후 재실행 |
+| Refresh Token 만료 | 재연결 안내 메시지 반환 |
+| 권한 범위 부족 | 필요한 권한 안내 + 재연결 유도 |
+
+---
+
+# 8. 에러 및 예외 처리 정책
+
+## 8.1 에러 유형별 처리
+
+| 에러 유형 | 처리 방식 |
+| --- | --- |
+| Intent 인식 실패 (confidence < 운영 임계치) | 사용자에게 재질문 |
+| Clarification 2회 초과 | 요청 중단 + 안내 메시지 반환 |
+| API 호출 실패 (429/timeout) | 1회 재시도 |
+| API 호출 실패 (5xx) | 1회 재시도 후 실패 시 중단 + 서비스 오류 안내 |
+| Verification 실패 | Executor부터 1회 재실행 (API 재호출) → 실패 시 결과 + 경고 반환 |
+| Tool 후보 없음 | 지원하지 않는 요청 안내 |
+
+## 8.2 재시도 정책
+
+- 최대 재시도 횟수: 1회
+- 재시도 대상: API `rate_limited`/`timeout`/`5xx`, Verification 실패
+- 재시도 불가: validation_error, Clarification 초과, destructive 작업
+
+## 8.3 사용자 응답 예시
+
+**Clarification 초과 시**
+> 요청을 정확히 이해하지 못했습니다.
+> 다시 한번 구체적으로 말씀해 주시겠어요?
+> 예: "노션 'Daily Log' 페이지에 오늘 일정 추가해줘"
+
+**Verification 실패 시**
+> 요청하신 조건과 결과가 일부 다를 수 있습니다.
+> 조회된 결과를 그대로 전달드립니다.
+> (조회 기준: 오늘 / 결과: 3건)
+
+---
+
+# 9. MVP 범위
+
+## 9.1 포함
+
+- Notion 단일 작업
+- Google Calendar 단일 조회
+- Linear 단일 조회/생성
+
+## 9.2 제한
+
+- 다중 서비스 자동 체인 ❌
+- destructive 자동 실행 ❌
+- 3-step 이상 파이프라인 ❌
+
+## 9.3 허용
+
+- 조회 + LLM 내부 요약 ✅
+
+## 9.4 LLM 대화 기능 범위
+
+metel은 순수 LLM 대화 서비스가 아니다. SaaS 실행 커넥터로서의 포지셔닝을 유지하기 위해 LLM 사용 범위를 다음과 같이 제한한다.
+
+| 요청 유형 | 예시 | 처리 방식 |
+| --- | --- | --- |
+| 순수 콘텐츠 생성 | "회의록 서식 만들어줘" | ❌ 지원 안 함 + 안내 메시지 |
+| SaaS 실행 | "노션에 회의록 페이지 만들어줘" | ✅ 지원 |
+| 조회 + LLM 요약 | "오늘 일정 요약해줘" | ✅ 지원 |
+| SaaS 데이터 가공 | "Linear 이슈 내용 정리해줘" | ✅ 지원 |
+
+**원칙**: SaaS 데이터를 조회한 결과를 LLM으로 가공하는 것은 허용한다. SaaS와 무관한 순수 대화/생성은 범위 밖이다.
+
+**순수 생성 요청 시 응답 예시**
+> 회의록 서식 생성은 지원하지 않습니다.
+> 노션 등 연결된 서비스에 페이지를 직접 만들어드릴 수 있습니다.
+> 예: "노션 'Daily Log' 데이터베이스에 오늘 날짜로 회의록 페이지 만들어줘"
+
+---
+
+## 9.5 복합 요청 처리 (확장 단계)
+
+MVP 안정화 이후 Workflow Mode를 별도 모듈로 개발한다.
+
+```
+Atomic Mode (기본)          Workflow Mode (확장)
+단일 작업 수행              A 작업 완료 → B 작업 연결
+정확도 최우선               UI 기반 구성
+                           Template 기반 실행
 ```
 
 ---
 
-## 5.2 재플래닝 구조
+# 10. 코드 구조
 
-실패 조건:
-
-* requires 미충족
-* output_schema 실패
-* success_criteria 미충족
-
-→ Planner 재호출
-
----
-
-# 6. 실제 구현 계획
-
----
-
-# Phase 1 — Core Infrastructure (3주)
-
-### 1. Tool Registry 구현
-
-* JSON Schema 기반 정의
-* produces_map 추출기
-* OAuth scope 모델
-
-### 2. Orchestrator 구현
-
-* 실행 루프
-* retry/backoff
-* timeout
-* JSON Schema Validator
-* Result Extractor
-
-### 3. Execution State 저장
-
-* Redis (세션 상태)
-* PostgreSQL (audit log)
+```text
+backend/
+  app/
+    routes/
+      telegram.py
+      notion.py
+      linear.py
+      google.py
+  agent/
+    loop.py
+    orchestrator_v2.py
+    stepwise_planner.py
+    planner_llm.py
+    executor.py
+    tool_runner.py
+    slot_schema.py
+    pending_action.py
+    tool_specs/
+  docs/sql/
+    002_create_oauth_tokens_table.sql
+    004_create_command_logs_table.sql
+    007_create_pending_actions_table.sql
+    013_add_pipeline_step_logs_and_command_logs_stepwise_columns.sql
+```
 
 ---
 
-# Phase 2 — LLM 기반 Action 실행 (2주)
+## 10.1 전환 전략 (기존 구조 공존)
 
-### 4. Planner 구현
+Atomic-First로 전환하되, 현재 운영 중인 실행 경로는 feature flag 기반으로 점진 이행한다.
 
-* Action Plan JSON Schema 강제
-* Tool Retrieval 적용
+- 유지 원칙:
+  - 서비스/provider 식별자는 현행(`google`, `notion`, `linear`) 유지
+  - Tool 이름 규약은 현행(`tool_name`, 예: `google_calendar_list_events`) 유지
+  - OAuth 저장 구조는 현행(`oauth_tokens`) 유지
 
-### 5. Executor 구현
-
-* schema-locked payload
-* MISSING 규칙
-
-### 6. Verifier 구현
-
-* 코드 중심 검증
-* LLM 보조
-
----
-
-# Phase 3 — Policy 및 승인 시스템 (2주)
-
-### 7. Policy Engine
-
-* risk_level 기반 제어
-* scope 확인
-
-### 8. 승인 UX
-
-* destructive 승인
-* external_send 승인
+- 공존 대상 경로:
+  - 기존 rule planner + executor
+  - stepwise pipeline
+  - router v2
+  - autonomous
+- 이행 원칙:
+  - 신규 Atomic 경로를 shadow로 먼저 실행하고 `command_logs`, `pipeline_step_logs`로 비교
+  - 품질 게이트 통과 시 트래픽 10% → 30% → 100% 확대
+  - 장애 시 즉시 기존 경로로 rollback (`*_enabled=false`, traffic 0)
+- 수용 기준:
+  - 기존 대비 성공률 동등 이상
+  - validation_error 및 user-visible error 비율 개선
+  - p95 지연 +10% 이내
 
 ---
 
-# Phase 4 — 멀티 에이전트 분리 (3주)
+# 11. 오버홀 실행 계획
 
-### 9. Planner/Policy/Verifier 독립
+## Phase 1 — 관측/기준선 고정 (1주)
 
-### 10. 재플래닝 루프 완성
+- 목표:
+  - 현재 경로(rule/stepwise/router v2/autonomous)의 실패 유형과 기준 지표를 고정한다.
+- 수정 범위:
+  - `backend/app/routes/telegram.py` (구조화 로그 필드 정리)
+  - `backend/agent/loop.py` (phase 구분 note 태깅)
+  - `docs/reports/*` 생성 스크립트 (`backend/scripts/eval_*`)
+- 완료 조건:
+  - 최근 7일 기준 success/validation_error/clarification/p95 기준선 리포트 확정
+  - 오버홀 전후 비교용 지표 정의 확정
+
+## Phase 2 — Request Understanding + Clarification 정합화 (1~2주)
+
+- 목표:
+  - 문서 기준 Request Understanding/Clarification 정책을 현행 코드에 일치시킨다.
+- 수정 범위:
+  - `backend/agent/loop.py` (clarification 트리거/횟수/중단 정책)
+  - `backend/agent/orchestrator_v2.py` (intent parsing + needs_input 정책)
+  - `backend/agent/intent_contract.py` (confidence/필드 검증 정렬)
+  - `backend/agent/pending_action.py` (pending_actions 수명주기 정렬)
+  - `backend/agent/slot_schema.py`, `backend/agent/slot_collector.py` (hard_ask/safe_default/soft_confirm 런타임 정책)
+  - `backend/tests/test_agent_loop.py`, `backend/tests/test_orchestrator_v2.py`, `backend/tests/test_pending_action.py`
+- 완료 조건:
+  - Clarification 정책 회귀 테스트 통과
+  - pending_actions 기반 재질문 재개/만료/취소 시나리오 통과
+
+## Phase 3 — Atomic Planner 경로 신설 및 기존 경로 공존 (2주)
+
+- 목표:
+  - 기존 경로를 유지한 채 Atomic 실행 경로를 feature flag로 추가한다.
+- 수정 범위:
+  - `backend/agent/loop.py` (Atomic 경로 진입 분기 + rollout note)
+  - `backend/agent/planner.py`, `backend/agent/planner_llm.py` (단일 서비스/단일 작업 중심 계획 생성)
+  - `backend/agent/stepwise_planner.py` (stepwise fallback 역할 축소)
+  - `backend/app/core/config.py` (Atomic rollout/shadow 플래그)
+  - `backend/tests/test_agent_loop.py`, `backend/tests/test_planner_llm.py`, `backend/tests/test_stepwise_planner.py`
+- 완료 조건:
+  - Atomic 경로 shadow 실행 가능
+  - rollback 없이 기존 경로 병행 동작 확인
+
+## Phase 4 — Executor/Verification 정책 강화 (2주)
+
+- 목표:
+  - API 성공이 아닌 기대결과 충족 검증(Expectation Verification) 중심으로 실행 정책을 강화한다.
+- 수정 범위:
+  - `backend/agent/executor.py` (expected_output 기반 검증 규칙 + verification fail handling)
+  - `backend/agent/tool_runner.py` (재시도 대상/비대상 일관화)
+  - `backend/agent/runtime_api_profile.py` (scope/risk gate 보강)
+  - `backend/tests/test_agent_executor.py`, `backend/tests/test_tool_runner.py`, `backend/tests/test_runtime_api_profile.py`
+- 완료 조건:
+  - verification 실패 재실행 정책 테스트 통과
+  - 재시도 정책(429/timeout/5xx only) 일치 확인
+
+## Phase 5 — 텔레그램 응답/운영 연계 정리 (1주)
+
+- 목표:
+  - 사용자 응답 품질, 운영 로그, KPI 계산 경로를 Atomic 정책에 맞게 정리한다.
+- 수정 범위:
+  - `backend/app/routes/telegram.py` (최종 응답 메시지/오류 매핑/로그 연계)
+  - 필요 시 SQL 마이그레이션 보강: `docs/sql/004_*`, `docs/sql/013_*`
+  - `backend/tests/test_telegram_route_helpers.py`, `backend/tests/test_telegram_command_mapping.py`
+- 완료 조건:
+  - command_logs/pipeline_step_logs 기반 KPI 집계 일관성 확인
+  - 사용자 가시 오류 메시지 정책 점검 완료
+
+## Phase 6 — 점진 롤아웃 및 경로 정리 (1~2주)
+
+- 목표:
+  - Atomic 경로를 `10% -> 30% -> 100%`로 확대하고, 구경로를 단계 축소한다.
+- 수정 범위:
+  - `backend/app/core/config.py` (rollout 기본값 전환)
+  - `backend/agent/loop.py` (legacy 분기 제거 또는 비활성화)
+  - 운영 스크립트/리포트 (`backend/scripts/run_*`, `docs/reports/*`) 업데이트
+  - 전체 회귀: `backend/tests/test_agent_loop.py`, `backend/tests/test_autonomous_loop.py`, `backend/tests/test_agent_executor_e2e.py`
+- 완료 조건:
+  - KPI 수용 기준 충족
+  - kill-switch/rollback 시나리오 검증
+  - 구경로 축소 후 운영 안정성 확인
 
 ---
 
-# Phase 5 — Workflow Template (Skill) 도입 (2주)
+# 12. 성공 지표
 
-### 11. Template Registry
-
-### 12. 자동 추천
-
----
-
-# 7. 보안 설계 원칙
-
-1. LLM은 직접 API 호출하지 않는다
-2. 모든 Tool은 Contract 기반
-3. 스키마 밖 필드 차단
-4. 승인 없는 destructive 실행 0%
-5. OAuth scope 검증 필수
-6. PII 외부 전송 시 승인
+| 지표 | 목표 | 측정 방법 |
+| --- | --- | --- |
+| Intent 인식률 | 90%+ | 전체 요청 중 confidence ≥ 운영 임계치로 Contract 진입한 비율 |
+| 기대 결과 정합성 | 85%+ | Expectation Verification 통과 비율 |
+| Clarification 평균 횟수 | 1.5회 이하 | 요청당 Clarification 발생 횟수 평균 (`command_logs`/`pending_actions` 기반) |
+| Tool 환각 | 0건 | 등록되지 않은 `tool_name`이 Planner 출력에 포함된 건수 |
+| 승인 없는 destructive 실행 | 0건 | Hard Ask 미확인 상태로 destructive 작업이 Executor에 도달한 건수 |
 
 ---
 
-# 8. 성공 지표
+# 13. 핵심 철학
 
-* 3-step 의존성 자동 처리 성공률 80%+
-* Tool 환각률 < 1%
-* 승인 없는 destructive 실행 0건
-* 실패 시 재플래닝 성공률 70%+
-* 완전 리플레이 가능
-
----
-
-# 9. 최종 설계 철학
-
-metel은 OpenClaw를 모방하지 않는다.
-
-대신 다음을 흡수한다:
-
-* Gateway 중심 구조
-* 동적 System Prompt 구성
-* Skill 개념
-* Approval Gate
-* Agent Loop 구조
-
-그러나:
-
-* OS 실행은 배제
-* LLM 중심 실행 통제는 배제
-* SaaS API 중심으로 재설계
-
----
-
-# 최종 정의
+metel은 OpenClaw처럼 자율 OS 에이전트가 아니다.
 
 metel은:
 
-> SaaS 통합 자율 LLM 자동화 플랫폼
+> Claude Connector와 동일한 실행 구조를 가진 SaaS 실행 커넥터
 
-* 자율적이지만 통제 가능하고
-* 확장 가능하지만 안전하며
-* 지능적이지만 예측 가능한 시스템
+이다. 차이는 인터페이스(커뮤니케이션 툴)와 LLM 사용 방식(API 호출)뿐이다.
 
-아래는 기존 문서 에 **“실제 코드 디렉토리 구조 설계”**와 **“MVP 범위 재정의”**를 목적(= OpenClaw 장점 흡수 + SaaS 통합 자율 LLM 에이전트) 관점으로 **통합 반영한 업데이트 본문**입니다.
-(그대로 `docs/multi_agent_architecture_plan.md`에 추가/교체해서 사용하시면 됩니다.)
+따라서:
 
----
+- 자율성보다 정확성
+- 복합성보다 완성도
+- 자동 채움보다 안전성
 
-# 10. MVP 범위 재정의 (SaaS 통합 자율 LLM 에이전트)
-
-## 10.1 MVP 목표
-
-MVP는 “완전 자율”이 아니라, **안전하고 예측 가능한 자율 실행 루프**를 최소 기능으로 제공한다.
-
-MVP에서 반드시 달성할 것:
-
-* 자연어 요청 → **Action Plan(JSON)** 생성
-* **Policy Gate**로 위험 작업 통제(승인/차단)
-* **Schema-locked Executor**로 payload 생성 (필수값은 `MISSING`)
-* Orchestrator가 **결정적으로 실행**(retry/timeout/state)
-* 실행 결과를 **State + Audit Log**로 남기고 리플레이 가능
-
-OpenClaw에서 MVP에 가져올 핵심:
-
-* **Gateway 중심 단일 진입점**
-* **런타임에서 동적 System Prompt 조립**
-* **Skill(= Workflow Template) 목록 기반 확장**
-* **Approval Gate(승인/정책)**
-* **Agent Loop(스트리밍/툴 이벤트/재시도/압축) 사고방식**
-
-## 10.2 MVP에서 “하지 않을 것”
-
-* OS/로컬 명령 실행 (OpenClaw의 system.run 류) ❌
-* 임의 HTTP 호출(LLM이 URL을 만들어 호출) ❌
-* 무제한 도구 노출(전체 도구 목록을 LLM에 제공) ❌
-* destructive/financial 자동 실행 ❌ (항상 승인)
-* 병렬/분기/조인 등 고급 워크플로우 엔진 (Phase 3+) ❌
-
-## 10.3 MVP 기능 범위
-
-### A. 채널/진입점(Gateway)
-
-* Web API(HTTP)로 요청 수신 (추후 Slack/Telegram 확장)
-* 실행 요청/상태 조회 엔드포인트
-* (선택) WebSocket 스트리밍: tool event / agent event / final
-
-### B. 지원 SaaS (최소 2~3개)
-
-* Notion: create_page / query_database (read+write)
-* Slack: post_message (notify)
-* (선택) Google Sheets: get_range (read)
-
-> MVP에서 중요한 건 “서비스 숫자”가 아니라 **requires/produces 의존성 연결이 안정적으로 동작**하는지다.
-
-### C. Tool Registry(Contract)
-
-* tool_id, risk_level, scopes_required
-* input_schema/output_schema(JSON Schema)
-* produces_map(state key 표준화)
-
-### D. Multi-Agent (초기 4개 유지)
-
-* Planner: Action Plan 생성
-* Policy: allow/deny/require_confirm
-* Executor: schema-locked payload 생성
-* Verifier: pass/fail + retry/ask_user/replan
-
-### E. Orchestrator(Runtime)
-
-* sequential action 실행 루프
-* retries/backoff/timeout
-* schema validation (input/output)
-* produces extraction → state update
-* 승인 요청 시 “중단 + 승인 대기” 상태 반환
-* audit log 저장(append-only) + replay key
-
-### F. 최소 승인 UX
-
-* require_confirm 상태 반환 시, 프론트/클라이언트에서 “승인/거절” 호출
-* 승인 후 동일 run을 이어서 실행
-
-## 10.4 MVP 성공 조건(명확한 테스트 기준)
-
-* 2-step 의존성 플로우 성공률 90%+ (Notion 생성 → Slack 공유)
-* `MISSING` 발생 시 “필요 정보만” 질문하고 재개 가능
-* 승인 없는 destructive 실행 0건
-* 모든 run은 audit log로 재현 가능(replay)
-* Tool 환각(등록되지 않은 tool 호출) 0건
+을 우선한다.
 
 ---
 
-# 11. 실제 코드 디렉토리 구조 설계 (Python 중심)
+# 14. 데이터 모델 (현행 유지)
 
-> 원칙: OpenClaw처럼 “런타임이 조립하고(Gateway/Prompt/Skill), 실행은 통제된 Runtime(Orchestrator)이 한다”를 코드 구조로 강제한다.
+파이프라인 오버홀은 **현행 DB 스키마를 유지**한 상태에서 진행한다. 신규 테이블 신설보다 기존 테이블 확장/활용을 우선한다.
 
-## 11.1 리포지토리 구조(권장)
+## 14.1 사용자 (users)
 
-아래는 **Python + FastAPI** 기준의 현실적인 구조입니다. (단일 repo)
-
-```text
-metel/
-  apps/
-    api/                          # Gateway(API Hub): FastAPI, WebSocket streaming
-      main.py
-      routers/
-        runs.py                   # /runs (create, status, approve, replay)
-        tools.py                  # (optional) tool registry introspection
-      middleware/
-        auth.py                   # tenant/user auth, rate limit
-      deps.py
-      settings.py
-    worker/                       # background workers (Celery/RQ/Arq)
-      main.py
-      tasks/
-        run_execute.py            # execute run loop
-        tool_call.py              # tool call wrapper jobs (optional)
-  packages/
-    core/
-      __init__.py
-      orchestrator/
-        orchestrator.py           # main runtime loop
-        models.py                 # ActionPlan, Action, ExecutionState, ExecRecord
-        validator.py              # jsonschema validation
-        extractor.py              # produces_map extraction (jsonpath-lite)
-        replay.py                 # replay serializer & deterministic re-run helper
-        prompt_builder.py         # dynamic system prompt assembly (OpenClaw-like)
-        tool_retrieval.py         # top-k tools selection (RAG/embedding or rules)
-      agents/
-        planner.py                # LLM client wrapper + planner prompt
-        executor.py               # schema-locked payload generator
-        verifier.py               # verifier logic (code-first + LLM fallback)
-        policy.py                 # policy logic (rule engine + LLM fallback)
-        composer.py               # final response generator (optional)
-      registry/
-        tool_registry.py          # contract store interface
-        contracts/                # tool definitions (yaml/json)
-          notion.create_page.json
-          slack.post_message.json
-        skills/                   # workflow templates (OpenClaw skill-like)
-          notion_meeting_workflow.yaml
-      policy/
-        rules.py                  # allow/deny/require_confirm rules
-        pii.py                    # pii detectors/redactors
-        scopes.py                 # oauth scope checks
-      integrations/
-        notion/
-          client.py               # Notion API client wrapper (requests/httpx)
-          adapters.py             # tool_id -> actual endpoint mapping
-        slack/
-          client.py
-          adapters.py
-        google_sheets/
-          client.py
-          adapters.py
-      storage/
-        state_store.py            # Redis: session state
-        audit_log.py              # Postgres: append-only log
-        secrets.py                # token vault interface
-      observability/
-        tracing.py                # request/run correlation ids
-        logging.py                # structured logs
-        metrics.py                # counters (tool success rate, retry count)
-  docs/
-    multi_agent_architecture_plan.md
-    schemas/
-      action-plan.schema.json
-      action-plan.notion.schema.json
-    api/
-      openapi.md
-  scripts/
-    dev_run.sh
-    seed_contracts.py
-  tests/
-    unit/
-      test_schema_validation.py
-      test_produces_extractor.py
-      test_policy_rules.py
-    integration/
-      test_notion_to_slack_flow.py
-  pyproject.toml
-  README.md
+```sql
+users
+- id              UUID        PK
+- telegram_id     STRING      UNIQUE  -- 텔레그램 사용자 식별자
+- timezone        STRING      DEFAULT 'Asia/Seoul'
+- created_at      TIMESTAMP
+- updated_at      TIMESTAMP
 ```
 
-## 11.2 디렉토리 설계의 핵심 의도
+## 14.2 서비스 연결 (oauth_tokens)
 
-### A. `apps/api` = Gateway
+OAuth 토큰은 암호화 저장하며, provider별 연결 상태/scope는 `oauth_tokens`를 기준으로 관리한다.
 
-OpenClaw의 Gateway 장점(단일 진입점)을 metel에서도 강제합니다.
+```sql
+oauth_tokens
+- id                    BIGSERIAL   PK
+- user_id               UUID        FK
+- provider              STRING      -- 'google' | 'notion' | 'linear' | 'spotify' ...
+- access_token_encrypted TEXT       ENCRYPTED
+- granted_scopes        TEXT[]      -- 부여 스코프
+- workspace_id          TEXT
+- workspace_name        TEXT
+- created_at            TIMESTAMP
+- updated_at            TIMESTAMP
+```
 
-* 인증/요금/레이트리밋
-* run 생성/조회/승인/리플레이 API
-* (선택) WebSocket 스트리밍으로 “에이전트 이벤트” 제공
+## 14.3 요청/실행 로그 (command_logs, pipeline_step_logs)
 
-### B. `packages/core/orchestrator` = 실행 통제의 단일 소유자
+성공 지표 측정과 회귀 비교는 기존 로그 테이블을 사용한다.
 
-* LLM이 아닌 코드가 실행을 통제(필수)
-* schema validation / retry / timeout / state update / audit log
-* 승인 대기 상태로 전환(Policy 결과에 따라)
+```sql
+command_logs
+- command, status, error_code, detail
+- run_id, request_id, catalog_id
+- final_status, failed_task_id, failure_reason
+- missing_required_fields
+```
 
-### C. `packages/core/agents` = “제안자” 모듈
+```sql
+pipeline_step_logs
+- run_id, request_id, task_index, task_id
+- service, api, validation_status, call_status
+- missing_required_fields, validation_error_code, failure_reason
+- request_payload, normalized_response, raw_response
+```
 
-* Planner/Executor/Verifier/Policy는 **출력 포맷 강제(JSON only)** 를 전제로 구현
-* 모델 교체가 쉬워야 하므로 “LLM client wrapper + prompt template”로 분리
+## 14.4 대화 상태 (pending_actions)
 
-### D. `packages/core/registry/contracts` = Tool Contract 단일 진실
+Clarification 루프 상태는 `pending_actions`에 저장한다.
 
-* Tool 환각 방지의 핵심
-* 입력/출력 스키마, risk_level, produces_map 고정
-
-### E. `packages/core/registry/skills` = Workflow Template
-
-OpenClaw의 Skill 아이디어를 metel에서는 “템플릿 워크플로우”로 활용:
-
-* Planner 안정성 상승
-* 자주 쓰는 플로우를 표준화
-* 운영/디버깅 용이
-
-## 11.3 MVP에서 반드시 만들어야 하는 파일/모듈 (체크리스트)
-
-* [ ] `docs/schemas/action-plan.schema.json` (Planner 출력 검증)
-* [ ] `packages/core/orchestrator/orchestrator.py` (실행 루프)
-* [ ] `packages/core/registry/tool_registry.py` + `contracts/*`
-* [ ] `packages/core/agents/planner.py` + prompt
-* [ ] `packages/core/agents/executor.py` + schema-locked prompt
-* [ ] `packages/core/policy/rules.py` (최소 규칙 엔진)
-* [ ] `packages/core/storage/state_store.py` (Redis)
-* [ ] `packages/core/storage/audit_log.py` (Postgres)
-* [ ] `apps/api/routers/runs.py` (create/status/approve)
+```sql
+pending_actions
+- user_id (PK)
+- intent, action, task_id
+- plan_json, plan_source
+- collected_slots, missing_slots
+- expires_at, status
+- created_at, updated_at
+```
 
 ---
 
-## 11.4 MVP 권장 API(최소)
+# 15. 상태 관리 설계
 
-* `POST /runs` : run 생성(요청 + 연결된 서비스 + tool 후보)
-* `GET /runs/{run_id}` : 상태 조회(state, history 요약)
-* `POST /runs/{run_id}/approve` : 승인(특정 action 또는 전체)
-* `POST /runs/{run_id}/replay` : 리플레이 실행(디버깅/감사)
+Clarification 루프는 사용자의 응답을 기다리는 동안 파이프라인 상태를 유지해야 한다.
+
+## 15.1 상태 흐름
+
+```text
+요청 수신
+    ↓
+pending_actions에 상태 저장
+    ↓
+사용자에게 질문 전송
+    ↓
+[대기] 다음 메시지 수신까지
+    ↓
+텔레그램 메시지 수신
+    ↓
+pending_actions 조회
+    ↓
+활성 상태 있음 → Clarification 응답으로 처리
+활성 상태 없음 → 새 요청으로 처리
+```
+
+## 15.2 상태 만료 정책
+
+- 생성 후 **10~15분**(운영 설정값) 내 응답 없으면 자동 만료
+- 만료 후 메시지 수신 시 새 요청으로 처리
+- 만료 안내 메시지는 별도 전송하지 않음 (사용자가 다시 요청하면 됨)
+
+## 15.3 동시 요청 처리
+
+- 사용자당 활성 pending_action은 1개만 허용
+- Clarification 대기 중 새 요청이 들어오면 기존 상태를 파기하고 새 요청으로 처리
+- 파기 시 안내 메시지 전송:
+  > 이전 요청을 취소하고 새 요청을 처리합니다.
+
+---
+
+# 16. LLM 프롬프트 설계
+
+Request Understanding에서 LLM API를 호출할 때 사용하는 프롬프트 구조다.
+
+## 16.1 시스템 프롬프트
+
+```
+당신은 SaaS 자동화 도우미입니다.
+사용자의 자연어 요청을 분석하여 아래 JSON 형식으로만 응답하세요.
+
+규칙:
+1. 응답은 반드시 JSON만 출력합니다. 설명이나 부가 텍스트는 포함하지 않습니다.
+2. 연결된 서비스 목록에 없는 서비스는 intent에 포함하지 않습니다.
+3. 날짜/시간 표현은 사용자 timezone 기준으로 해석합니다.
+4. SaaS 실행과 무관한 요청(순수 콘텐츠 생성, 일반 대화)은 request_type을 'unsupported'로 설정합니다.
+5. 확신할 수 없는 경우 confidence를 낮게 설정합니다.
+
+출력 형식:
+{
+  "request_type": "saas_execution" | "unsupported",
+  "intent": string | null,
+  "service": string | null,
+  "slots": { [key: string]: any },
+  "missing_slots": string[],
+  "confidence": float  // 0.0 ~ 1.0
+}
+```
+
+## 16.2 유저 프롬프트
+
+```
+사용자 요청: {user_message}
+연결된 서비스: {connected_services}
+사용자 timezone: {timezone}
+현재 시각: {current_datetime}
+```
+
+## 16.3 Few-shot 예시
+
+프롬프트에 포함되는 예시로, LLM 출력 일관성을 높인다.
+
+**예시 1 — SaaS 실행 요청**
+```
+입력: "오늘 구글 캘린더 일정 알려줘"
+출력:
+{
+  "request_type": "saas_execution",
+  "intent": "list_events",
+  "service": "google",
+  "slots": { "time_range": "today" },
+  "missing_slots": [],
+  "confidence": 0.95
+}
+```
+
+**예시 2 — 대상 ID 누락**
+```
+입력: "노션에 페이지 만들어줘"
+출력:
+{
+  "request_type": "saas_execution",
+  "intent": "create_page",
+  "service": "notion",
+  "slots": {},
+  "missing_slots": ["database_id"],
+  "confidence": 0.88
+}
+```
+
+**예시 3 — 순수 콘텐츠 생성 요청**
+```
+입력: "회의록 서식 만들어줘"
+출력:
+{
+  "request_type": "unsupported",
+  "intent": null,
+  "service": null,
+  "slots": {},
+  "missing_slots": [],
+  "confidence": 0.92
+}
+```
+
+**예시 4 — 낮은 confidence**
+```
+입력: "저번에 했던 거 다시 해줘"
+출력:
+{
+  "request_type": "saas_execution",
+  "intent": null,
+  "service": null,
+  "slots": {},
+  "missing_slots": [],
+  "confidence": 0.21
+}
+```
+
+## 16.4 프롬프트 관리 원칙
+
+- 시스템 프롬프트는 `backend/agent/prompts/request_understanding.txt`로 관리
+- Few-shot 예시는 `backend/agent/prompts/examples/`에 JSON으로 별도 관리하여 추가/수정 가능하게 유지
+- 프롬프트 변경 시 반드시 intent 인식률 회귀 테스트 수행
+
+---
+
+# 17. MVP Tool Spec 목록
+
+MVP 범위(Notion, Google Calendar, Linear)에서 구현할 Tool 전체 목록이다. 각 Tool의 상세 Spec은 `backend/agent/tool_specs/` 하위 JSON 파일로 관리한다.
+
+## 17.1 Google Calendar
+
+| tool_name | 설명 | 주요 파라미터 |
+| --- | --- | --- |
+| `google_calendar_list_events` | 일정 조회 | calendar_id(hard_ask/soft_confirm), time_min(llm_extract), time_max(llm_extract), max_results(safe_default) |
+| `google_calendar_get_event` | 단일 일정 조회 | calendar_id(hard_ask/soft_confirm), event_id(hard_ask) |
+| `google_calendar_list_calendars` | 캘린더 목록 조회 | max_results(safe_default) |
+
+## 17.2 Notion
+
+| tool_name | 설명 | 주요 파라미터 |
+| --- | --- | --- |
+| `notion_create_page` | 페이지 생성 | database_id(hard_ask), title(llm_extract), properties(llm_extract) |
+| `notion_query_database` | 데이터베이스 조회 | database_id(hard_ask), filter(llm_extract), page_size(safe_default) |
+| `notion_retrieve_page` | 페이지 조회 | page_id(hard_ask) |
+| `notion_update_page` | 페이지 속성 수정 | page_id(hard_ask), properties(llm_extract) |
+| `notion_search` | 페이지/오브젝트 검색 | query(llm_extract), page_size(safe_default) |
+
+## 17.3 Linear
+
+| tool_name | 설명 | 주요 파라미터 |
+| --- | --- | --- |
+| `linear_list_issues` | 이슈 목록 조회 | team_id(soft_confirm), state(llm_extract), limit(safe_default) |
+| `linear_search_issues` | 이슈 검색 | query(llm_extract), first(safe_default) |
+| `linear_create_issue` | 이슈 생성 | team_id(soft_confirm), title(llm_extract), description(llm_extract), priority(safe_default) |
+| `linear_update_issue` | 이슈 상태/속성 수정 | issue_id(hard_ask), state(llm_extract) |
+
+---
+
+# 18. 비기능 요구사항
+
+## 18.1 응답 시간
+
+| 구간 | 목표 |
+| --- | --- |
+| 요청 수신 ~ 첫 응답 전송 | 10초 이내 |
+| Clarification 질문 전송 | 3초 이내 |
+| API 호출 실패 시 에러 응답 | 5초 이내 |
+
+LLM API 호출이 포함되므로 10초를 기본 목표로 설정한다. 초과 시 "처리 중입니다..." 메시지를 먼저 전송한다.
+
+## 18.2 보안
+
+| 항목 | 정책 |
+| --- | --- |
+| OAuth 토큰 저장 | AES-256 암호화 후 DB 저장 |
+| LLM API 키 | 환경변수로 관리, 코드에 하드코딩 금지 |
+| 요청 로그 | raw_message 포함 저장, 90일 후 자동 삭제 |
+| 사용자 식별 | telegram_id 기반, 별도 인증 없음 (텔레그램 인증 위임) |
+
+## 18.3 LLM API 장애 대응
+
+| 상황 | 처리 방식 |
+| --- | --- |
+| LLM API 타임아웃 (10초 초과) | 1회 재시도 후 실패 시 안내 메시지 반환 |
+| LLM API 5xx | 즉시 안내 메시지 반환 |
+| LLM 출력이 JSON 파싱 불가 | 재요청 1회 → 실패 시 confidence 0으로 처리 |
+
+> LLM 서비스 장애 중입니다. 잠시 후 다시 요청해 주세요.
+
+## 18.4 처리량
+
+MVP 단계 목표: **동시 사용자 50명** 기준으로 안정적으로 동작
+
+- 사용자당 conversation_state 1개 제한으로 중복 처리 방지
+- LLM API 호출은 사용자 요청당 최대 2회 (Understanding + 재시도)
