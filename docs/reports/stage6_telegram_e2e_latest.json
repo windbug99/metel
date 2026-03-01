@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-03-01T14:38:56.946003Z",
+  "generated_at": "2026-03-01T14:45:35.727116Z",
   "chat_id": 178936796,
   "suites": [
     "linear"
   ],
   "total": 10,
-  "passed": 7,
-  "failed": 3,
-  "pass_rate": 0.7,
+  "passed": 10,
+  "failed": 0,
+  "pass_rate": 1.0,
   "rows": [
     {
       "id": "L1",
@@ -18,8 +18,8 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:37:12.662724+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3936;request_id=tg_update:375822072;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T14:43:43.051512+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3873;request_id=tg_update:376211952;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L2",
@@ -30,8 +30,8 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:37:26.745848+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=4398;request_id=tg_update:375822073;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T14:43:56.289357+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3964;request_id=tg_update:376211953;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L3",
@@ -42,8 +42,8 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:37:39.003613+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3897;request_id=tg_update:375822074;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T14:44:08.315164+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3496;request_id=tg_update:376211954;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L4",
@@ -54,8 +54,8 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:37:49.963721+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2290;request_id=tg_update:375822075;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T14:44:19.14827+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2292;request_id=tg_update:376211955;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L5",
@@ -66,32 +66,32 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:38:02.473939+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3953;request_id=tg_update:375822076;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T14:44:31.869534+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3753;request_id=tg_update:376211956;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L6",
       "text": "linear에서 OPT-283 이슈의 설명에 다음 메모를 수정해줘.\n메모 내용 첨부",
       "expected": "success",
       "chain": "linear_replace",
-      "pass": false,
-      "status": "error",
-      "error_code": "clarification_needed",
+      "pass": true,
+      "status": "success",
+      "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:38:13.620028+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2719;request_id=tg_update:375822077;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":\"update_fields\",\"slot_action\":null};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reas"
+      "created_at": "2026-03-01T14:44:44.655749+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3655;request_id=tg_update:376211957;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L7",
       "text": "linear OPT-283 설명에 아래 텍스트를 덧붙여줘:\n- API 재현 조건\n- 로그 수집 링크",
       "expected": "success",
       "chain": "linear_append",
-      "pass": false,
-      "status": "error",
-      "error_code": "unsupported_request",
+      "pass": true,
+      "status": "success",
+      "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:38:22.456446+00:00",
-      "detail": "services=(추론 실패);slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2013;request_id=tg_update:375822078;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histogr"
+      "created_at": "2026-03-01T14:44:56.897469+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3002;request_id=tg_update:376211958;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L8",
@@ -102,20 +102,20 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:38:34.627893+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3825;request_id=tg_update:375822079;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T14:45:09.473888+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=4030;request_id=tg_update:376211959;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L9",
       "text": "OPT-283 설명 끝에 \"추가 테스트 문장\"을 append 해줘",
       "expected": "success",
       "chain": "linear_append",
-      "pass": false,
-      "status": "error",
-      "error_code": "unsupported_request",
+      "pass": true,
+      "status": "success",
+      "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:38:44.557831+00:00",
-      "detail": "services=(추론 실패);slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2182;request_id=tg_update:375822080;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histogr"
+      "created_at": "2026-03-01T14:45:21.18891+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3229;request_id=tg_update:376211960;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L10",
@@ -126,8 +126,8 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:38:55.697642+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3372;request_id=tg_update:375822081;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T14:45:34.474299+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=4145;request_id=tg_update:376211961;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     }
   ]
 }

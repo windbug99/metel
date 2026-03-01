@@ -97,7 +97,7 @@ def _extract_linear_update_title(text: str) -> str | None:
 def _extract_linear_update_description(text: str) -> str | None:
     raw_text = str(text or "")
     append_tail = re.search(
-        r"(?is)(?:추가|append|덧붙(?:여)?|붙여|반영|수정|변경|교체|업데이트)(?:해줘|해주세요|하세요|해)\s*[:：]?\s*(.+)$",
+        r"(?is)(?:추가|append|덧붙(?:여)?|붙여|반영|수정|변경|교체|업데이트)(?:해줘|해주세요|하세요|해)\s*[.!?]?\s*[:：]?\s*(.+)$",
         raw_text,
     )
     if append_tail:
@@ -107,7 +107,7 @@ def _extract_linear_update_description(text: str) -> str | None:
             return tail_candidate[:5000]
 
     replace_tail = re.search(
-        r"(?is)(?:다음|아래)\s*(?:메모|내용|텍스트|문장)(?:를|을)?\s*(?:추가|수정|변경|교체|업데이트)(?:해줘|해주세요|하세요|해)\.?\s*(.+)$",
+        r"(?is)(?:다음|아래)\s*(?:메모|내용|텍스트|문장)(?:를|을)?\s*(?:추가|수정|변경|교체|업데이트)(?:해줘|해주세요|하세요|해)\s*[.!?]?\s*(.+)$",
         raw_text,
     )
     if replace_tail:

@@ -565,6 +565,12 @@ def test_extract_linear_update_description_prefers_append_tail_multiline():
     assert out == "메모 내용 첨부"
 
 
+def test_extract_linear_update_description_preserves_newlines_after_period():
+    text = "linear에서 OPT-283 이슈의 설명에 다음 메모를 추가해줘.\n서비스: 온라인 쇼핑 큐레이션 앱\n\n## 여정 단계"
+    out = _extract_linear_update_description(text)
+    assert out == "서비스: 온라인 쇼핑 큐레이션 앱\n\n## 여정 단계"
+
+
 def test_extract_linear_update_description_prefers_replace_tail_multiline():
     text = 'linear에서 OPT-283 이슈의 설명에 다음 메모를 수정해줘.\n메모 내용 첨부'
     out = _extract_linear_update_description(text)
