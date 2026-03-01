@@ -577,6 +577,12 @@ def test_extract_linear_update_description_prefers_replace_tail_multiline():
     assert out == "메모 내용 첨부"
 
 
+def test_extract_linear_update_description_prefers_replace_tail_with_ro_particle():
+    text = "linear에서 OPT-283 이슈의 설명에 다음 메모로 수정해줘.\n프로젝트: 스마트 업무 관리 플랫폼"
+    out = _extract_linear_update_description(text)
+    assert out == "프로젝트: 스마트 업무 관리 플랫폼"
+
+
 def test_atomic_overhaul_linear_issue_key_append_without_linear_keyword(monkeypatch):
     class _Settings:
         pending_action_ttl_seconds = 900
