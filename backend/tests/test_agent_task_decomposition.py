@@ -214,6 +214,15 @@ def test_build_agent_plan_notion_description_update_prefers_append_tool():
     assert plan.tasks[0].tool_name == "notion_append_block_children"
 
 
+def test_build_agent_plan_notion_body_append_phrase_does_not_create_page():
+    plan = build_agent_plan(
+        'notion에서 "서비스 기획서" 페이지 본문에 "다음 액션: API 계약 정리"를 추가해줘',
+        connected_services=["notion"],
+    )
+    assert plan.tasks
+    assert not any(task.tool_name == "notion_create_page" for task in plan.tasks)
+
+
 def test_execute_agent_plan_runs_notion_data_source_llm_notion_bridge(monkeypatch):
     calls = []
 

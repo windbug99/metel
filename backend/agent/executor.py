@@ -2887,12 +2887,17 @@ def _should_force_generate_linear_update_description(user_text: str) -> bool:
 
 def _should_force_generate_notion_append_content(user_text: str) -> bool:
     lowered = (user_text or "").lower()
+    has_generation_signal = any(token in lowered for token in ("생성", "작성", "만들", "generate"))
+    has_template_or_transform_signal = any(
+        token in lowered
+        for token in ("서식", "양식", "템플릿", "template", "초안", "바탕으로", "기반으로", "참고", "요약", "실행 계획")
+    )
     return (
         any(token in lowered for token in ("notion", "노션"))
         and any(token in lowered for token in ("페이지", "page", "본문", "내용"))
         and any(token in lowered for token in ("업데이트", "추가", "append", "update"))
-        and any(token in lowered for token in ("생성", "작성", "만들", "generate"))
-        and any(token in lowered for token in ("서식", "양식", "템플릿", "template", "초안"))
+        and has_generation_signal
+        and has_template_or_transform_signal
     )
 
 
@@ -3586,7 +3591,9 @@ async def _autofill_task_payload(
             if generated:
                 content = generated
                 steps.append(AgentExecutionStep(name="llm_autofill_notion_append_children", status="success", detail="applied=1"))
-        fallback_text = (content or "").strip() or user_text.strip()
+        fallback_text = (content or "").strip()
+        if not fallback_text and not force_generate_notion_append:
+            fallback_text = user_text.strip()
         if fallback_text:
             filled["children"] = [_notion_paragraph_block(fallback_text)]
 
@@ -3845,14 +3852,17 @@ async def _force_fill_missing_slots(
                 pass
         if block_id:
             filled["block_id"] = block_id
-    if "notion_append_block_children" in tool_name and _missing(filled.get("children")):
+    force_generate_notion_append = _should_force_generate_notion_append_content(user_text)
+    if "notion_append_block_children" in tool_name and (_missing(filled.get("children")) or force_generate_notion_append):
         _, extracted_content = _extract_append_target_and_content(user_text)
-        if _should_force_generate_notion_append_content(user_text):
+        if force_generate_notion_append:
             generated = await _generate_notion_append_content_with_llm(user_text=user_text, filled=filled)
             if generated:
                 extracted_content = generated
                 steps.append(AgentExecutionStep(name="force_fill_llm_notion_append_children", status="success", detail="applied=1"))
-        fallback_text = (extracted_content or "").strip() or user_text.strip()
+        fallback_text = (extracted_content or "").strip()
+        if not fallback_text and not force_generate_notion_append:
+            fallback_text = user_text.strip()
         if fallback_text:
             filled["children"] = [_notion_paragraph_block(fallback_text)]
 
@@ -4299,6 +4309,20 @@ def _extract_append_target_and_content(user_text: str) -> tuple[str | None, str 
     if match:
         title = re.sub(r"^(?:노션|notion)(?:에서|에)?\s*", "", match.group("title").strip(" \"'`"), flags=re.IGNORECASE).strip()
         content = match.group("content").strip(" \"'`")
+        if title and content:
+            return title, content
+
+    # generation-from-existing-body form:
+    # "노션에서 '서비스 기획서' 페이지의 본문을 바탕으로 실행 계획을 생성해서 업데이트해줘"
+    match = re.search(
+        r'(?is)(?:(?:노션|notion)에서\s*)?(?P<title>.+?)\s*(?:페이지)?(?:의)?\s*(?:본문|내용|설명|description)(?:을|를)?\s*(?:바탕으로|기반으로|참고(?:해|하여)?)\s*(?P<content>.+?)\s*(?:을|를)?\s*생성(?:해서)?\s*(?:업데이트|수정|변경|추가|작성)\s*(?:해줘|해|해줘요|해주세요|하세요)?$',
+        text_for_parse,
+    )
+    if match:
+        title = re.sub(r"^(?:노션|notion)(?:에서|에)?\s*", "", match.group("title").strip(" \"'`"), flags=re.IGNORECASE).strip()
+        content = match.group("content").strip(" \"'`")
+        if content.endswith(("을", "를")) and len(content) > 1:
+            content = content[:-1].strip()
         if title and content:
             return title, content
     return None, None

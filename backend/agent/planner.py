@@ -179,6 +179,11 @@ def _pick_primary_tool_for_intent(user_text: str, selected_tools: list[str]) -> 
         return None
 
     normalized = (user_text or "").lower()
+    notion_body_mutation_intent = (
+        any(token in normalized for token in ("notion", "노션"))
+        and any(token in normalized for token in ("페이지", "page", "본문", "내용", "설명", "description"))
+        and any(token in normalized for token in ("업데이트", "수정", "변경", "추가", "append", "update"))
+    )
 
     # Calendar read intent should prioritize event listing over calendar metadata.
     if any(token in normalized for token in ("캘린더", "일정", "회의", "calendar", "schedule", "meeting")):
@@ -203,12 +208,13 @@ def _pick_primary_tool_for_intent(user_text: str, selected_tools: list[str]) -> 
         )
     if is_update_intent(user_text):
         # Notion page body/content update should use append_block_children, not update_page metadata.
-        if any(token in normalized for token in ("notion", "노션")) and any(
-            token in normalized for token in ("본문", "내용", "설명", "description")
-        ):
+        if notion_body_mutation_intent:
             return _first_match("append") or _first_match("update") or _first_match("comment") or tools[0]
         return _first_match("update") or _first_match("append") or _first_match("comment") or tools[0]
     if is_create_intent(user_text):
+        # "본문에 ... 추가"는 생성이 아니라 append로 처리한다.
+        if notion_body_mutation_intent:
+            return _first_match("append") or _first_match("create") or tools[0]
         return _first_match("create") or _first_match("append") or tools[0]
     if is_read_intent(user_text) or is_summary_intent(user_text):
         return (
@@ -272,13 +278,16 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
     if not target_services:
         return []
 
+    lowered = user_text.lower()
     need_summary = is_summary_intent(user_text)
     need_creation = is_create_intent(user_text)
     is_issue_update_intent = is_update_intent(user_text) and (
-        ("이슈" in user_text) or ("issue" in user_text.lower())
+        ("이슈" in user_text) or ("issue" in lowered)
     )
-    is_notion_page_update_intent = is_update_intent(user_text) and any(
-        token in user_text.lower() for token in ("notion", "노션", "페이지", "page", "본문", "내용")
+    is_notion_page_update_intent = (
+        any(token in lowered for token in ("notion", "노션"))
+        and any(token in lowered for token in ("페이지", "page", "본문", "내용", "설명", "description"))
+        and any(token in lowered for token in ("업데이트", "수정", "변경", "추가", "append", "update"))
     )
     sentence_count = _extract_summary_sentence_count(user_text) or 3
 
