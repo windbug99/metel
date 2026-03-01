@@ -348,6 +348,8 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
     issue_update_tool = _pick(("update", "issue"))
     issue_list_tool = _pick(("list", "issues"))
     issue_search_tool = _pick(("search", "issues")) or issue_list_tool
+    notion_update_page_tool = _pick(("update", "page"))
+    notion_append_tool = _pick(("append", "block")) or _pick(("append",))
 
     if is_linear_issue_create_intent(user_text) and issue_create_tool:
         service = _tool_service_name(issue_create_tool)
@@ -397,6 +399,43 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
                 output_schema={"type": "tool_result", "service": service or "", "tool": chosen_issue_lookup_tool},
             )
         )
+
+    # Deterministic Notion update routing for Stage6-like prompts.
+    if "notion" in lowered or "노션" in lowered:
+        is_title_update = any(token in lowered for token in ("제목", "rename", "new_title")) and any(
+            token in lowered for token in ("업데이트", "수정", "변경", "바꿔", "바꾸")
+        )
+        is_body_update = any(token in lowered for token in ("본문", "내용", "설명", "description")) and any(
+            token in lowered for token in ("업데이트", "수정", "변경", "추가", "append", "update")
+        )
+        if is_title_update and notion_update_page_tool:
+            service = _tool_service_name(notion_update_page_tool)
+            task_id = f"task_{service}_update_page" if service else "task_update_page"
+            tasks.append(
+                AgentTask(
+                    id=task_id,
+                    title="페이지 제목 업데이트",
+                    task_type="TOOL",
+                    service=service,
+                    tool_name=notion_update_page_tool,
+                    payload={},
+                    output_schema={"type": "tool_result", "service": service or "", "tool": notion_update_page_tool},
+                )
+            )
+        elif is_body_update and notion_append_tool:
+            service = _tool_service_name(notion_append_tool)
+            task_id = f"task_{service}_append_page" if service else "task_append_page"
+            tasks.append(
+                AgentTask(
+                    id=task_id,
+                    title="페이지 본문 업데이트",
+                    task_type="TOOL",
+                    service=service,
+                    tool_name=notion_append_tool,
+                    payload={},
+                    output_schema={"type": "tool_result", "service": service or "", "tool": notion_append_tool},
+                )
+            )
 
     if need_summary:
         summary_depends = [tasks[-1].id] if tasks else []

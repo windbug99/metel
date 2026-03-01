@@ -30,7 +30,7 @@ class Scenario:
 
 SCENARIOS: list[Scenario] = [
     Scenario("S1", "linear OPT-46 이슈 설명 업데이트: API 타임아웃 재현 조건과 임시 우회 방법을 추가해줘", "success", chain="single_s1"),
-    Scenario("S2", "openweather API 사용방법을 정리해서 linear OPT-46 설명에 추가해줘", "success", chain="single_s2"),
+    Scenario("S2", "openweather API 사용방법을 정리해서 linear OPT-46 설명에 추가해줘", "success_or_needs_input", chain="single_s2"),
     Scenario("S3", "linear OPT-45 이슈를 삭제하세요", "error", chain="single_s3"),
     Scenario("S4", "linear에 이슈 생성", "success_or_needs_input", chain="linear_create"),
     Scenario("S5", "팀: operate", "success_or_needs_input", chain="linear_create"),

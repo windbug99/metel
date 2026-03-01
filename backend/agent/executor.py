@@ -3576,8 +3576,9 @@ async def _autofill_task_payload(
 
     if "notion_update_page" in tool_name and _missing(filled.get("page_id")):
         page_id = slot_context.get("recent_notion_page_id", "")
+        rename_title, rename_new_title = (None, None)
         if not page_id and allow_user_text_reparse:
-            rename_title, _ = _extract_page_rename_request(user_text)
+            rename_title, rename_new_title = _extract_page_rename_request(user_text)
             move_title, _ = _extract_move_request(user_text)
             archive_title = _extract_page_archive_target(user_text)
             candidate_title = rename_title or move_title or archive_title or _extract_first_quoted_text(user_text) or ""
@@ -3592,6 +3593,8 @@ async def _autofill_task_payload(
             filled["page_id"] = page_id
             slot_context["recent_notion_page_id"] = page_id
             slot_context.setdefault("recent_notion_page_url", _notion_url_from_page_id(page_id))
+        if _missing(filled.get("title")) and rename_new_title:
+            filled["title"] = rename_new_title[:100]
 
     if "notion_append_block_children" in tool_name and _missing(filled.get("block_id")):
         page_id = slot_context.get("recent_notion_page_id", "")
@@ -4372,6 +4375,19 @@ def _extract_append_target_and_content(user_text: str) -> tuple[str | None, str 
             content = content[:-1].strip()
         if title and content:
             return title, content
+
+    # explicit body-update form:
+    # "노션에서 \"스프린트 보고서 v2\" 페이지 본문 업데이트: ... "
+    match = re.search(
+        r'(?is)(?:(?:노션|notion)에서\s*)?(?P<title>.+?)\s*(?:페이지)?\s*(?:본문|내용|설명|description)\s*(?:업데이트|수정|변경)\s*[:：]\s*(?P<content>.+)$',
+        text_for_parse,
+    )
+    if match:
+        title = re.sub(r"^(?:노션|notion)(?:에서|에)?\s*", "", match.group("title").strip(" \"'`"), flags=re.IGNORECASE).strip()
+        title = re.sub(r"\s*페이지$", "", title, flags=re.IGNORECASE).strip()
+        content = match.group("content").strip(" \"'`")
+        if title and content:
+            return title, content
     return None, None
 
 
@@ -4395,8 +4411,8 @@ def _extract_move_request(user_text: str) -> tuple[str | None, str | None]:
 
 def _extract_page_rename_request(user_text: str) -> tuple[str | None, str | None]:
     patterns = [
-        r'(?i)(?:노션에서\s*)?"?(?P<title>.+?)"?\s*(?:페이지)?\s*제목(?:을)?\s*"?(?P<new_title>.+?)"?\s*로\s*(?:변경|수정|바꿔줘|바꿔|바꾸고|바꾸|rename)',
-        r'(?i)(?:노션에서\s*)?"?(?P<title>.+?)"?의\s*제목(?:을)?\s*"?(?P<new_title>.+?)"?\s*로\s*(?:변경|수정|바꿔줘|바꿔|바꾸고|바꾸|rename)',
+        r'(?i)(?:노션에서\s*)?"?(?P<title>.+?)"?\s*(?:페이지)?\s*제목(?:을)?\s*"?(?P<new_title>.+?)"?\s*로\s*(?:변경|수정|업데이트|바꿔줘|바꿔|바꾸고|바꾸|rename)',
+        r'(?i)(?:노션에서\s*)?"?(?P<title>.+?)"?의\s*제목(?:을)?\s*"?(?P<new_title>.+?)"?\s*로\s*(?:변경|수정|업데이트|바꿔줘|바꿔|바꾸고|바꾸|rename)',
     ]
     for pattern in patterns:
         match = re.search(pattern, user_text.strip())

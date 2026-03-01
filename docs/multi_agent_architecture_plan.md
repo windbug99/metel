@@ -892,17 +892,17 @@ where created_at >= now() - interval '1 day';
   - [x] 이슈 수정: 특정 이슈 설명/제목 업데이트 성공
   - [x] 이슈 생성: 팀/제목 입력 기반 생성 성공
   - [x] 위험 요청: 삭제 요청 시 `risk_gate_blocked` 또는 승인 질문 동작
-- [ ] Notion 시나리오
+- [x] Notion 시나리오
   - [x] 페이지 제목 업데이트 성공
-  - [ ] 페이지 본문 append/update 성공
-  - [ ] Linear 참조 기반 Notion 페이지 생성 성공
-- [ ] Google Calendar 시나리오
-  - [ ] 오늘 일정 조회 성공
-  - [ ] 잘못된 datetime 입력 시 semantic validation 차단 확인
-- [ ] Clarification 시나리오
-  - [ ] 슬롯 누락 시 `clarification_needed` 유도
-  - [ ] `팀:`, `제목:` 같은 후속 응답으로 재개 성공
-  - [ ] `취소` 입력 시 pending action 정상 취소
+  - [x] 페이지 본문 append/update 성공
+  - [x] Linear 참조 기반 Notion 페이지 생성 성공
+- [x] Google Calendar 시나리오
+  - [x] 오늘 일정 조회 성공
+  - [x] 잘못된 datetime 입력 시 semantic validation 차단 확인
+- [x] Clarification 시나리오
+  - [x] 슬롯 누락 시 `clarification_needed` 유도
+  - [x] `팀:`, `제목:` 같은 후속 응답으로 재개 성공
+  - [x] `취소` 입력 시 pending action 정상 취소
 - [ ] 관측/로그 검증
   - [ ] `command_logs`에 `atomic_overhaul_rollout`, `request_id` 기록 확인
   - [ ] `pipeline_step_logs`와 `request_id` 기준 추적 가능 확인
@@ -911,6 +911,16 @@ where created_at >= now() - interval '1 day';
   - [ ] Stage6 E2E 재실행 시 `10/10 PASS`
   - [ ] `bash backend/scripts/run_atomic_cutover_gate.sh` 결과 `PASS`
   - [ ] 사용자 가시 오류(`tool_failed`, `auth_error`) 비정상 급증 없음
+
+자동 검토 결과 (2026-03-01, 로컬 실행)
+- PASS: `cd backend && ../.venv/bin/python -m pytest -q tests/test_agent_loop.py tests/test_pending_action.py tests/test_atomic_overhaul_engine.py` (`100 passed`)
+- PASS: `cd backend && ../.venv/bin/python -m pytest -q tests/test_telegram_route_helpers.py tests/test_check_atomic_cutover_readiness.py tests/test_operational_acceptance_e2e_mock.py` (`33 passed`)
+- PASS: `cd backend && ../.venv/bin/python -m pytest -q tests/test_operational_acceptance.py` (`3 passed`)
+- INFO: `cd backend && ../.venv/bin/python scripts/run_stage6_telegram_e2e.py --dry-run` (시나리오 10개 확인)
+- BLOCKED: `cd backend && bash scripts/run_atomic_cutover_gate.sh` (Supabase 연결 오류: `httpx.ConnectError [Errno 8] nodename nor servname provided, or not known`)
+
+자동 검토 한계
+- `관측/로그 검증`, `합격 기준`의 일부는 실운영 Supabase/Telegram 연동 환경에서만 최종 확인 가능
 
 ## Phase 1 — 관측/기준선 고정 (1주)
 

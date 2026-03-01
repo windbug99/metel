@@ -234,6 +234,14 @@ def test_extract_append_target_and_content_update_description_form():
     assert content == "회의록 서식"
 
 
+def test_extract_append_target_and_content_body_update_colon_form():
+    title, content = _extract_append_target_and_content(
+        '노션에서 "스프린트 보고서 v2" 페이지 본문 업데이트: 이번 주 배포 리스크와 대응 현황을 3줄로 추가'
+    )
+    assert title == "스프린트 보고서 v2"
+    assert content == "이번 주 배포 리스크와 대응 현황을 3줄로 추가"
+
+
 def test_extract_append_target_and_content_generate_from_existing_body_form():
     title, content = _extract_append_target_and_content(
         'notion에서 "서비스 기획서" 페이지의 본문을 바탕으로 실행 계획을 생성해서 업데이트해줘'
@@ -250,6 +258,10 @@ def test_extract_page_rename_request():
     title2, new_title2 = _extract_page_rename_request('더 코어 페이지 제목을 "더 코어 2"로 바꾸고')
     assert title2 == "더 코어"
     assert new_title2 == "더 코어 2"
+
+    title3, new_title3 = _extract_page_rename_request('노션에서 "스프린트 보고서" 페이지 제목을 "스프린트 보고서 v2"로 업데이트')
+    assert title3 == "스프린트 보고서"
+    assert new_title3 == "스프린트 보고서 v2"
 
 
 def test_extract_linear_update_fields_natural_state_expression():
