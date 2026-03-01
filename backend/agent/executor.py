@@ -2885,6 +2885,35 @@ def _should_force_generate_linear_update_description(user_text: str) -> bool:
     )
 
 
+def _should_force_generate_notion_append_content(user_text: str) -> bool:
+    lowered = (user_text or "").lower()
+    return (
+        any(token in lowered for token in ("notion", "노션"))
+        and any(token in lowered for token in ("페이지", "page", "본문", "내용"))
+        and any(token in lowered for token in ("업데이트", "추가", "append", "update"))
+        and any(token in lowered for token in ("생성", "작성", "만들", "generate"))
+        and any(token in lowered for token in ("서식", "양식", "템플릿", "template", "초안"))
+    )
+
+
+async def _generate_notion_append_content_with_llm(*, user_text: str, filled: dict) -> str:
+    system_prompt = (
+        "사용자 요청에서 Notion 페이지 본문 추가/업데이트용 텍스트를 생성하는 JSON 생성기다. "
+        "반드시 JSON object만 반환한다."
+    )
+    user_prompt = (
+        "아래 입력으로 notion_append_block_children payload의 본문 텍스트를 생성해라.\n"
+        "- 사용자가 요청한 서식/템플릿을 실제 본문 형태로 작성한다.\n"
+        "- 설명문/메타문구 없이 붙여넣기 가능한 본문만 생성한다.\n"
+        "- 한국어로 간결하게 작성한다.\n\n"
+        f"user_text={user_text}\n"
+        f"current_payload={json.dumps(filled, ensure_ascii=False)}\n"
+        '반환 스키마: {"content":string|null}'
+    )
+    parsed = await _request_autofill_json(system_prompt=system_prompt, user_prompt=user_prompt) or {}
+    return str(parsed.get("content") or "").strip()[:5000]
+
+
 async def _autofill_linear_update_with_llm(*, user_text: str, filled: dict) -> dict:
     force_generate_description = _should_force_generate_linear_update_description(user_text)
     system_prompt = (
@@ -3549,6 +3578,17 @@ async def _autofill_task_payload(
         if page_id:
             filled["block_id"] = page_id
 
+    if "notion_append_block_children" in tool_name and _missing(filled.get("children")):
+        _, content = _extract_append_target_and_content(user_text)
+        if _should_force_generate_notion_append_content(user_text):
+            generated = await _generate_notion_append_content_with_llm(user_text=user_text, filled=filled)
+            if generated:
+                content = generated
+                steps.append(AgentExecutionStep(name="llm_autofill_notion_append_children", status="success", detail="applied=1"))
+        fallback_text = (content or "").strip() or user_text.strip()
+        if fallback_text:
+            filled["children"] = [_notion_paragraph_block(fallback_text)]
+
     if "linear_create_issue" in tool_name:
         if _missing(filled.get("title")) and allow_user_text_reparse:
             title_match = re.search(
@@ -3804,16 +3844,16 @@ async def _force_fill_missing_slots(
                 pass
         if block_id:
             filled["block_id"] = block_id
-        if _missing(filled.get("children")):
-            _, extracted_content = _extract_append_target_and_content(user_text)
-            fallback_text = extracted_content or user_text
-            filled["children"] = [
-                {
-                    "object": "block",
-                    "type": "paragraph",
-                    "paragraph": {"rich_text": [{"type": "text", "text": {"content": fallback_text[:1800]}}]},
-                }
-            ]
+    if "notion_append_block_children" in tool_name and _missing(filled.get("children")):
+        _, extracted_content = _extract_append_target_and_content(user_text)
+        if _should_force_generate_notion_append_content(user_text):
+            generated = await _generate_notion_append_content_with_llm(user_text=user_text, filled=filled)
+            if generated:
+                extracted_content = generated
+                steps.append(AgentExecutionStep(name="force_fill_llm_notion_append_children", status="success", detail="applied=1"))
+        fallback_text = (extracted_content or "").strip() or user_text.strip()
+        if fallback_text:
+            filled["children"] = [_notion_paragraph_block(fallback_text)]
 
     if "linear_search_issues" in tool_name and _missing(filled.get("query")):
         filled["query"] = _extract_linear_search_query(user_text) or "최근"

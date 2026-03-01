@@ -240,9 +240,17 @@ def _extract_summary_sentence_count(user_text: str) -> int | None:
 
 
 def _extract_output_title_hint(user_text: str) -> str | None:
-    match = re.search(r"(?i)(?:의)?\s*(.+?)\s*(?:새로운|신규|new)\s*페이지", user_text)
-    if match:
+    patterns = [
+        r"(?i)(?:의)?\s*(.+?)\s*(?:새로운|신규|new)\s*페이지",
+        r"(?i)(.+?)\s*제목(?:으로)?\s*페이지\s*생성",
+        r"(?i)(.+?)\s*페이지\s*생성",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, user_text)
+        if not match:
+            continue
         candidate = match.group(1).strip(" \"'`")
+        candidate = re.sub(r"(?i)^(?:notion|노션)(?:에서|에)?\s*", "", candidate).strip()
         if candidate:
             return candidate[:100]
     return None
@@ -263,6 +271,9 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
     need_creation = is_create_intent(user_text)
     is_issue_update_intent = is_update_intent(user_text) and (
         ("이슈" in user_text) or ("issue" in user_text.lower())
+    )
+    is_notion_page_update_intent = is_update_intent(user_text) and any(
+        token in user_text.lower() for token in ("notion", "노션", "페이지", "page", "본문", "내용")
     )
     sentence_count = _extract_summary_sentence_count(user_text) or 3
 
@@ -387,7 +398,12 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
             )
         )
 
-    if need_creation and not is_linear_issue_create_intent(user_text) and not is_issue_update_intent:
+    if (
+        need_creation
+        and not is_linear_issue_create_intent(user_text)
+        and not is_issue_update_intent
+        and not is_notion_page_update_intent
+    ):
         # Prefer create_page tool; otherwise use generic create tool in selected set.
         create_page_tool = _pick(("create", "page"))
         fallback_create_tool = _pick(("create",))

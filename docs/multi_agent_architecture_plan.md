@@ -887,14 +887,14 @@ where created_at >= now() - interval '1 day';
   - [x] `ATOMIC_OVERHAUL_ENABLED=true`
   - [x] `ATOMIC_OVERHAUL_TRAFFIC_PERCENT=100`
   - [x] `ATOMIC_OVERHAUL_LEGACY_FALLBACK_ENABLED=false`
-- [ ] Linear 시나리오
+- [x] Linear 시나리오
   - [x] 이슈 조회: 최근 이슈 5개 조회 성공
-  - [ ] 이슈 수정: 특정 이슈 설명/제목 업데이트 성공
-  - [ ] 이슈 생성: 팀/제목 입력 기반 생성 성공
+  - [x] 이슈 수정: 특정 이슈 설명/제목 업데이트 성공
+  - [x] 이슈 생성: 팀/제목 입력 기반 생성 성공
   - [x] 위험 요청: 삭제 요청 시 `risk_gate_blocked` 또는 승인 질문 동작
 - [ ] Notion 시나리오
-  - [ ] 페이지 제목 업데이트 성공
-  - [ ] 페이지 본문 append/update 성공
+  - [x] 페이지 제목 업데이트 성공
+  - [x] 페이지 본문 append/update 성공
   - [ ] Linear 참조 기반 Notion 페이지 생성 성공
 - [ ] Google Calendar 시나리오
   - [ ] 오늘 일정 조회 성공

@@ -24,6 +24,7 @@ from agent.executor import (
     _extract_linear_update_fields,
     _ensure_linear_update_patch_field,
     _should_force_generate_linear_update_description,
+    _should_force_generate_notion_append_content,
     _sanitize_stepwise_request_payload,
 )
 from agent.types import AgentPlan, AgentRequirement
@@ -86,6 +87,24 @@ def test_should_force_generate_linear_update_description_false_for_notion_page_r
     assert (
         _should_force_generate_linear_update_description(
             "linear OPT-343 이슈 설명에 노션 페이지 내용을 생성해서 업데이트하세요"
+        )
+        is False
+    )
+
+
+def test_should_force_generate_notion_append_content_true():
+    assert (
+        _should_force_generate_notion_append_content(
+            "notion에서 Metel 자동 요약 페이지의 본문에 회의록 서식을 생성해서 업데이트 하세요"
+        )
+        is True
+    )
+
+
+def test_should_force_generate_notion_append_content_false_without_template_request():
+    assert (
+        _should_force_generate_notion_append_content(
+            "notion에서 Metel 자동 요약 페이지의 본문을 그대로 업데이트 하세요"
         )
         is False
     )
@@ -1976,6 +1995,65 @@ def test_task_orchestration_autofills_notion_append_with_search(monkeypatch):
                 service="notion",
                 tool_name="notion_append_block_children",
                 depends_on=["task_llm_seed"],
+                payload={},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is True
+    assert [name for name, _ in calls] == ["notion_search", "notion_append_block_children"]
+
+
+def test_task_orchestration_notion_append_generates_template_content_with_llm(monkeypatch):
+    calls = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        calls.append((tool_name, payload))
+        if tool_name == "notion_search":
+            return {
+                "ok": True,
+                "data": {
+                    "results": [
+                        {
+                            "id": "30c50e84a3bf8109b781ed4e0e0dacb3",
+                            "url": "https://notion.so/page-1",
+                            "properties": {"title": {"type": "title", "title": [{"plain_text": "Metel 자동 요약"}]}},
+                        }
+                    ]
+                },
+            }
+        if tool_name == "notion_append_block_children":
+            children = payload.get("children") or []
+            assert children
+            text = (((children[0].get("paragraph") or {}).get("rich_text") or [{}])[0].get("text") or {}).get("content", "")
+            assert "회의 제목" in text
+            assert "참석자" in text
+            return {"ok": True, "data": {"results": [{"id": "block-1"}]}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    async def _fake_request_autofill_json(*, system_prompt: str, user_prompt: str):
+        _ = (system_prompt, user_prompt)
+        return {"content": "## 회의록\n- 회의 제목:\n- 일시:\n- 참석자:\n- 안건:\n- 결정사항:\n- 액션 아이템:"}
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+    monkeypatch.setattr("agent.executor._request_autofill_json", _fake_request_autofill_json)
+
+    plan = AgentPlan(
+        user_text="notion에서 Metel 자동 요약 페이지의 본문에 회의록 서식을 생성해서 업데이트 하세요",
+        requirements=[AgentRequirement(summary="노션 본문 업데이트")],
+        target_services=["notion"],
+        selected_tools=["notion_search", "notion_append_block_children"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_append",
+                title="본문 추가",
+                task_type="TOOL",
+                service="notion",
+                tool_name="notion_append_block_children",
                 payload={},
                 output_schema={"type": "tool_result"},
             )

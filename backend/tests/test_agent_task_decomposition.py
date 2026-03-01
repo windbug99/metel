@@ -186,6 +186,25 @@ def test_build_agent_plan_linear_issue_update_with_generate_phrase_does_not_add_
     assert not any(task.tool_name == "notion_create_page" for task in plan.tasks)
 
 
+def test_build_agent_plan_notion_page_update_with_generate_phrase_does_not_add_create_task():
+    plan = build_agent_plan(
+        "notion에서 Metel 자동 요약 페이지의 본문에 회의록 서식을 생성해서 업데이트 하세요",
+        connected_services=["notion"],
+    )
+    assert any(task.service == "notion" for task in plan.tasks)
+    assert not any(task.tool_name == "notion_create_page" for task in plan.tasks)
+
+
+def test_build_agent_plan_extracts_notion_create_title_hint_from_natural_phrase():
+    plan = build_agent_plan(
+        "notion에 서비스 기획서 제목으로 페이지 생성",
+        connected_services=["notion"],
+    )
+    create_task = next((task for task in plan.tasks if task.tool_name == "notion_create_page"), None)
+    assert create_task is not None
+    assert create_task.payload.get("title_hint") == "서비스 기획서"
+
+
 def test_execute_agent_plan_runs_notion_data_source_llm_notion_bridge(monkeypatch):
     calls = []
 
