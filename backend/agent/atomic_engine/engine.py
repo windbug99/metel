@@ -67,6 +67,98 @@ def _contains_any(text: str, tokens: tuple[str, ...]) -> bool:
     return any(token in value for token in tokens)
 
 
+def _looks_like_linear_internal_issue_id(value: object) -> bool:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return False
+    return bool(re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F\-]{27}", candidate))
+
+
+def _normalize_linear_state_name(value: str) -> str:
+    return re.sub(r"[\s_\-]+", "", str(value or "").strip().lower())
+
+
+def _extract_linear_update_title(text: str) -> str | None:
+    normalized = _normalize_message(text)
+    patterns = [
+        r'(?i)(?:이슈\s*)?(?:제목|title)(?:을|를)?\s*["“]?([^"”]+?)["”]?\s*(?:로|으로)?\s*(?:업데이트|수정|변경|바꿔|rename)',
+        r"(?i)(?:제목|title)\s*[:：]\s*['\"“”]?(.+?)['\"“”]?(?:\s|$)",
+    ]
+    for pattern in patterns:
+        matched = re.search(pattern, normalized)
+        if not matched:
+            continue
+        candidate = str(matched.group(1) or "").strip(" \"'`.,")
+        if candidate:
+            return candidate[:120]
+    return None
+
+
+def _extract_linear_update_description(text: str) -> str | None:
+    normalized = _normalize_message(text)
+    patterns = [
+        r"(?i)(?:설명|description|내용|본문)\s*(?:업데이트|수정|변경)?\s*[:：]\s*(.+)$",
+        r'(?i)(?:설명|description|내용|본문)에\s*["“]?(.+?)["”]?\s*(?:를\s*)?(?:추가|append|넣어|작성|반영)',
+        r"(?i)(?:설명|description|내용|본문)(?:을|를)?\s*(.+?)\s*(?:으로|로)\s*(?:업데이트|수정|변경|바꿔|바꿔줘|수정해줘|업데이트해줘|수정하세요|변경해줘)",
+    ]
+    for pattern in patterns:
+        matched = re.search(pattern, normalized)
+        if not matched:
+            continue
+        candidate = str(matched.group(1) or "").strip(" \"'`")
+        if candidate:
+            return candidate[:5000]
+    return None
+
+
+def _extract_linear_update_state(text: str) -> str | None:
+    normalized = _normalize_message(text)
+    explicit = re.search(r"(?i)(?:state_id|state id|상태id|상태_id)\s*[:：]\s*([^\s,]+)", normalized)
+    if explicit:
+        candidate = str(explicit.group(1) or "").strip(" \"'`.,")
+        return candidate or None
+    natural = re.search(
+        r"(?i)(?:상태|state)\s*(?:를|을)?\s*([^\s,;]+(?:\s+[^\s,;]+)?)\s*(?:으로|로)\s*(?:변경|수정|업데이트|바꿔|전환)",
+        normalized,
+    )
+    if not natural:
+        return None
+    candidate = str(natural.group(1) or "").strip(" \"'`.,")
+    candidate = re.sub(r"(으|로)$", "", candidate).strip()
+    return candidate or None
+
+
+def _extract_linear_update_priority(text: str) -> int | None:
+    normalized = _normalize_message(text)
+    matched = re.search(r"(?i)(?:priority|우선순위)\s*[:：]\s*([0-4])", normalized)
+    if not matched:
+        return None
+    try:
+        return int(matched.group(1))
+    except Exception:
+        return None
+
+
+def _is_linear_description_append_intent(text: str) -> bool:
+    raw = _normalize_message(text)
+    lower = raw.lower()
+    has_target = any(token in raw or token in lower for token in ("설명", "description", "본문", "내용"))
+    has_append = any(token in raw or token in lower for token in ("추가", "append", "덧붙", "붙여", "반영"))
+    return has_target and has_append
+
+
+def _merge_linear_description(*, current: str, addition: str) -> str:
+    current_text = (current or "").strip()
+    addition_text = (addition or "").strip()
+    if not addition_text:
+        return current_text
+    if not current_text:
+        return addition_text
+    if addition_text in current_text:
+        return current_text
+    return f"{current_text}\n\n{addition_text}"
+
+
 def _detect_service(text: str, connected_services: list[str]) -> str | None:
     lower = (text or "").lower()
     if ("google" in lower or "구글" in lower or "캘린더" in lower) and "google" in connected_services:
@@ -328,21 +420,45 @@ def _build_understanding_rule(user_text: str, connected_services: list[str]) -> 
 
     if service == "linear":
         issue_match = re.search(r"([A-Za-z]{2,10}-\d{1,6})", text)
-        if _contains_any(lower, ("업데이트", "추가", "수정", "append", "update")) and (
+        if _contains_any(lower, ("업데이트", "추가", "수정", "변경", "바꿔", "append", "update")) and (
             _contains_any(lower, ("이슈", "issue")) or issue_match is not None
         ):
             if issue_match:
                 slots["issue_id"] = issue_match.group(1).strip()
-            desc_match = re.search(r"(?:설명(?:에)?\s*(?:업데이트|추가)?[:\s]+)(.+)$", text)
-            if desc_match:
-                slots["description"] = desc_match.group(1).strip()
-            elif issue_match:
-                normalized = text.replace(issue_match.group(1), "").strip()
-                normalized = re.sub(r"\b(linear|리니어)\b", "", normalized, flags=re.IGNORECASE).strip()
-                normalized = re.sub(r"설명에?\s*추가해줘$", "", normalized).strip()
-                if normalized:
-                    slots["description"] = normalized
-            elif ":" in text:
+            title_text = _extract_linear_update_title(text)
+            if title_text:
+                slots["title"] = title_text
+            description_text = _extract_linear_update_description(text)
+            if description_text:
+                slots["description"] = description_text
+            state_value = _extract_linear_update_state(text)
+            if state_value:
+                slots["state_id"] = state_value
+            priority_value = _extract_linear_update_priority(text)
+            if priority_value is not None:
+                slots["priority"] = priority_value
+            if _is_linear_description_append_intent(text):
+                slots["description_append"] = "1"
+                if "description" not in slots:
+                    fallback = text
+                    if issue_match:
+                        fallback = fallback.replace(issue_match.group(1), " ")
+                    fallback = re.sub(r"\b(linear|리니어)\b", " ", fallback, flags=re.IGNORECASE)
+                    fallback = re.sub(
+                        r"(?i)(?:설명|description|본문|내용)에?\s*(?:.*?)(?:추가|append|덧붙|붙여|반영)(?:해줘|해주세요|하세요)?\s*$",
+                        " ",
+                        fallback,
+                    )
+                    fallback = _normalize_message(fallback)
+                    if fallback:
+                        slots["description"] = fallback[:5000]
+            if (
+                "description" not in slots
+                and "title" not in slots
+                and "state_id" not in slots
+                and "priority" not in slots
+                and ":" in text
+            ):
                 slots["description"] = text.split(":", 1)[1].strip()
             return UnderstandingResult(
                 request_type="saas_execution",
@@ -668,8 +784,8 @@ def _build_request_contract(understanding: UnderstandingResult, timezone_name: s
         clarification_needed = []
         if not slots.get("issue_id"):
             clarification_needed.append("issue_id")
-        if not slots.get("description"):
-            clarification_needed.append("description")
+        if not any(slots.get(key) not in (None, "", []) for key in ("title", "description", "state_id", "priority")):
+            clarification_needed.append("update_fields")
         expected_output = {"type": "object", "required_keys": []}
         return RequestContract(intent, service, tool_name, slots, clarification_needed, autofilled, expected_output)
 
@@ -766,7 +882,8 @@ def _missing_slot_prompt(slot_name: str) -> str:
         "database_id": "어느 Notion 데이터베이스에 생성할까요? database_id를 입력해주세요.",
         "team_id": "어느 Linear 팀에 생성할까요? team_id를 입력해주세요.",
         "page_id": "어느 페이지를 삭제할까요? page_id를 입력해주세요.",
-        "issue_id": "어느 이슈를 삭제할까요? issue_id를 입력해주세요. 예: OPS-42",
+        "issue_id": "어느 이슈를 수정할까요? issue_id를 입력해주세요. 예: OPS-42",
+        "update_fields": "무엇을 수정할지 알려주세요. 예: 제목: ..., 설명: ..., 상태: Todo, 우선순위: 2",
         "approval_confirmed": "파괴적 작업입니다. 진행하려면 `yes` 또는 `승인`이라고 입력해주세요.",
     }
     return mapping.get(slot_name, f"{slot_name} 값을 입력해주세요.")
@@ -797,7 +914,23 @@ def _merge_pending_slot(plan: AgentPlan, user_text: str, missing_slot: str) -> A
     for task in plan.tasks:
         if task.task_type == "TOOL":
             task.payload = dict(task.payload or {})
-            task.payload[missing_slot] = value
+            if missing_slot == "update_fields":
+                title_text = _extract_linear_update_title(user_text)
+                description_text = _extract_linear_update_description(user_text)
+                state_value = _extract_linear_update_state(user_text)
+                priority_value = _extract_linear_update_priority(user_text)
+                if title_text:
+                    task.payload["title"] = title_text
+                if description_text:
+                    task.payload["description"] = description_text
+                if state_value:
+                    task.payload["state_id"] = state_value
+                if priority_value is not None:
+                    task.payload["priority"] = priority_value
+                if _is_linear_description_append_intent(user_text):
+                    task.payload["description_append"] = "1"
+            else:
+                task.payload[missing_slot] = value
     return plan
 
 
@@ -828,6 +961,82 @@ async def _resolve_linear_team_id(user_id: str, team_ref: str) -> str | None:
             if team_id:
                 return team_id
     return None
+
+
+def _extract_linear_issue_nodes(payload: object) -> list[dict]:
+    if not isinstance(payload, dict):
+        return []
+    if isinstance(payload.get("nodes"), list):
+        return [item for item in payload.get("nodes") if isinstance(item, dict)]
+    issues = payload.get("issues")
+    if isinstance(issues, dict) and isinstance(issues.get("nodes"), list):
+        return [item for item in issues.get("nodes") if isinstance(item, dict)]
+    return []
+
+
+async def _resolve_linear_issue_for_update(user_id: str, issue_ref: str) -> tuple[str, str, str]:
+    ref = str(issue_ref or "").strip()
+    if not ref:
+        return "", "", ""
+    if _looks_like_linear_internal_issue_id(ref):
+        return ref, "", ""
+    queries = [{"tool_name": "linear_search_issues", "payload": {"query": ref, "first": 10}}]
+    queries.append({"tool_name": "linear_list_issues", "payload": {"first": 20}})
+    for query in queries:
+        try:
+            result = await execute_tool(user_id=user_id, tool_name=query["tool_name"], payload=query["payload"])
+        except Exception:
+            continue
+        data = (result or {}).get("data") if isinstance(result, dict) else {}
+        nodes = _extract_linear_issue_nodes(data)
+        target = ref.lower()
+        exact: dict | None = None
+        fuzzy: dict | None = None
+        for node in nodes:
+            issue_id = str(node.get("id") or "").strip()
+            if not issue_id:
+                continue
+            identifier = str(node.get("identifier") or "").strip().lower()
+            title = str(node.get("title") or "").strip().lower()
+            if target in {identifier, issue_id.lower(), title}:
+                exact = node
+                break
+            if target and (target in identifier or target in title):
+                fuzzy = fuzzy or node
+        matched = exact or fuzzy
+        if matched:
+            return (
+                str(matched.get("id") or "").strip(),
+                str(matched.get("url") or "").strip(),
+                str(matched.get("description") or "").strip(),
+            )
+    return "", "", ""
+
+
+async def _resolve_linear_state_id(user_id: str, state_value: str) -> str:
+    candidate = str(state_value or "").strip()
+    if not candidate:
+        return ""
+    if _looks_like_linear_internal_issue_id(candidate):
+        return candidate
+    normalized = _normalize_linear_state_name(candidate)
+    if not normalized:
+        return ""
+    try:
+        listed = await execute_tool(user_id=user_id, tool_name="linear_list_issues", payload={"first": 20})
+    except Exception:
+        return ""
+    data = (listed or {}).get("data") if isinstance(listed, dict) else {}
+    nodes = _extract_linear_issue_nodes(data)
+    for node in nodes:
+        state = node.get("state") if isinstance(node, dict) else None
+        if not isinstance(state, dict):
+            continue
+        state_name = str(state.get("name") or "").strip()
+        state_id = str(state.get("id") or "").strip()
+        if state_name and state_id and _normalize_linear_state_name(state_name) == normalized:
+            return state_id
+    return ""
 
 
 def _parse_error_status(detail: str) -> int | None:
@@ -1004,10 +1213,35 @@ def _render_success_message(contract: RequestContract, tool_result: dict[str, ob
         return "\n".join(lines)
     payload = tool_result.get("data")
     if isinstance(payload, dict):
+        if contract.tool_name == "linear_update_issue":
+            update = payload.get("issueUpdate") if isinstance(payload.get("issueUpdate"), dict) else {}
+            issue = update.get("issue") if isinstance(update.get("issue"), dict) else {}
+            identifier = str(issue.get("identifier") or "").strip()
+            title = str(issue.get("title") or "").strip()
+            url = str(issue.get("url") or "").strip()
+            label = identifier or title or str(contract.slots.get("issue_id") or "-")
+            lines = ["작업결과", f"- Linear 이슈를 업데이트했습니다. ({label})", "", "링크"]
+            lines.append(f"- {url}" if url else "- 링크 없음")
+            return "\n".join(lines)
+        if contract.tool_name == "linear_create_issue":
+            create = payload.get("issueCreate") if isinstance(payload.get("issueCreate"), dict) else {}
+            issue = create.get("issue") if isinstance(create.get("issue"), dict) else {}
+            identifier = str(issue.get("identifier") or "").strip()
+            title = str(issue.get("title") or "").strip()
+            url = str(issue.get("url") or "").strip()
+            label = identifier or title or str(contract.slots.get("title") or "-")
+            lines = ["작업결과", f"- Linear 이슈를 생성했습니다. ({label})", "", "링크"]
+            lines.append(f"- {url}" if url else "- 링크 없음")
+            return "\n".join(lines)
+        if contract.tool_name in {"notion_create_page", "notion_update_page", "notion_append_block_children"}:
+            url = str(payload.get("url") or "").strip()
+            lines = ["작업결과", "- Notion 페이지 작업을 완료했습니다.", "", "링크"]
+            lines.append(f"- {url}" if url else "- 링크 없음")
+            return "\n".join(lines)
         ref = str(payload.get("id") or payload.get("url") or "").strip()
         if ref:
-            return f"작업을 완료했습니다. ({ref})"
-    return "작업을 완료했습니다."
+            return f"작업결과\n- 요청을 완료했습니다.\n\n링크\n- {ref}"
+    return "작업결과\n- 요청을 완료했습니다.\n\n링크\n- 링크 없음"
 
 
 def _verify_expectation(contract: RequestContract, tool_result: dict[str, object], user_message: str) -> tuple[bool, str, dict[str, bool]]:
@@ -1048,6 +1282,16 @@ def _verify_expectation(contract: RequestContract, tool_result: dict[str, object
         payload = tool_result.get("data")
         if not isinstance(payload, dict):
             return False, "object_missing", {"required_keys_match": False}
+        if contract.tool_name == "linear_update_issue":
+            update = payload.get("issueUpdate")
+            if isinstance(update, dict):
+                success = bool(update.get("success"))
+                issue = update.get("issue")
+                issue_ok = isinstance(issue, dict) and bool(str(issue.get("id") or issue.get("identifier") or "").strip())
+                checks = {"issue_update_success": success, "issue_present": issue_ok}
+                if success and issue_ok:
+                    return True, "object_verified", checks
+                return False, "issue_update_failed", checks
         required = contract.expected_output.get("required_keys") or []
         for key in required:
             if not payload.get(str(key)):
@@ -1095,7 +1339,29 @@ async def _run_from_contract(
         response.execution.artifacts["error_code"] = "risk_gate_blocked"
         return response
 
-    tool_payload = _sanitize_payload_for_tool(contract.tool_name, contract.slots)
+    slots = dict(contract.slots or {})
+    if contract.tool_name == "linear_update_issue":
+        issue_ref = str(slots.get("issue_id") or "").strip()
+        resolved_issue_id = ""
+        current_issue_description = ""
+        if issue_ref:
+            resolved_issue_id, _resolved_issue_url, current_issue_description = await _resolve_linear_issue_for_update(
+                user_id=user_id,
+                issue_ref=issue_ref,
+            )
+            if resolved_issue_id:
+                slots["issue_id"] = resolved_issue_id
+        state_value = str(slots.get("state_id") or "").strip()
+        if state_value and not _looks_like_linear_internal_issue_id(state_value):
+            resolved_state_id = await _resolve_linear_state_id(user_id=user_id, state_value=state_value)
+            if resolved_state_id:
+                slots["state_id"] = resolved_state_id
+        append_intent = str(slots.get("description_append") or "").strip().lower() in {"1", "true", "yes", "y"}
+        description = str(slots.get("description") or "").strip()
+        if append_intent and description:
+            slots["description"] = _merge_linear_description(current=current_issue_description, addition=description)
+
+    tool_payload = _sanitize_payload_for_tool(contract.tool_name, slots)
     tool_result, steps, tool_error = await _execute_with_retry(
         user_id=user_id,
         tool_name=contract.tool_name,

@@ -440,10 +440,36 @@ def test_atomic_overhaul_linear_issue_key_update_without_issue_keyword(monkeypat
     async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
         assert user_id == "user-linear-key"
         calls.append((tool_name, dict(payload)))
+        if tool_name == "linear_search_issues":
+            return {
+                "ok": True,
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "issue-46",
+                                "identifier": "OPT-46",
+                                "title": "테스트 이슈",
+                                "description": "기존 설명",
+                                "url": "https://linear.app/issue/OPT-46",
+                                "state": {"id": "state-backlog", "name": "Backlog"},
+                            }
+                        ]
+                    }
+                },
+            }
         assert tool_name == "linear_update_issue"
-        assert payload.get("issue_id") == "OPT-46"
+        assert payload.get("issue_id") == "issue-46"
         assert isinstance(payload.get("description"), str)
-        return {"ok": True, "data": {"id": "OPT-46"}}
+        return {
+            "ok": True,
+            "data": {
+                "issueUpdate": {
+                    "success": True,
+                    "issue": {"identifier": "OPT-46", "url": "https://linear.app/issue/OPT-46"},
+                }
+            },
+        }
 
     monkeypatch.setattr("agent.atomic_engine.engine.get_settings", lambda: _Settings())
     monkeypatch.setattr("agent.atomic_engine.engine.get_pending_action", lambda _user_id: None)
@@ -457,7 +483,78 @@ def test_atomic_overhaul_linear_issue_key_update_without_issue_keyword(monkeypat
         )
     )
     assert result.ok is True
-    assert calls and calls[0][0] == "linear_update_issue"
+    assert [name for name, _ in calls][:2] == ["linear_search_issues", "linear_update_issue"]
+
+
+def test_atomic_overhaul_linear_state_change_resolves_state_name(monkeypatch):
+    class _Settings:
+        pending_action_ttl_seconds = 900
+
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        assert user_id == "user-linear-state"
+        calls.append((tool_name, dict(payload)))
+        if tool_name == "linear_search_issues":
+            return {
+                "ok": True,
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "issue-283",
+                                "identifier": "OPT-283",
+                                "title": "상태 변경 테스트",
+                                "description": "기존 설명",
+                                "url": "https://linear.app/issue/OPT-283",
+                                "state": {"id": "state-backlog", "name": "Backlog"},
+                            }
+                        ]
+                    }
+                },
+            }
+        if tool_name == "linear_list_issues":
+            return {
+                "ok": True,
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {"state": {"id": "state-backlog", "name": "Backlog"}},
+                            {"state": {"id": "state-todo", "name": "Todo"}},
+                        ]
+                    }
+                },
+            }
+        assert tool_name == "linear_update_issue"
+        assert payload.get("issue_id") == "issue-283"
+        assert payload.get("state_id") == "state-todo"
+        assert "description" not in payload
+        return {
+            "ok": True,
+            "data": {
+                "issueUpdate": {
+                    "success": True,
+                    "issue": {"identifier": "OPT-283", "url": "https://linear.app/issue/OPT-283"},
+                }
+            },
+        }
+
+    monkeypatch.setattr("agent.atomic_engine.engine.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.atomic_engine.engine.get_pending_action", lambda _user_id: None)
+    monkeypatch.setattr("agent.atomic_engine.engine.execute_tool", _fake_execute_tool)
+
+    result = asyncio.run(
+        run_atomic_overhaul_analysis(
+            "linear에서 OPT-283 이슈의 상태를 Todo로 변경",
+            ["linear"],
+            "user-linear-state",
+        )
+    )
+    assert result.ok is True
+    assert result.execution is not None
+    assert "작업결과" in result.execution.user_message
+    assert "링크" in result.execution.user_message
+    assert "https://linear.app/issue/OPT-283" in result.execution.user_message
 
 
 def test_atomic_overhaul_notion_create_page_without_database_clarification(monkeypatch):
