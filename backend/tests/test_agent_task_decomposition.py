@@ -177,6 +177,15 @@ def test_build_agent_plan_linear_recent_issue_lookup_prefers_list_tool():
     assert "query" not in linear_task.payload
 
 
+def test_build_agent_plan_linear_issue_update_with_generate_phrase_does_not_add_notion_create():
+    plan = build_agent_plan(
+        "linear에 서비스구조 오버홀 기획 이슈의 설명에 회의록 서식을 생성해서 업데이트하세요",
+        connected_services=["linear", "notion"],
+    )
+    assert any(task.tool_name == "linear_update_issue" for task in plan.tasks)
+    assert not any(task.tool_name == "notion_create_page" for task in plan.tasks)
+
+
 def test_execute_agent_plan_runs_notion_data_source_llm_notion_bridge(monkeypatch):
     calls = []
 

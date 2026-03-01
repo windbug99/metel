@@ -23,6 +23,7 @@ from agent.executor import (
     _extract_linear_issue_reference,
     _extract_linear_update_fields,
     _ensure_linear_update_patch_field,
+    _should_force_generate_linear_update_description,
     _sanitize_stepwise_request_payload,
 )
 from agent.types import AgentPlan, AgentRequirement
@@ -70,6 +71,24 @@ def test_map_execution_error_tool_failed_status_401_maps_auth():
 def test_extract_output_title():
     title = _extract_output_title("노션에서 최근 3개 페이지를 요약해서 주간 회의록으로 생성해줘")
     assert title == "주간 회의록"
+
+
+def test_should_force_generate_linear_update_description_true():
+    assert (
+        _should_force_generate_linear_update_description(
+            "linear OPT-343 이슈 설명에 회의록 서식을 생성해서 업데이트하세요"
+        )
+        is True
+    )
+
+
+def test_should_force_generate_linear_update_description_false_for_notion_page_request():
+    assert (
+        _should_force_generate_linear_update_description(
+            "linear OPT-343 이슈 설명에 노션 페이지 내용을 생성해서 업데이트하세요"
+        )
+        is False
+    )
 
 
 def test_extract_target_page_title():

@@ -261,6 +261,9 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
 
     need_summary = is_summary_intent(user_text)
     need_creation = is_create_intent(user_text)
+    is_issue_update_intent = is_update_intent(user_text) and (
+        ("이슈" in user_text) or ("issue" in user_text.lower())
+    )
     sentence_count = _extract_summary_sentence_count(user_text) or 3
 
     registry = load_registry()
@@ -384,7 +387,7 @@ def build_execution_tasks(user_text: str, target_services: list[str], selected_t
             )
         )
 
-    if need_creation and not is_linear_issue_create_intent(user_text):
+    if need_creation and not is_linear_issue_create_intent(user_text) and not is_issue_update_intent:
         # Prefer create_page tool; otherwise use generic create tool in selected set.
         create_page_tool = _pick(("create", "page"))
         fallback_create_tool = _pick(("create",))

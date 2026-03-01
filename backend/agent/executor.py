@@ -2873,7 +2873,20 @@ async def _autofill_linear_create_with_llm(
     return out
 
 
+def _should_force_generate_linear_update_description(user_text: str) -> bool:
+    lowered = (user_text or "").lower()
+    return (
+        any(token in lowered for token in ("linear", "리니어"))
+        and any(token in lowered for token in ("이슈", "issue"))
+        and any(token in lowered for token in ("설명", "description", "본문"))
+        and any(token in lowered for token in ("생성", "작성", "만들", "generate"))
+        and any(token in lowered for token in ("서식", "양식", "템플릿", "template"))
+        and not any(token in lowered for token in ("notion", "노션", "페이지", "page"))
+    )
+
+
 async def _autofill_linear_update_with_llm(*, user_text: str, filled: dict) -> dict:
+    force_generate_description = _should_force_generate_linear_update_description(user_text)
     system_prompt = (
         "사용자 요청에서 Linear 이슈 업데이트 입력을 자동 추론하는 JSON 생성기다. "
         "반드시 JSON object만 반환한다."
@@ -2882,6 +2895,7 @@ async def _autofill_linear_update_with_llm(*, user_text: str, filled: dict) -> d
         "아래 입력으로 linear_update_issue payload를 보정해라.\n"
         "- issue_id는 이미 확정된 값이 있으면 유지하고, 없으면 null.\n"
         "- title/description/state_id/priority 중 최소 1개를 채운다.\n"
+        "- 사용자가 '서식/템플릿 생성'을 요청하면 description에 실제 본문 초안을 생성한다.\n"
         "- priority는 0~4 정수 또는 null.\n\n"
         f"user_text={user_text}\n"
         f"current_payload={json.dumps(filled, ensure_ascii=False)}\n"
@@ -2891,7 +2905,7 @@ async def _autofill_linear_update_with_llm(*, user_text: str, filled: dict) -> d
     out = dict(filled)
     for key, max_len in (("title", 120), ("description", 5000), ("state_id", 128)):
         value = str(parsed.get(key) or "").strip()
-        if value and _missing(out.get(key)):
+        if value and (_missing(out.get(key)) or (key == "description" and force_generate_description)):
             out[key] = value[:max_len]
     priority = _sanitize_linear_priority(parsed.get("priority"))
     if priority is not None and out.get("priority") in (None, ""):
@@ -3616,7 +3630,10 @@ async def _autofill_task_payload(
                 )
                 if resolved_issue_id:
                     filled["issue_id"] = resolved_issue_id
-        if not any(filled.get(key) not in (None, "") for key in ("title", "description", "state_id", "priority")):
+        if (
+            not any(filled.get(key) not in (None, "") for key in ("title", "description", "state_id", "priority"))
+            or _should_force_generate_linear_update_description(user_text)
+        ):
             filled = await _autofill_linear_update_with_llm(user_text=user_text, filled=filled)
             steps.append(AgentExecutionStep(name="llm_autofill_linear_update_issue", status="success", detail="applied=1"))
         # Normalize optional linear_update_issue fields to avoid avoidable validation failures.
