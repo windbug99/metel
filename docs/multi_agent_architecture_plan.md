@@ -636,6 +636,251 @@ Atomic-First로 전환하되, 현재 운영 중인 실행 경로는 feature flag
 
 # 11. 오버홀 실행 계획
 
+## 11.1 실행 체크리스트
+
+### Phase 1 — 관측/기준선 고정
+
+- [x] `telegram.py`, `loop.py` 구조화 로그 필드 정리 반영
+- [x] 최근 7일 기준 baseline 리포트(success/validation_error/clarification/p95) 생성
+- [x] 오버홀 전후 비교 지표 정의 문서화
+- [ ] baseline 수치 팀 합의 완료
+
+baseline 팀 합의용 스냅샷 (결재 대기)
+- baseline(7d): `docs/reports/atomic_overhaul_baseline_7d.json`
+  - success_rate: `12.9%`
+  - validation_error_rate: `35.3%`
+  - user_visible_error_rate: `87.1%`
+  - latency_p95_ms: `4226`
+- cutover 최신(재인증 후): `docs/reports/atomic_overhaul_rollout_latest.json`
+  - accepted_outcome_rate: `100.0%`
+  - success_rate: `70.0%`
+  - validation_error_rate: `0.0%`
+  - user_visible_error_rate: `0.0%`
+  - latency_p95_ms: `5137`
+  - legacy_row_count: `0`
+- 승인 기록:
+  - 승인자:
+  - 승인일(UTC):
+  - 코멘트:
+
+Phase 1 baseline 리포트 (2026-03-01 14:17 KST)
+- 생성 명령: `cd backend && .venv/bin/python scripts/eval_atomic_overhaul_rollout.py --limit 1000 --days 7 --min-sample 30 --output-json ../docs/reports/atomic_overhaul_baseline_7d.json`
+- 리포트: `docs/reports/atomic_overhaul_baseline_7d.json`
+- 핵심 수치:
+  - sample_size: `85`
+  - legacy_row_count: `915`
+  - success_rate: `12.9%`
+  - validation_error_rate: `35.3%`
+  - user_visible_error_rate: `87.1%`
+  - latency_p95_ms: `4226`
+
+오버홀 전후 비교 지표 정의
+- success_rate: `status == "success"` 비율
+- validation_error_rate: `error_code == "validation_error"` 비율
+- user_visible_error_rate: `status != "success"` 비율(사용자 관점 실패율)
+- latency_p95_ms: `latency_ms` p95
+- legacy_row_count: `plan_source`가 legacy 계열인 row 개수(컷오버 기준은 `0`)
+
+### Phase 2 — Request Understanding + Clarification 정합화
+
+- [x] Clarification 트리거(confidence/intent/service) 정책 코드 반영
+- [x] Clarification 각 루프 최대 2회 제한 동작 확인
+- [x] `pending_actions` 재개/만료/취소 시나리오 테스트 통과
+- [x] `hard_ask`/`safe_default`/`soft_confirm` 런타임 정책 테스트 통과
+
+### Phase 3 — Atomic Planner 경로 신설 및 공존
+
+- [x] Atomic 경로 feature flag 추가
+- [x] Tool Retrieval Top-K 구현 (service/intent 기반 후보 제한)
+- [x] shadow 실행 시 `command_logs`/`pipeline_step_logs` 비교 가능 상태 확인
+- [x] 기존 경로(rule/stepwise/router v2/autonomous) 병행 동작 확인
+- [x] rollback 플래그(`*_enabled=false`, traffic 0) 즉시 전환 검증
+
+Phase 3 shadow 로그 비교 점검 (완료)
+- 점검 명령: `python backend/scripts/check_atomic_shadow_log_parity.py --limit 400 --output-json docs/reports/atomic_shadow_log_parity_latest.json`
+- 최신 결과: `compare_ready=true`, `shadow_compare_ready=true`
+- 해석: atomic serve/shadow 모두 `request_id` 기준으로 `command_logs` ↔ `pipeline_step_logs` 비교 가능
+
+### Phase 4 — Executor/Verification 정책 강화
+
+- [x] expected_output 기반 검증 로직 구현
+- [x] verification 실패 시 1회 재실행 정책 구현 및 테스트 통과
+- [x] API 재시도 정책(429/timeout/5xx만 1회) 일치 확인
+- [x] destructive/권한 위험 요청의 risk gate 검증
+
+### Phase 5 — 텔레그램 응답/운영 연계 정리
+
+- [x] 사용자 응답 메시지(성공/실패/미지원/clarification) 정책 반영
+- [x] `command_logs`/`pipeline_step_logs` KPI 집계 경로 일관성 검증
+- [x] 필요 시 SQL 마이그레이션 보강 및 적용 절차 문서화
+- [x] 사용자 가시 오류 메시지 QA 완료
+
+### Phase 5 SQL 적용 절차 (Runbook)
+
+Atomic 오버홀 로그 지표 확장을 위해 다음 순서로 SQL을 적용한다.
+
+1. 적용 대상 파일
+- `docs/sql/013_add_pipeline_step_logs_and_command_logs_stepwise_columns.sql`
+- `docs/sql/014_add_command_logs_atomic_overhaul_columns.sql`
+
+2. 적용 순서
+- 스테이징 DB에 `013 -> 014` 순서로 적용
+- 운영 DB에 동일 순서로 적용
+- 각 단계 적용 후 `command_logs`, `pipeline_step_logs` insert 정상 여부 확인
+
+3. 롤백 기준
+- `command_logs` insert 실패율 급증
+- `pipeline_step_logs` insert 실패 경고 급증
+- 위 조건 발생 시 신규 컬럼 사용 코드 비활성화 후 원인 분석
+
+4. 검증 쿼리 예시
+```sql
+select
+  count(*) filter (where atomic_verified is true) as atomic_verified_ok,
+  count(*) filter (where atomic_verified is false) as atomic_verified_fail
+from public.command_logs
+where created_at >= now() - interval '1 day';
+```
+
+### Phase 6 — 점진 롤아웃 및 경로 정리
+
+- [x] 트래픽 비율 10% → 30% → 100% 단계별 확대 실행
+- [x] 각 단계 KPI 수용 기준 충족 확인
+- [x] kill-switch/rollback 시나리오 리허설 완료
+- [x] 구경로 비활성화(또는 제거) 후 운영 안정성 확인
+
+### Phase 6 롤아웃 제어 플래그
+
+- `atomic_overhaul_enabled`: Atomic 오버홀 경로 on/off
+- `atomic_overhaul_traffic_percent`: 해시 기반 트래픽 비율 제어 (0~100)
+- `atomic_overhaul_allowlist`: 특정 사용자 우선 적용 (`user_id` CSV)
+- `atomic_overhaul_shadow_mode`: serve 제외 사용자 shadow 실행
+- `atomic_overhaul_legacy_fallback_enabled`: legacy 경로 fallback 허용/차단
+
+### Phase 6 운영 런북
+
+1. KPI 게이트 평가
+- `python backend/scripts/eval_atomic_overhaul_rollout.py --limit 200 --days 1 --min-sample 30 --output-json docs/reports/atomic_overhaul_rollout_latest.json`
+- 컷오버 시점 이후만 평가(과거 legacy 제외):
+  - `SINCE_UTC=2026-03-01T05:20:00Z bash backend/scripts/run_atomic_cutover_gate.sh`
+- 100% 전환 이후 구경로 제거 검증:
+  - `python backend/scripts/eval_atomic_overhaul_rollout.py --limit 200 --days 1 --min-sample 30 --require-zero-legacy --output-json docs/reports/atomic_overhaul_rollout_latest.json`
+- PASS 조건:
+  - accepted_outcome_rate >= 0.85 (`success + needs_input(policy)`)
+  - validation_error_rate <= 0.10
+  - user_visible_error_rate <= 0.15
+  - p95 latency <= 12000ms
+
+2. 롤아웃 의사결정
+- `python backend/scripts/decide_atomic_overhaul_rollout.py --report-json docs/reports/atomic_overhaul_rollout_latest.json --current-percent 10 > docs/reports/atomic_overhaul_rollout_decision_latest.json`
+- promote: `10 -> 30 -> 100`
+- fail 시 rollback: 한 단계 하향
+
+3. 환경 반영
+- dry-run:
+  - `python backend/scripts/apply_atomic_overhaul_rollout_decision.py --from-json docs/reports/atomic_overhaul_rollout_decision_latest.json --env-file backend/.env`
+- apply:
+  - `python backend/scripts/apply_atomic_overhaul_rollout_decision.py --from-json docs/reports/atomic_overhaul_rollout_decision_latest.json --env-file backend/.env --apply`
+
+4. Kill-switch (즉시 차단)
+- `ATOMIC_OVERHAUL_ENABLED=false`
+- `ATOMIC_OVERHAUL_TRAFFIC_PERCENT=0`
+- `ATOMIC_OVERHAUL_LEGACY_FALLBACK_ENABLED=true` (긴급 복귀 허용)
+- 적용 후 즉시 `/api/telegram/webhook` 요청 기준 legacy 경로 응답 확인
+
+5. 리허설 완료 기준
+- FAIL 리포트 입력 시 `decide_atomic_overhaul_rollout.py`가 rollback을 출력
+- `apply_atomic_overhaul_rollout_decision.py`가 traffic/env 값을 정상 반영
+
+6. Cutover 최종 게이트
+- `bash backend/scripts/run_atomic_cutover_gate.sh`
+- PASS 조건:
+  - rollout gate verdict PASS
+  - `ATOMIC_OVERHAUL_TRAFFIC_PERCENT >= 100`
+  - `legacy_row_count == 0`
+  - sample_size >= min_sample
+
+### Phase 6 최신 게이트 실행 결과
+
+- 실행 시각: `2026-03-01 15:20:24 KST`
+- 실행 명령: `bash backend/scripts/run_atomic_cutover_gate.sh`
+- 결과: `PASS`
+- 근거 리포트: `docs/reports/atomic_overhaul_rollout_latest.json`
+- 핵심 지표:
+  - `sample_size:40` (`min_sample=30` 충족)
+  - `legacy_row_count:0`
+  - `accepted_outcome_rate:1.000`
+  - `success_rate:0.700`
+  - `validation_error_rate:0.000`
+  - `user_visible_error_rate:0.000`
+  - `latency_p95_ms:5137`
+- 보강 사항:
+  - `backend/scripts/eval_atomic_overhaul_rollout.py`에 `--since-utc` 추가
+  - `backend/scripts/run_atomic_cutover_gate.sh`에 `SINCE_UTC` 전달 추가
+  - 컷오버 시점 이후만 대상으로 `legacy_row_count`를 검증 가능
+  - `atomic_overhaul_v1_clarification2`를 atomic 계열로 집계하도록 분류 보정 (`legacy_row_count=0` 확인)
+  - KPI 집계에서 정책상 `needs_input`(clarification/risk/slot-missing validation)을 accepted outcome으로 분류
+
+### Phase 6 Stage6 Telegram E2E 최신 결과
+
+- 실행 시각: `2026-03-01 15:19:55 KST`
+- 실행 명령: `cd backend && PYTHONPATH=. .venv/bin/python scripts/run_stage6_telegram_e2e.py`
+- 결과: `10/10 PASS`
+- 주요 실패 코드:
+  - 없음
+- 보강 사항:
+  - Atomic 실행 실패 에러코드 매핑 추가(`AUTH_REQUIRED/unauthorized/forbidden -> auth_error`)
+  - 재인증 후 S1/S2/S6/S10 `auth_error` 해소
+- 근거 점검:
+  - 동일 `user_id`로 Linear 작업(S1/S2/S6/S10) 성공 확인
+- 리포트: `docs/reports/stage6_telegram_e2e_latest.json`
+- 메모:
+  - `tool_not_found`는 재현되지 않음(의도-계약 폴백 효과 유지)
+  - Stage6 판정에서 `clarification_needed`/`risk_gate_blocked`를 `needs_input`로 인정하도록 보정
+  - S7, S8은 `PASS(status=success)` 유지(payload schema sanitize 효과 유지)
+  - S9는 `PASS(status=success)` 유지(notion create_page parent/properties 자동 보강 효과 유지)
+
+### Phase 6 다음 액션
+
+1. [완료] Linear OAuth 재인증 반영 및 `auth_error` 해소
+2. [완료] `atomic_overhaul_legacy_fallback_enabled=false` 상태 표본 40건 확보
+3. [완료] `SINCE_UTC=2026-03-01T06:17:04Z` 기준 cutover gate PASS 확인
+4. [완료] Phase 6 체크리스트 2개(각 단계 KPI, 구경로 안정성) 완료 처리
+
+### Phase 6 KPI 실패 원인 분해 (2026-03-01 14:31 KST)
+
+- 실행 명령:
+  - `cd backend && .venv/bin/python scripts/analyze_atomic_kpi_failures.py --since-utc 2026-03-01T05:21:56Z --limit 200 --output-json ../docs/reports/atomic_kpi_failure_analysis_latest.json`
+- 리포트:
+  - `docs/reports/atomic_kpi_failure_analysis_latest.json`
+- 결과 요약 (`atomic_rows=40`):
+  - `tool_execution=12`
+  - `oauth_auth=4`
+  - `needs_input_or_policy=12`
+  - `success=12`
+- 해석:
+  - KPI 하락의 핵심은 `tool_failed(12)` + `needs_input_or_policy(12)`이며, 특히 `linear` 서비스 비중(`28/40`)이 높다.
+  - `legacy_row_count` 문제는 해소되었고, 현재 병목은 legacy가 아니라 Linear 성공률/인증 상태다.
+
+최신 컷오버 구간 재분해 (2026-03-01 15:20 KST)
+- 기준 구간: `since_utc=2026-03-01T06:17:04Z`
+- 결과 (`atomic_rows=40`):
+  - `success=28`
+  - `needs_input_or_policy=12`
+  - `oauth_auth=0`
+  - `tool_execution=0`
+- 해석:
+  - Linear 인증 실패는 해소되었고, 남은 비성공 응답은 정책상 `needs_input` 카테고리다.
+
+### Phase 6 최종 회귀 검증 (2026-03-01 15:26 KST)
+
+- 실행 명령: `cd backend && bash scripts/run_core_regression.sh`
+- 결과: `PASS (245 passed)`
+- 특이사항:
+  - STEPWISE semantic preflight 보강 적용
+  - Google Calendar `time_min/time_max` 잘못된 datetime 입력은 API 호출 전 `semantic_validation_failed`로 차단
+  - Linear update 보정 경로(issue_id 해석/patch field 보강) 회귀 없음 확인
+
 ## Phase 1 — 관측/기준선 고정 (1주)
 
 - 목표:

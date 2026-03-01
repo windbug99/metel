@@ -13,7 +13,7 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException, Request
 from supabase import create_client
 
-from agent.loop import run_agent_analysis
+from agent.loop import _should_run_atomic_overhaul, run_agent_analysis
 from agent.registry import load_registry
 from agent.service_resolver import resolve_primary_service
 from app.core.auth import get_authenticated_user_id
@@ -476,6 +476,11 @@ def _record_command_log(
     failed_task_id: str | None = None,
     failure_reason: str | None = None,
     missing_required_fields: list[str] | None = None,
+    atomic_tool_name: str | None = None,
+    atomic_verified: bool | None = None,
+    atomic_verification_reason: str | None = None,
+    atomic_verification_retry_attempted: bool | None = None,
+    atomic_verification_checks: dict | None = None,
 ):
     try:
         settings = get_settings()
@@ -501,6 +506,11 @@ def _record_command_log(
             "failed_task_id": failed_task_id,
             "failure_reason": failure_reason,
             "missing_required_fields": missing_required_fields or [],
+            "atomic_tool_name": atomic_tool_name,
+            "atomic_verified": atomic_verified,
+            "atomic_verification_reason": atomic_verification_reason,
+            "atomic_verification_retry_attempted": atomic_verification_retry_attempted,
+            "atomic_verification_checks": atomic_verification_checks or {},
         }
         supabase.table("command_logs").insert(payload).execute()
     except Exception as exc:
@@ -534,6 +544,16 @@ def _record_pipeline_step_logs(
         except Exception:
             pass
         return []
+
+    def _parse_checks(raw: str | None) -> dict:
+        text = str(raw or "").strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
 
     # DAG node runs -> step logs
     dag_node_runs_json = str(artifacts.get("dag_node_runs_json") or "").strip()
@@ -653,6 +673,71 @@ def _record_pipeline_step_logs(
             }
         )
 
+    # Atomic overhaul fallback rows (single-tool pipeline) when DAG/stepwise rows are absent.
+    if not rows:
+        tool_name = str(artifacts.get("tool_name") or "").strip()
+        verified = str(artifacts.get("verified") or "").strip()
+        verification_reason = str(artifacts.get("verification_reason") or "").strip() or None
+        verification_checks = _parse_checks(str(artifacts.get("verification_checks") or "").strip())
+        error_code = str(artifacts.get("error_code") or "").strip() or None
+        missing_slot = str(artifacts.get("missing_slot") or "").strip()
+        service = _infer_service_from_api(tool_name) if tool_name else None
+        if tool_name:
+            call_status = "succeeded"
+            if error_code == "tool_failed":
+                call_status = "failed"
+            elif error_code in {"validation_error", "clarification_needed", "risk_gate_blocked"}:
+                call_status = "skipped"
+            rows.append(
+                {
+                    "run_id": run_id,
+                    "request_id": request_id,
+                    "user_id": user_id,
+                    "task_index": 1,
+                    "task_id": f"tool:{tool_name}",
+                    "sentence": tool_name,
+                    "service": service,
+                    "api": tool_name,
+                    "catalog_id": str(artifacts.get("catalog_id") or "").strip() or None,
+                    "contract_version": "v1",
+                    "llm_status": "success",
+                    "validation_status": "failed" if error_code in {"validation_error", "clarification_needed", "risk_gate_blocked"} else "passed",
+                    "call_status": call_status,
+                    "missing_required_fields": [missing_slot] if missing_slot else [],
+                    "validation_error_code": error_code,
+                    "failure_reason": verification_reason or error_code,
+                    "request_payload": None,
+                    "normalized_response": {"verification_checks": verification_checks} if verification_checks else None,
+                    "raw_response": None,
+                    "created_at": now_iso,
+                }
+            )
+
+            rows.append(
+                {
+                    "run_id": run_id,
+                    "request_id": request_id,
+                    "user_id": user_id,
+                    "task_index": 2,
+                    "task_id": "expectation_verification",
+                    "sentence": "expectation_verification",
+                    "service": service,
+                    "api": "expectation_verification",
+                    "catalog_id": str(artifacts.get("catalog_id") or "").strip() or None,
+                    "contract_version": "v1",
+                    "llm_status": "success",
+                    "validation_status": "passed" if verified == "1" else "failed",
+                    "call_status": "succeeded" if verified == "1" else "failed",
+                    "missing_required_fields": [],
+                    "validation_error_code": error_code if verified != "1" else None,
+                    "failure_reason": verification_reason if verified != "1" else None,
+                    "request_payload": None,
+                    "normalized_response": {"checks": verification_checks, "reason": verification_reason},
+                    "raw_response": None,
+                    "created_at": now_iso,
+                }
+            )
+
     if not rows:
         return
 
@@ -690,6 +775,19 @@ def _parse_missing_required_fields(value: object) -> list[str]:
     if not isinstance(parsed, list):
         return []
     return [str(item).strip() for item in parsed if str(item).strip()]
+
+
+def _parse_atomic_verification_checks(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    raw = str(value or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _infer_service_from_api(api: str | None) -> str | None:
@@ -844,6 +942,10 @@ def _build_structured_pipeline_log(
         "transform_error_count": transform_error_count,
         "verify_error_count": verify_error_count,
         "verify_fail_before_write": bool(verify_error_count > 0 and write_success_count == 0),
+        "atomic_tool_name": str(artifacts.get("tool_name") or "").strip() or None,
+        "atomic_verified": str(artifacts.get("verified") or "").strip() == "1",
+        "atomic_verification_reason": str(artifacts.get("verification_reason") or "").strip() or None,
+        "atomic_verification_retry_attempted": str(artifacts.get("verification_retry_attempted") or "").strip() == "1",
     }
     if router_mode != "STEPWISE_PIPELINE":
         return base_payload
@@ -1177,6 +1279,8 @@ async def telegram_webhook(
             v2_shadow_mode = None
             v2_shadow_executed = None
             v2_shadow_ok = None
+            atomic_overhaul_rollout = None
+            atomic_overhaul_shadow_mode = None
             skill_llm_transform_rollout = None
             skill_llm_transform_shadow_mode = None
             skill_llm_transform_shadow_executed = None
@@ -1201,6 +1305,10 @@ async def telegram_webhook(
                     v2_shadow_executed = note.split("=", 1)[1]
                 if note.startswith("skill_v2_shadow_ok="):
                     v2_shadow_ok = note.split("=", 1)[1]
+                if note.startswith("atomic_overhaul_rollout="):
+                    atomic_overhaul_rollout = note.split("=", 1)[1]
+                if note.startswith("atomic_overhaul_shadow_mode="):
+                    atomic_overhaul_shadow_mode = note.split("=", 1)[1]
                 if note.startswith("skill_llm_transform_rollout="):
                     skill_llm_transform_rollout = note.split("=", 1)[1]
                 if note.startswith("skill_llm_transform_shadow_mode="):
@@ -1211,6 +1319,18 @@ async def telegram_webhook(
                     skill_llm_transform_shadow_ok = note.split("=", 1)[1]
                 if note.startswith("router_source="):
                     router_source = note.split("=", 1)[1]
+            if atomic_overhaul_rollout is None or atomic_overhaul_shadow_mode is None:
+                try:
+                    atomic_serve, atomic_shadow, atomic_reason = _should_run_atomic_overhaul(
+                        settings=settings,
+                        user_id=str(user_id or ""),
+                    )
+                    if atomic_overhaul_rollout is None:
+                        atomic_overhaul_rollout = atomic_reason
+                    if atomic_overhaul_shadow_mode is None:
+                        atomic_overhaul_shadow_mode = "1" if atomic_shadow and not atomic_serve else "0"
+                except Exception:
+                    pass
             if analysis.execution:
                 execution_steps_text = (
                     "\n".join(f"- {step.name}: {step.status} ({step.detail})" for step in analysis.execution.steps)
@@ -1334,6 +1454,12 @@ async def telegram_webhook(
                 + (f";skill_v2_shadow_mode={v2_shadow_mode}" if v2_shadow_mode is not None else "")
                 + (f";skill_v2_shadow_executed={v2_shadow_executed}" if v2_shadow_executed is not None else "")
                 + (f";skill_v2_shadow_ok={v2_shadow_ok}" if v2_shadow_ok is not None else "")
+                + (f";atomic_overhaul_rollout={atomic_overhaul_rollout}" if atomic_overhaul_rollout else "")
+                + (
+                    f";atomic_overhaul_shadow_mode={atomic_overhaul_shadow_mode}"
+                    if atomic_overhaul_shadow_mode is not None
+                    else ""
+                )
                 + (f";skill_llm_transform_rollout={skill_llm_transform_rollout}" if skill_llm_transform_rollout else "")
                 + (
                     f";skill_llm_transform_shadow_mode={skill_llm_transform_shadow_mode}"
@@ -1408,6 +1534,15 @@ async def telegram_webhook(
                 failed_task_id=str(exec_artifacts.get("failed_task_id") or exec_artifacts.get("failed_step") or "").strip() or None,
                 failure_reason=str(exec_artifacts.get("failure_reason") or exec_artifacts.get("reason") or "").strip() or None,
                 missing_required_fields=_parse_missing_required_fields(exec_artifacts.get("missing_required_fields")),
+                atomic_tool_name=str(exec_artifacts.get("tool_name") or "").strip() or None,
+                atomic_verified=(str(exec_artifacts.get("verified") or "").strip() == "1") if exec_artifacts.get("verified") is not None else None,
+                atomic_verification_reason=str(exec_artifacts.get("verification_reason") or "").strip() or None,
+                atomic_verification_retry_attempted=(
+                    str(exec_artifacts.get("verification_retry_attempted") or "").strip() == "1"
+                    if exec_artifacts.get("verification_retry_attempted") is not None
+                    else None
+                ),
+                atomic_verification_checks=_parse_atomic_verification_checks(exec_artifacts.get("verification_checks")),
             )
             _record_pipeline_step_logs(
                 user_id=user_id,

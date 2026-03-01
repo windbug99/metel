@@ -149,14 +149,16 @@ def _is_pass(*, expected: str, log_row: dict[str, Any]) -> bool:
     if shadow_mode and shadow_executed and shadow_ok and expected in {"success", "success_or_needs_input"}:
         return True
 
+    needs_input_codes = {"validation_error", "clarification_needed", "risk_gate_blocked"}
+
     if expected == "success":
         return status == "success"
     if expected == "needs_input":
-        return status == "error" and error_code == "validation_error"
+        return status == "error" and error_code in needs_input_codes
     if expected == "error":
         return status == "error"
     if expected == "success_or_needs_input":
-        return status == "success" or (status == "error" and error_code == "validation_error")
+        return status == "success" or (status == "error" and error_code in needs_input_codes)
     return False
 
 

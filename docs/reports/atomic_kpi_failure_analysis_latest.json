@@ -1,0 +1,23 @@
+{
+  "window_start_utc": "2026-03-01T06:17:04Z",
+  "inspected_rows": 40,
+  "atomic_rows": 40,
+  "bucket_counts": {
+    "success": 28,
+    "needs_input_or_policy": 12
+  },
+  "error_code_counts": {
+    "(none)": 28,
+    "validation_error": 4,
+    "clarification_needed": 4,
+    "risk_gate_blocked": 4
+  },
+  "service_counts": {
+    "linear": 28,
+    "notion": 12
+  },
+  "plan_source_counts": {
+    "atomic_overhaul_v1": 32,
+    "atomic_overhaul_v1_clarification2": 8
+  }
+}

@@ -14,6 +14,11 @@ def _agent_error_guide(error_code: str | None, verification_reason: str | None =
         "auth_error": "권한이 부족하거나 만료되었습니다. 해당 서비스 권한을 다시 승인해주세요.",
         "rate_limited": "외부 API 호출 한도를 초과했습니다. 1~2분 후 다시 시도해주세요.",
         "validation_error": "요청 형식을 확인해주세요. 페이지 제목/데이터소스 ID/개수 형식을 점검해주세요.",
+        "clarification_needed": "실행 전 추가 확인이 필요합니다. 안내된 항목 값을 입력해 주세요.",
+        "risk_gate_blocked": "파괴적/권한 위험 작업은 승인 확인 후에만 실행됩니다.",
+        "tool_not_found": "요청을 처리할 도구 후보를 찾지 못했습니다. 서비스/작업 대상을 더 구체적으로 입력해 주세요.",
+        "unsupported_request": "현재 지원하지 않는 요청 유형입니다. SaaS 실행 요청으로 다시 입력해 주세요.",
+        "tool_failed": "외부 API 실행에 실패했습니다. 잠시 후 다시 시도해 주세요.",
         "not_found": "요청한 페이지 또는 데이터를 찾지 못했습니다. 제목/ID를 다시 확인해주세요.",
         "upstream_error": "외부 서비스 응답 처리에 실패했습니다. 잠시 후 다시 시도해주세요.",
         "execution_error": "실행 중 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
@@ -41,7 +46,10 @@ def _agent_error_guide(error_code: str | None, verification_reason: str | None =
 
 
 def _slot_input_example(action: str, slot_name: str) -> str:
-    schema = get_action_slot_schema(action)
+    try:
+        schema = get_action_slot_schema(action)
+    except Exception:
+        schema = None
     if not schema:
         return f"{slot_name}: <값>"
     aliases = schema.aliases.get(slot_name) or ()
@@ -87,6 +95,8 @@ def _build_user_preface_template(*, ok: bool, error_code: str | None, execution_
     if not ok:
         if error_code == "validation_error":
             return "입력값이 아직 부족해서 바로 실행하지 못했어요. 아래 보완 안내대로 한 번만 더 입력해 주세요."
+        if error_code in {"clarification_needed", "risk_gate_blocked"}:
+            return "요청 실행 전에 확인할 항목이 있습니다. 아래 안내에 따라 값을 입력해 주세요."
         return "요청을 처리하는 중 문제가 있어요. 아래 실행 결과와 오류 안내를 먼저 확인해 주세요."
     summary = (execution_message or "").strip().splitlines()[0] if execution_message else ""
     if summary:
@@ -95,7 +105,10 @@ def _build_user_preface_template(*, ok: bool, error_code: str | None, execution_
 
 
 def _display_slot_name(action: str, slot_name: str) -> str:
-    schema = get_action_slot_schema(action)
+    try:
+        schema = get_action_slot_schema(action)
+    except Exception:
+        schema = None
     if not schema:
         return slot_name
     aliases = schema.aliases.get(slot_name) or ()
@@ -156,6 +169,12 @@ def _build_user_facing_message(
     slot_action: str | None,
     missing_slot: str | None,
 ) -> str:
+    if error_code in {"clarification_needed", "risk_gate_blocked"}:
+        cleaned = (execution_message or "").strip()
+        if cleaned:
+            return cleaned
+        return "실행 전에 확인할 정보가 필요합니다. 안내된 값을 입력해 주세요."
+
     if error_code == "validation_error" and missing_slot:
         display_slot = _display_slot_name(str(slot_action or ""), str(missing_slot))
         example = _slot_input_example(str(slot_action or ""), str(missing_slot))
@@ -193,7 +212,7 @@ def _build_user_facing_message(
 
 
 def _should_use_preface_llm(*, ok: bool, error_code: str | None, execution_message: str) -> bool:
-    if error_code == "validation_error":
+    if error_code in {"validation_error", "clarification_needed", "risk_gate_blocked"}:
         # Slot question/failure recovery should keep deterministic wording.
         return False
     if error_code:

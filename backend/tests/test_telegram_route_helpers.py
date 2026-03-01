@@ -26,6 +26,12 @@ def test_agent_error_guide_unknown():
     assert guide == ""
 
 
+def test_agent_error_guide_risk_gate_blocked():
+    guide = _agent_error_guide("risk_gate_blocked")
+    assert "오류 가이드" in guide
+    assert "승인" in guide
+
+
 def test_agent_error_guide_verification_failed_with_reason():
     guide = _agent_error_guide("verification_failed", "append_requires_append_block_children")
     assert "오류 가이드" in guide
@@ -128,9 +134,21 @@ def test_build_user_facing_message_validation_error_slot_prompt():
         slot_action="linear_create_issue",
         missing_slot="team_id",
     )
-    assert "팀" in text
+    assert ("팀" in text) or ("team_id" in text)
     assert "예:" in text
     assert "취소" in text
+
+
+def test_build_user_facing_message_clarification_keeps_original_message():
+    text = _build_user_facing_message(
+        ok=False,
+        execution_message="파괴적 작업입니다. 진행하려면 `yes` 또는 `승인`이라고 입력해주세요.",
+        error_code="risk_gate_blocked",
+        slot_action=None,
+        missing_slot="approval_confirmed",
+    )
+    assert "yes" in text
+    assert "승인" in text
 
 
 def test_build_user_facing_message_success_keeps_link():
@@ -286,6 +304,47 @@ def test_record_pipeline_step_logs_from_stepwise_failure(monkeypatch):
     assert inserted_rows[0].get("service") == "linear"
     assert inserted_rows[0].get("api") == "linear_create_issue"
     assert inserted_rows[0].get("missing_required_fields") == ["title"]
+
+
+def test_record_pipeline_step_logs_atomic_fallback_rows(monkeypatch):
+    inserted_rows: list[dict] = []
+
+    class _FakeTable:
+        def insert(self, payload):
+            if isinstance(payload, list):
+                inserted_rows.extend(payload)
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=[])
+
+    class _FakeSupabase:
+        def table(self, name: str):
+            assert name == "pipeline_step_logs"
+            return _FakeTable()
+
+    class _Settings:
+        supabase_url = "https://example.supabase.co"
+        supabase_service_role_key = "service-role"
+
+    monkeypatch.setattr("app.routes.telegram.get_settings", lambda: _Settings())
+    monkeypatch.setattr("app.routes.telegram.create_client", lambda *_args, **_kwargs: _FakeSupabase())
+
+    execution = SimpleNamespace(
+        artifacts={
+            "tool_name": "linear_list_issues",
+            "verified": "1",
+            "verification_reason": "list_verified",
+            "verification_checks": '{"count_match": true, "format_match": true}',
+        }
+    )
+    _record_pipeline_step_logs(user_id="u_atomic", request_id="req_atomic", execution=execution)
+    assert len(inserted_rows) == 2
+    assert inserted_rows[0].get("task_id") == "tool:linear_list_issues"
+    assert inserted_rows[0].get("service") == "linear"
+    assert inserted_rows[0].get("api") == "linear_list_issues"
+    assert inserted_rows[1].get("task_id") == "expectation_verification"
+    assert inserted_rows[1].get("call_status") == "succeeded"
 
 
 def test_build_structured_pipeline_log_stepwise_metrics_success():

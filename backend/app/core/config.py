@@ -95,6 +95,11 @@ class Settings(BaseSettings):
     skill_llm_transform_pipeline_shadow_mode: bool = False
     skill_llm_transform_pipeline_traffic_percent: int = 100
     skill_llm_transform_pipeline_allowlist: str | None = None
+    atomic_overhaul_enabled: bool = False
+    atomic_overhaul_shadow_mode: bool = False
+    atomic_overhaul_traffic_percent: int = 100
+    atomic_overhaul_allowlist: str | None = None
+    atomic_overhaul_legacy_fallback_enabled: bool = True
     llm_stepwise_pipeline_enabled: bool = False
     stepwise_force_enabled: bool = False
     stepwise_tool_retry_max_attempts: int = 2

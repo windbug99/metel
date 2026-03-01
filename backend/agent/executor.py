@@ -1297,6 +1297,23 @@ def _sanitize_stepwise_request_payload(
     return payload
 
 
+def _build_semantic_validation_payload(
+    *,
+    tool_name: str,
+    raw_payload: dict[str, object],
+    sanitized_payload: dict[str, object],
+) -> dict[str, object]:
+    payload = dict(sanitized_payload or {})
+    normalized_tool = str(tool_name or "").strip().lower()
+    if normalized_tool == "google_calendar_list_events":
+        for key in ("time_min", "time_max"):
+            raw_value = str((raw_payload or {}).get(key) or "").strip()
+            if raw_value and key not in payload:
+                # Preserve raw invalid datetime hints for semantic preflight rejection.
+                payload[key] = raw_value
+    return payload
+
+
 def _extract_team_nodes_from_payload(data: object) -> list[dict]:
     if not isinstance(data, dict):
         return []
@@ -1998,6 +2015,7 @@ async def _execute_stepwise_pipeline_task(user_id: str, plan: AgentPlan) -> Agen
                 },
                 steps=execution_steps + [AgentExecutionStep(name=step_id, status="error", detail=parse_error)],
             )
+        raw_request_payload = dict(request_payload) if isinstance(request_payload, dict) else {}
         request_payload = _sanitize_stepwise_request_payload(
             tool_name=tool_name,
             sentence=sentence,
@@ -2079,10 +2097,15 @@ async def _execute_stepwise_pipeline_task(user_id: str, plan: AgentPlan) -> Agen
                 },
                 steps=execution_steps + [AgentExecutionStep(name=step_id, status="error", detail=f"missing_required_fields:{','.join(missing_required_fields)}")],
             )
+        semantic_payload = _build_semantic_validation_payload(
+            tool_name=tool_name,
+            raw_payload=raw_request_payload,
+            sanitized_payload=request_payload,
+        )
         semantic_errors = _validate_stepwise_payload_semantics(
             tool_name=tool_name,
             input_schema=tool_def.input_schema,
-            payload=request_payload,
+            payload=semantic_payload,
         )
         if semantic_errors:
             validation_detail = semantic_errors[0]

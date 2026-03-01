@@ -1,0 +1,3 @@
+사용자 요청: {user_message}
+연결된 서비스: {connected_services}
+사용자 timezone: {timezone}

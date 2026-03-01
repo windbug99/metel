@@ -5,6 +5,7 @@ import hashlib
 import re
 import copy
 
+from agent.atomic_engine import run_atomic_overhaul_analysis
 from agent.autonomous import run_autonomous_loop
 from agent.executor import execute_agent_plan
 from agent.intent_keywords import (
@@ -85,6 +86,34 @@ def _should_run_skill_llm_transform_pipeline(*, settings, user_id: str) -> tuple
     if _v2_rollout_hit(user_id=user_id, percent=bounded):
         return True, False, f"rollout_{bounded}"
     shadow_mode = bool(getattr(settings, "skill_llm_transform_pipeline_shadow_mode", False))
+    if shadow_mode:
+        return False, True, f"rollout_{bounded}_shadow"
+    return False, False, f"rollout_{bounded}_miss"
+
+
+def _should_run_atomic_overhaul(*, settings, user_id: str) -> tuple[bool, bool, str]:
+    enabled = bool(getattr(settings, "atomic_overhaul_enabled", False))
+    shadow_mode = bool(getattr(settings, "atomic_overhaul_shadow_mode", False))
+    legacy_fallback_enabled = bool(getattr(settings, "atomic_overhaul_legacy_fallback_enabled", True))
+    if not enabled:
+        return False, False, "disabled"
+
+    allowlist = _parse_v2_allowlist(getattr(settings, "atomic_overhaul_allowlist", None))
+    if allowlist:
+        if user_id in allowlist:
+            return True, False, "allowlist"
+        if not legacy_fallback_enabled:
+            return True, False, "forced_no_legacy_allowlist_excluded"
+        if shadow_mode:
+            return False, True, "allowlist_excluded_shadow"
+        return False, False, "allowlist_excluded"
+
+    percent = int(getattr(settings, "atomic_overhaul_traffic_percent", 100))
+    bounded = max(0, min(100, percent))
+    if _v2_rollout_hit(user_id=user_id, percent=bounded):
+        return True, False, f"rollout_{bounded}"
+    if not legacy_fallback_enabled:
+        return True, False, f"forced_no_legacy_rollout_{bounded}_miss"
     if shadow_mode:
         return False, True, f"rollout_{bounded}_shadow"
     return False, False, f"rollout_{bounded}_miss"
@@ -1561,6 +1590,29 @@ async def run_agent_analysis(user_text: str, connected_services: list[str], user
     resumed = await _try_resume_pending_action(user_id=user_id, user_text=user_text)
     if resumed is not None:
         return resumed
+
+    atomic_serve, atomic_shadow, atomic_rollout_reason = _should_run_atomic_overhaul(
+        settings=settings,
+        user_id=user_id,
+    )
+    if atomic_serve:
+        atomic_result = await run_atomic_overhaul_analysis(
+            user_text=user_text,
+            connected_services=connected_services,
+            user_id=user_id,
+        )
+        atomic_result.plan.notes.append(f"atomic_overhaul_rollout={atomic_rollout_reason}")
+        atomic_result.plan.notes.append("atomic_overhaul_shadow_mode=0")
+        return atomic_result
+    if atomic_shadow:
+        try:
+            _ = await run_atomic_overhaul_analysis(
+                user_text=user_text,
+                connected_services=connected_services,
+                user_id=user_id,
+            )
+        except Exception:
+            pass
 
     if _looks_like_slot_only_input(user_text):
         plan = build_agent_plan(user_text=user_text, connected_services=connected_services)

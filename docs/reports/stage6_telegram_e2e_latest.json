@@ -1,24 +1,34 @@
 {
-  "generated_at": "2026-02-27T15:07:45.850381Z",
+  "generated_at": "2026-03-01T06:20:39.626227Z",
   "chat_id": 178936796,
   "total": 10,
-  "passed": 8,
-  "failed": 2,
-  "pass_rate": 0.8,
+  "passed": 10,
+  "failed": 0,
+  "pass_rate": 1.0,
   "rows": [
     {
       "id": "S1",
       "text": "linear OPT-46 이슈 설명 업데이트: API 타임아웃 재현 조건과 임시 우회 방법을 추가해줘",
       "expected": "success",
-      "pass": false,
-      "error": "send_failed:timed out"
+      "chain": "single_s1",
+      "pass": true,
+      "status": "success",
+      "error_code": null,
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T06:19:44.780672+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2503;request_id=tg_update:345981060;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "S2",
       "text": "openweather API 사용방법을 정리해서 linear OPT-46 설명에 추가해줘",
       "expected": "success",
-      "pass": false,
-      "error": "send_failed:timed out"
+      "chain": "single_s2",
+      "pass": true,
+      "status": "success",
+      "error_code": null,
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T06:19:49.45162+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=1834;request_id=tg_update:345981061;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "S3",
@@ -27,10 +37,10 @@
       "chain": "single_s3",
       "pass": true,
       "status": "error",
-      "error_code": "delete_disabled",
-      "plan_source": "stepwise_template",
-      "created_at": "2026-02-27T15:05:21.098298+00:00",
-      "detail": "services=linear;slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;analysis_latency_ms=4386;request_id=tg_update:204635458;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histogram\":{\"delete_disabled\":1},\"retry_count\":0};verifier_json={\"failed_r"
+      "error_code": "risk_gate_blocked",
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T06:19:55.693237+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=1578;request_id=tg_update:345981062;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":\"approval_confirmed\",\"slot_action\":null};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false,\"replan"
     },
     {
       "id": "S4",
@@ -38,11 +48,11 @@
       "expected": "success_or_needs_input",
       "chain": "linear_create",
       "pass": true,
-      "status": "success",
-      "error_code": null,
-      "plan_source": "stepwise_template",
-      "created_at": "2026-02-27T15:05:46.21035+00:00",
-      "detail": "services=linear;slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;analysis_latency_ms=11483;request_id=tg_update:204635459;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histogram\":{},\"retry_count\":0};verifier_json={\"failed_rule\":null,\"remed"
+      "status": "error",
+      "error_code": "clarification_needed",
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T06:20:00.347737+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=1903;request_id=tg_update:345981063;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":\"team_id\",\"slot_action\":null};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_his"
     },
     {
       "id": "S5",
@@ -52,9 +62,9 @@
       "pass": true,
       "status": "error",
       "error_code": "validation_error",
-      "plan_source": "rule",
-      "created_at": "2026-02-27T15:05:49.486167+00:00",
-      "detail": "services=(추론 실패);slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;analysis_latency_ms=82;request_id=tg_update:204635460;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histogram\":{\"validation_error\":1},\"retry_count\":0};verifier_json={\"failed_r"
+      "plan_source": "atomic_overhaul_v1_clarification2",
+      "created_at": "2026-03-01T06:20:03.402932+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=1;missing_slot=title;slot_action=linear_create_issue;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=214;request_id=tg_update:345981064;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":\"title\",\"slot_action\":\"linear_create_issue\"};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":"
     },
     {
       "id": "S6",
@@ -62,11 +72,11 @@
       "expected": "success_or_needs_input",
       "chain": "linear_create",
       "pass": true,
-      "status": "error",
-      "error_code": "validation_error",
-      "plan_source": "rule",
-      "created_at": "2026-02-27T15:05:52.335336+00:00",
-      "detail": "services=linear;slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;analysis_latency_ms=71;request_id=tg_update:204635461;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histogram\":{\"validation_error\":1},\"retry_count\":0};verifier_json={\"failed_ru"
+      "status": "success",
+      "error_code": null,
+      "plan_source": "atomic_overhaul_v1_clarification2",
+      "created_at": "2026-03-01T06:20:09.463181+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=1;slot_loop_turns=0;validated_payloads=[{\"task_id\": \"task_linear_create_issue\", \"tool_name\": \"linear_create_issue\", \"payload\": {\"title\": \"stage6 자동화 테스트 이슈\", \"priority\": 3, \"team_id\": \"795811ba-a88a-4afd-9878-95e4f236a90c\"}}];atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2204;request_id=tg_update:345981065;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filt"
     },
     {
       "id": "S7",
@@ -76,9 +86,9 @@
       "pass": true,
       "status": "success",
       "error_code": null,
-      "plan_source": "stepwise_template",
-      "created_at": "2026-02-27T15:06:26.186074+00:00",
-      "detail": "services=notion;slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;analysis_latency_ms=17267;request_id=tg_update:204635462;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histogram\":{},\"retry_count\":0};verifier_json={\"failed_rule\":null,\"remed"
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T06:20:15.881459+00:00",
+      "detail": "services=notion;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3604;request_id=tg_update:345981066;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "S8",
@@ -88,9 +98,9 @@
       "pass": true,
       "status": "success",
       "error_code": null,
-      "plan_source": "stepwise_template",
-      "created_at": "2026-02-27T15:06:45.889611+00:00",
-      "detail": "services=notion;slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;analysis_latency_ms=6982;request_id=tg_update:204635463;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histogram\":{},\"retry_count\":0};verifier_json={\"failed_rule\":null,\"remedi"
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T06:20:22.479137+00:00",
+      "detail": "services=notion;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3728;request_id=tg_update:345981067;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "S9",
@@ -100,9 +110,9 @@
       "pass": true,
       "status": "success",
       "error_code": null,
-      "plan_source": "stepwise_template",
-      "created_at": "2026-02-27T15:07:15.410526+00:00",
-      "detail": "services=linear, notion;slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;analysis_latency_ms=17729;request_id=tg_update:204635464;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histogram\":{},\"retry_count\":0};verifier_json={\"failed_rule\":nul"
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T06:20:33.824271+00:00",
+      "detail": "services=notion;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=8345;request_id=tg_update:345981068;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "S10",
@@ -112,9 +122,9 @@
       "pass": true,
       "status": "success",
       "error_code": null,
-      "plan_source": "stepwise_template",
-      "created_at": "2026-02-27T15:07:44.654765+00:00",
-      "detail": "services=linear;slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;analysis_latency_ms=17801;request_id=tg_update:204635465;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histogram\":{},\"retry_count\":0};verifier_json={\"failed_rule\":null,\"remed"
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T06:20:38.453832+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=1845;request_id=tg_update:345981069;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     }
   ]
 }

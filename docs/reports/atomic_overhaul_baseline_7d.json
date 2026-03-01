@@ -1,0 +1,21 @@
+{
+  "window_days": 7,
+  "window_start_utc": "2026-02-22T05:17:34Z",
+  "sample_size": 85,
+  "legacy_row_count": 915,
+  "min_sample": 30,
+  "success_count": 11,
+  "success_rate": 0.12941176470588237,
+  "validation_error_count": 30,
+  "validation_error_rate": 0.35294117647058826,
+  "user_visible_error_count": 74,
+  "user_visible_error_rate": 0.8705882352941177,
+  "latency_p50_ms": 2528,
+  "latency_p95_ms": 4226,
+  "verdict": "FAIL",
+  "reasons": [
+    "success_rate_below_target:0.129<0.850",
+    "validation_error_rate_above_target:0.353>0.100",
+    "user_visible_error_rate_above_target:0.871>0.150"
+  ]
+}
