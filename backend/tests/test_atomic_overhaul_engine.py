@@ -1,6 +1,7 @@
 import asyncio
 
 from agent.atomic_engine.engine import (
+    _extract_linear_update_description,
     _extract_slot_value,
     _map_tool_error_code,
     _notion_first_result_id,
@@ -556,6 +557,74 @@ def test_atomic_overhaul_linear_state_change_resolves_state_name(monkeypatch):
     assert "작업결과" in result.execution.user_message
     assert "링크" in result.execution.user_message
     assert "https://linear.app/issue/OPT-283" in result.execution.user_message
+
+
+def test_extract_linear_update_description_prefers_append_tail_multiline():
+    text = 'linear에서 OPT-283 이슈의 설명에 다음 메모를 추가해줘.\n메모 내용 첨부'
+    out = _extract_linear_update_description(text)
+    assert out == "메모 내용 첨부"
+
+
+def test_extract_linear_update_description_prefers_replace_tail_multiline():
+    text = 'linear에서 OPT-283 이슈의 설명에 다음 메모를 수정해줘.\n메모 내용 첨부'
+    out = _extract_linear_update_description(text)
+    assert out == "메모 내용 첨부"
+
+
+def test_atomic_overhaul_linear_issue_key_append_without_linear_keyword(monkeypatch):
+    class _Settings:
+        pending_action_ttl_seconds = 900
+
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        assert user_id == "user-linear-append-no-service-token"
+        calls.append((tool_name, dict(payload)))
+        if tool_name == "linear_search_issues":
+            return {
+                "ok": True,
+                "data": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "issue-283",
+                                "identifier": "OPT-283",
+                                "title": "수정 테스트",
+                                "description": "기존 설명",
+                                "url": "https://linear.app/issue/OPT-283",
+                                "state": {"id": "state-backlog", "name": "Backlog"},
+                            }
+                        ]
+                    }
+                },
+            }
+        assert tool_name == "linear_update_issue"
+        assert payload.get("issue_id") == "issue-283"
+        assert isinstance(payload.get("description"), str)
+        assert "추가 테스트 문장" in str(payload.get("description"))
+        return {
+            "ok": True,
+            "data": {
+                "issueUpdate": {
+                    "success": True,
+                    "issue": {"identifier": "OPT-283", "url": "https://linear.app/issue/OPT-283"},
+                }
+            },
+        }
+
+    monkeypatch.setattr("agent.atomic_engine.engine.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.atomic_engine.engine.get_pending_action", lambda _user_id: None)
+    monkeypatch.setattr("agent.atomic_engine.engine.execute_tool", _fake_execute_tool)
+
+    result = asyncio.run(
+        run_atomic_overhaul_analysis(
+            'OPT-283 설명 끝에 "추가 테스트 문장"을 append 해줘',
+            ["linear", "notion"],
+            "user-linear-append-no-service-token",
+        )
+    )
+    assert result.ok is True
+    assert [name for name, _ in calls][:2] == ["linear_search_issues", "linear_update_issue"]
 
 
 def test_atomic_overhaul_notion_create_page_without_database_clarification(monkeypatch):

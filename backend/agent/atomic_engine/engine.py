@@ -95,6 +95,27 @@ def _extract_linear_update_title(text: str) -> str | None:
 
 
 def _extract_linear_update_description(text: str) -> str | None:
+    raw_text = str(text or "")
+    append_tail = re.search(
+        r"(?is)(?:추가|append|덧붙(?:여)?|붙여|반영|수정|변경|교체|업데이트)(?:해줘|해주세요|하세요|해)\s*[:：]?\s*(.+)$",
+        raw_text,
+    )
+    if append_tail:
+        tail_candidate = str(append_tail.group(1) or "").strip(" \"'`")
+        tail_candidate = tail_candidate.lstrip(" \t\r\n.:-")
+        if tail_candidate:
+            return tail_candidate[:5000]
+
+    replace_tail = re.search(
+        r"(?is)(?:다음|아래)\s*(?:메모|내용|텍스트|문장)(?:를|을)?\s*(?:추가|수정|변경|교체|업데이트)(?:해줘|해주세요|하세요|해)\.?\s*(.+)$",
+        raw_text,
+    )
+    if replace_tail:
+        tail_candidate = str(replace_tail.group(1) or "").strip(" \"'`")
+        tail_candidate = tail_candidate.lstrip(" \t\r\n.:-")
+        if tail_candidate:
+            return tail_candidate[:5000]
+
     normalized = _normalize_message(text)
     patterns = [
         r"(?i)(?:설명|description|내용|본문)\s*(?:업데이트|수정|변경)?\s*[:：]\s*(.+)$",
@@ -165,6 +186,8 @@ def _detect_service(text: str, connected_services: list[str]) -> str | None:
         return "google"
     if ("notion" in lower or "노션" in lower) and "notion" in connected_services:
         return "notion"
+    if re.search(r"\b[A-Za-z]{2,10}-\d{1,6}\b", text or "") and "linear" in connected_services:
+        return "linear"
     if ("linear" in lower or "리니어" in lower) and "linear" in connected_services:
         return "linear"
     if len(connected_services) == 1:
@@ -420,7 +443,7 @@ def _build_understanding_rule(user_text: str, connected_services: list[str]) -> 
 
     if service == "linear":
         issue_match = re.search(r"([A-Za-z]{2,10}-\d{1,6})", text)
-        if _contains_any(lower, ("업데이트", "추가", "수정", "변경", "바꿔", "append", "update")) and (
+        if _contains_any(lower, ("업데이트", "추가", "수정", "변경", "바꿔", "append", "update", "덧붙", "붙여", "반영")) and (
             _contains_any(lower, ("이슈", "issue")) or issue_match is not None
         ):
             if issue_match:

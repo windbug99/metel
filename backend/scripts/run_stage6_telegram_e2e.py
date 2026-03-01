@@ -41,6 +41,71 @@ SCENARIOS: list[Scenario] = [
     Scenario("S10", "linear 최근 이슈 5개 검색해줘", "success", chain="single_s10"),
 ]
 
+LINEAR_SCENARIOS: list[Scenario] = [
+    Scenario("L1", "linear OPT-46 이슈 설명 업데이트: API 타임아웃 재현 조건과 임시 우회 방법을 추가해줘", "success", chain="linear_update"),
+    Scenario("L2", "linear에서 OPT-283 이슈의 상태를 Todo로 변경", "success_or_needs_input", chain="linear_state"),
+    Scenario("L3", "linear에서 OPT-283 이슈의 설명에 \"자동화 append 테스트\"를 추가해줘", "success_or_needs_input", chain="linear_append"),
+    Scenario("L4", "linear 최근 이슈 5개 검색해줘", "success", chain="linear_lookup"),
+    Scenario(
+        "L5",
+        "linear에서 OPT-283 이슈의 설명에 다음 메모를 추가해줘.\n메모 내용 첨부",
+        "success",
+        chain="linear_append",
+    ),
+    Scenario(
+        "L6",
+        "linear에서 OPT-283 이슈의 설명에 다음 메모를 수정해줘.\n메모 내용 첨부",
+        "success",
+        chain="linear_replace",
+    ),
+    Scenario(
+        "L7",
+        "linear OPT-283 설명에 아래 텍스트를 덧붙여줘:\n- API 재현 조건\n- 로그 수집 링크",
+        "success",
+        chain="linear_append",
+    ),
+    Scenario(
+        "L8",
+        "linear OPT-283 이슈 설명을 다음 내용으로 교체해줘: 수정 테스트 본문",
+        "success",
+        chain="linear_replace",
+    ),
+    Scenario(
+        "L9",
+        "OPT-283 설명 끝에 \"추가 테스트 문장\"을 append 해줘",
+        "success",
+        chain="linear_append",
+    ),
+    Scenario(
+        "L10",
+        "linear에서 OPT-283 이슈 설명을 '최종 수정 테스트 문장'으로 업데이트",
+        "success",
+        chain="linear_replace",
+    ),
+]
+
+NOTION_SCENARIOS: list[Scenario] = [
+    Scenario("N1", '노션에서 "서비스 기획서" 페이지 제목을 "서비스 기획서 v2"로 업데이트', "success_or_needs_input", chain="notion_title"),
+    Scenario("N2", '노션에서 "서비스 기획서" 페이지 본문 업데이트: 이번 주 배포 리스크와 대응 현황을 3줄로 추가', "success_or_needs_input", chain="notion_body"),
+    Scenario("N3", 'notion에서 "서비스 기획서" 페이지 본문을 출력해주세요', "success_or_needs_input", chain="notion_read"),
+]
+
+GOOGLE_SCENARIOS: list[Scenario] = [
+    Scenario("G1", "오늘 구글 캘린더 일정 5개 조회해줘", "success_or_needs_input", chain="google_list"),
+]
+
+SPOTIFY_SCENARIOS: list[Scenario] = [
+    Scenario("P1", "spotify 내 계정 정보 보여줘", "success_or_needs_input", chain="spotify_me"),
+]
+
+SCENARIO_SUITES: dict[str, list[Scenario]] = {
+    "stage6": SCENARIOS,
+    "linear": LINEAR_SCENARIOS,
+    "notion": NOTION_SCENARIOS,
+    "google": GOOGLE_SCENARIOS,
+    "spotify": SPOTIFY_SCENARIOS,
+}
+
 
 def _utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
@@ -77,6 +142,92 @@ def _find_recent_chat_id() -> int | None:
         if isinstance(chat_id, int):
             return chat_id
     return None
+
+
+def _find_user_id_by_chat_id(chat_id: int) -> str | None:
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    row = (
+        supabase.table("users")
+        .select("id")
+        .eq("telegram_chat_id", chat_id)
+        .limit(1)
+        .maybe_single()
+        .execute()
+        .data
+    )
+    if not isinstance(row, dict):
+        return None
+    user_id = str(row.get("id") or "").strip()
+    return user_id or None
+
+
+def _connected_services_for_user(user_id: str) -> list[str]:
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    rows = (
+        supabase.table("oauth_tokens")
+        .select("provider")
+        .eq("user_id", user_id)
+        .execute()
+        .data
+        or []
+    )
+    out: list[str] = []
+    for row in rows:
+        provider = str(row.get("provider") or "").strip().lower()
+        if provider:
+            out.append(provider)
+    return list(dict.fromkeys(out))
+
+
+def _dedupe_scenarios(items: list[Scenario]) -> list[Scenario]:
+    seen: set[tuple[str, str]] = set()
+    out: list[Scenario] = []
+    for item in items:
+        key = (item.id, item.text)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def _select_scenarios(
+    *,
+    suite_names: list[str],
+    auto_by_connected: bool,
+    chat_id: int,
+) -> tuple[list[Scenario], list[str]]:
+    selected_suites: list[str] = []
+    scenarios: list[Scenario] = []
+
+    if auto_by_connected:
+        user_id = _find_user_id_by_chat_id(chat_id)
+        connected = _connected_services_for_user(user_id) if user_id else []
+        for name in ("linear", "notion", "google", "spotify"):
+            if name in connected:
+                selected_suites.append(name)
+                scenarios.extend(SCENARIO_SUITES.get(name, []))
+        # fallback to stage6 when auto detection finds nothing
+        if not selected_suites:
+            selected_suites = ["stage6"]
+            scenarios = list(SCENARIO_SUITES["stage6"])
+        return _dedupe_scenarios(scenarios), selected_suites
+
+    names = suite_names or ["stage6"]
+    if "all" in names:
+        names = ["linear", "notion", "google", "spotify"]
+    for name in names:
+        normalized = str(name or "").strip().lower()
+        if normalized not in SCENARIO_SUITES:
+            continue
+        selected_suites.append(normalized)
+        scenarios.extend(SCENARIO_SUITES[normalized])
+    if not selected_suites:
+        selected_suites = ["stage6"]
+        scenarios = list(SCENARIO_SUITES["stage6"])
+    return _dedupe_scenarios(scenarios), selected_suites
 
 
 def _send_webhook_update(
@@ -182,6 +333,14 @@ def main() -> int:
     )
     parser.add_argument("--dry-run", action="store_true", help="Print scenarios and exit.")
     parser.add_argument(
+        "--suite",
+        action="append",
+        default=[],
+        help="Scenario suite to run. one of: stage6, linear, notion, google, spotify, all. Repeatable.",
+    )
+    parser.add_argument("--auto-by-connected", action="store_true", help="Auto-select suites by chat_id user's connected services.")
+    parser.add_argument("--list-suites", action="store_true", help="Print available suites and exit.")
+    parser.add_argument(
         "--reset-pending",
         action="store_true",
         help="Send '취소' once before scenarios to clear prior pending action.",
@@ -196,9 +355,22 @@ def main() -> int:
     settings = get_settings()
     webhook_secret = str(settings.telegram_webhook_secret or "").strip() or None
 
+    if args.list_suites:
+        print("available_suites:", ", ".join(sorted(SCENARIO_SUITES.keys()) + ["all"]))
+        for name, items in SCENARIO_SUITES.items():
+            print(f"- {name}: {len(items)} scenarios")
+        return 0
+
     if args.dry_run:
-        print(f"chat_id={int(args.chat_id) if int(args.chat_id or 0) > 0 else '<AUTO_FIND>'}")
-        for item in SCENARIOS:
+        dry_chat_id = int(args.chat_id) if int(args.chat_id or 0) > 0 else int(_find_recent_chat_id() or 0)
+        scenarios, selected_suites = _select_scenarios(
+            suite_names=[str(item) for item in (args.suite or [])],
+            auto_by_connected=bool(args.auto_by_connected),
+            chat_id=dry_chat_id,
+        )
+        print(f"chat_id={dry_chat_id if dry_chat_id > 0 else '<AUTO_FIND>'}")
+        print(f"suites={','.join(selected_suites)}")
+        for item in scenarios:
             print(f"- {item.id} [{item.expected}] {item.text}")
         return 0
 
@@ -207,9 +379,18 @@ def main() -> int:
         print("error: chat_id is required (or linked telegram user not found)")
         return 1
 
+    scenarios, selected_suites = _select_scenarios(
+        suite_names=[str(item) for item in (args.suite or [])],
+        auto_by_connected=bool(args.auto_by_connected),
+        chat_id=chat_id,
+    )
+    if not scenarios:
+        print("error: no scenarios selected")
+        return 1
+
     report_rows: list[dict[str, Any]] = []
     print(
-        f"[stage6-telegram-e2e] start chat_id={chat_id} scenarios={len(SCENARIOS)} "
+        f"[stage6-telegram-e2e] start chat_id={chat_id} suites={','.join(selected_suites)} scenarios={len(scenarios)} "
         f"webhook_url={args.webhook_url}"
     )
     update_seed = int(time.time() * 1000) % 2_000_000_000
@@ -228,7 +409,7 @@ def main() -> int:
         except Exception as exc:
             print(f"[stage6-telegram-e2e] pending reset failed: {exc}")
     active_chain = ""
-    for idx, scenario in enumerate(SCENARIOS, start=1):
+    for idx, scenario in enumerate(scenarios, start=1):
         if idx > 1:
             time.sleep(max(0.0, float(args.delay_sec)))
         if bool(args.reset_between_chains):
@@ -313,6 +494,7 @@ def main() -> int:
     summary = {
         "generated_at": _utc_iso(),
         "chat_id": chat_id,
+        "suites": selected_suites,
         "total": total,
         "passed": passed_count,
         "failed": total - passed_count,
