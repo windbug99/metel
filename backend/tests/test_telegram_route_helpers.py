@@ -8,6 +8,7 @@ from app.routes.telegram import (
     _build_user_preface_template,
     _build_user_facing_message,
     _build_capabilities_message,
+    _build_status_message,
     _build_service_help_message,
     _is_capabilities_query,
     _map_natural_text_to_command,
@@ -128,6 +129,16 @@ def test_build_service_help_message_filters_unavailable_features():
     assert "최근 이슈 조회" in msg
     assert "이슈 검색" in msg
     assert "이슈 생성" not in msg
+
+
+def test_build_status_message_includes_connected_and_disconnected_services(monkeypatch):
+    monkeypatch.setattr("app.routes.telegram.load_registry", lambda: SimpleNamespace(list_services=lambda: ["google", "linear", "notion", "spotify", "web"]))
+    msg = _build_status_message(["linear", "notion"])
+    assert "- Telegram: 연결됨" in msg
+    assert "- linear: 연결됨" in msg
+    assert "- notion: 연결됨" in msg
+    assert "- google: 미연결" in msg
+    assert "- spotify: 미연결" in msg
 
 
 def test_build_user_preface_template_success():

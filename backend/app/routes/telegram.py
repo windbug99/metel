@@ -432,6 +432,21 @@ def _build_service_help_message(service: str, enabled_api_ids: set[str]) -> str:
     return "\n".join(lines)
 
 
+def _build_status_message(connected_services: list[str]) -> str:
+    connected = [item.strip().lower() for item in (connected_services or []) if item and item.strip()]
+    connected = list(dict.fromkeys(connected))
+    registry = load_registry()
+    known_services = registry.list_services()
+
+    lines = ["현재 연동 상태입니다.", "- Telegram: 연결됨"]
+    for service in connected:
+        lines.append(f"- {service}: 연결됨")
+    for service in known_services:
+        if service not in connected:
+            lines.append(f"- {service}: 미연결")
+    return "\n".join(lines)
+
+
 async def _rewrite_user_preface_with_llm(
     *,
     settings,
@@ -1710,24 +1725,19 @@ async def telegram_webhook(
             return {"ok": True}
 
     if command in {"/status", "/my_status"}:
-        notion_connected = _is_notion_connected(user_id)
+        status_connected_services = _get_connected_services_for_user(str(user_id))
         _record_command_log(
             user_id=user_id,
             chat_id=chat_id,
             command=command,
             status="success",
-            detail=f"notion_connected={notion_connected}",
+            detail=f"connected_services={','.join(status_connected_services) if status_connected_services else '(none)'}",
         )
         await _telegram_api(
             "sendMessage",
             {
                 "chat_id": chat_id,
-                "text": (
-                    "현재 연동 상태입니다.\n"
-                    "- Telegram: 연결됨\n"
-                    f"- Notion: {'연결됨' if notion_connected else '미연결'}\n"
-                    "Notion 페이지 조회: /notion_pages"
-                ),
+                "text": _build_status_message(status_connected_services),
             },
         )
         return {"ok": True}
@@ -1932,9 +1942,6 @@ async def telegram_webhook(
                 "text": (
                     "사용 가능한 명령어\n"
                     "- /status\n"
-                    "- /notion_pages\n"
-                    "- /notion_pages 5\n"
-                    "- /notion_create 제목\n"
                     "- /help linear | /help notion | /help google | /help spotify\n"
                     "- /disconnect\n"
                     "- /help"
