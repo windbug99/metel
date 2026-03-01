@@ -3138,6 +3138,13 @@ def _extract_page_url_from_tool_result(result: dict) -> str:
     return ""
 
 
+def _notion_url_from_page_id(page_id: str) -> str:
+    normalized = re.sub(r"[^0-9a-fA-F]", "", str(page_id or ""))
+    if len(normalized) != 32:
+        return ""
+    return f"https://www.notion.so/{normalized}"
+
+
 def _extract_linear_issue_url_from_tool_result(result: dict) -> str:
     data = result.get("data") or {}
     if not isinstance(data, dict):
@@ -3404,6 +3411,23 @@ def _first_notion_page_id(result: dict) -> str:
     return ""
 
 
+def _first_notion_page_url(result: dict) -> str:
+    data = result.get("data") or {}
+    if isinstance(data, dict):
+        page_url = str(data.get("url") or "").strip()
+        if page_url:
+            return page_url
+        results = data.get("results") or []
+        if isinstance(results, list):
+            for item in results:
+                if not isinstance(item, dict):
+                    continue
+                candidate = str(item.get("url") or "").strip()
+                if candidate:
+                    return candidate
+    return ""
+
+
 def _first_linear_issue_id(result: dict) -> str:
     data = result.get("data") or {}
     if not isinstance(data, dict):
@@ -3444,6 +3468,13 @@ def _update_slot_context_from_tool_result(slot_context: dict[str, str], tool_nam
         page_id = _first_notion_page_id(tool_result)
         if page_id:
             slot_context["recent_notion_page_id"] = page_id
+        page_url = _first_notion_page_url(tool_result)
+        if page_url:
+            slot_context["recent_notion_page_url"] = page_url
+        elif page_id:
+            derived = _notion_url_from_page_id(page_id)
+            if derived:
+                slot_context["recent_notion_page_url"] = derived
     if "linear" in tool_name:
         issue_id = _first_linear_issue_id(tool_result)
         if issue_id:
@@ -3559,6 +3590,8 @@ async def _autofill_task_payload(
                 )
         if page_id:
             filled["page_id"] = page_id
+            slot_context["recent_notion_page_id"] = page_id
+            slot_context.setdefault("recent_notion_page_url", _notion_url_from_page_id(page_id))
 
     if "notion_append_block_children" in tool_name and _missing(filled.get("block_id")):
         page_id = slot_context.get("recent_notion_page_id", "")
@@ -3582,6 +3615,8 @@ async def _autofill_task_payload(
                 ]
         if page_id:
             filled["block_id"] = page_id
+            slot_context["recent_notion_page_id"] = page_id
+            slot_context.setdefault("recent_notion_page_url", _notion_url_from_page_id(page_id))
 
     force_generate_notion_append = _should_force_generate_notion_append_content(user_text)
     if "notion_append_block_children" in tool_name and (_missing(filled.get("children")) or force_generate_notion_append):
@@ -3836,6 +3871,8 @@ async def _force_fill_missing_slots(
                 pass
         if page_id:
             filled["page_id"] = page_id
+            slot_context["recent_notion_page_id"] = page_id
+            slot_context.setdefault("recent_notion_page_url", _notion_url_from_page_id(page_id))
 
     if "notion_append_block_children" in tool_name and _missing(filled.get("block_id")):
         block_id = slot_context.get("recent_notion_page_id", "")
@@ -3852,6 +3889,8 @@ async def _force_fill_missing_slots(
                 pass
         if block_id:
             filled["block_id"] = block_id
+            slot_context["recent_notion_page_id"] = block_id
+            slot_context.setdefault("recent_notion_page_url", _notion_url_from_page_id(block_id))
     force_generate_notion_append = _should_force_generate_notion_append_content(user_text)
     if "notion_append_block_children" in tool_name and (_missing(filled.get("children")) or force_generate_notion_append):
         _, extracted_content = _extract_append_target_and_content(user_text)
@@ -4137,6 +4176,14 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
         if page_url:
             artifacts["created_page_url"] = page_url
             final_user_message = f"{final_user_message}\n- 생성 페이지: {page_url}"
+        if "notion_" in tool_name and not artifacts.get("notion_page_url"):
+            notion_page_url = page_url or slot_context.get("recent_notion_page_url", "")
+            if not notion_page_url:
+                notion_page_url = _notion_url_from_page_id(slot_context.get("recent_notion_page_id", ""))
+            if notion_page_url:
+                artifacts["notion_page_url"] = notion_page_url
+                if "notion_create_page" not in tool_name:
+                    final_user_message = f"{final_user_message}\n- 페이지 링크: {notion_page_url}"
         issue_url = _extract_linear_issue_url_from_tool_result(tool_result)
         if issue_url and issue_url != artifacts.get("linear_issue_url"):
             artifacts["linear_issue_url"] = issue_url

@@ -2035,6 +2035,7 @@ def test_task_orchestration_autofills_notion_append_with_search(monkeypatch):
     result = asyncio.run(execute_agent_plan("user-1", plan))
     assert result.success is True
     assert [name for name, _ in calls] == ["notion_search", "notion_append_block_children"]
+    assert "페이지 링크: https://www.notion.so/" in result.user_message
 
 
 def test_task_orchestration_notion_append_generates_template_content_with_llm(monkeypatch):
