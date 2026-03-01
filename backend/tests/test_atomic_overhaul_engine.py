@@ -1,6 +1,7 @@
 import asyncio
 
 from agent.atomic_engine.engine import (
+    _detect_service,
     _extract_linear_update_description,
     _extract_slot_value,
     _map_tool_error_code,
@@ -598,6 +599,12 @@ def test_extract_linear_update_description_preserves_markdown_blocks():
     assert out.startswith("> 프로젝트: 스마트 업무 관리 플랫폼")
     assert "\n## 기능 요구사항\n" in out
     assert "| 항목 | 요구사항 |" in out
+
+
+def test_detect_service_prefers_linear_when_issue_key_and_google_word_coexist():
+    text = "linear에서 OPT-283 이슈 설명을 수정해줘. Google, Kakao 소셜 로그인 지원 항목 포함"
+    out = _detect_service(text, ["linear", "google", "notion"])
+    assert out == "linear"
 
 
 def test_atomic_overhaul_linear_issue_key_append_without_linear_keyword(monkeypatch):

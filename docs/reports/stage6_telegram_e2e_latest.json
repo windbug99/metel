@@ -1,11 +1,11 @@
 {
-  "generated_at": "2026-03-01T14:45:35.727116Z",
+  "generated_at": "2026-03-01T15:01:56.693153Z",
   "chat_id": 178936796,
   "suites": [
     "linear"
   ],
-  "total": 10,
-  "passed": 10,
+  "total": 11,
+  "passed": 11,
   "failed": 0,
   "pass_rate": 1.0,
   "rows": [
@@ -18,8 +18,8 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:43:43.051512+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3873;request_id=tg_update:376211952;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T14:59:55.471377+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3720;request_id=tg_update:377185012;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L2",
@@ -30,8 +30,8 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:43:56.289357+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3964;request_id=tg_update:376211953;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T15:00:08.461062+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3831;request_id=tg_update:377185013;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L3",
@@ -42,8 +42,8 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:44:08.315164+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3496;request_id=tg_update:376211954;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T15:00:23.903534+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=5661;request_id=tg_update:377185014;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L4",
@@ -54,8 +54,8 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:44:19.14827+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2292;request_id=tg_update:376211955;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T15:00:35.658148+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2547;request_id=tg_update:377185015;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L5",
@@ -66,8 +66,8 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:44:31.869534+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3753;request_id=tg_update:376211956;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T15:00:48.256587+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3409;request_id=tg_update:377185016;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L6",
@@ -78,8 +78,8 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:44:44.655749+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3655;request_id=tg_update:376211957;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T15:01:00.563918+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3328;request_id=tg_update:377185017;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L7",
@@ -90,8 +90,8 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:44:56.897469+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3002;request_id=tg_update:376211958;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T15:01:13.233367+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3950;request_id=tg_update:377185018;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L8",
@@ -102,8 +102,8 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:45:09.473888+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=4030;request_id=tg_update:376211959;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T15:01:25.025367+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3245;request_id=tg_update:377185019;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L9",
@@ -114,8 +114,8 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:45:21.18891+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3229;request_id=tg_update:376211960;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T15:01:35.988854+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2785;request_id=tg_update:377185020;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "L10",
@@ -126,8 +126,20 @@
       "status": "success",
       "error_code": null,
       "plan_source": "atomic_overhaul_v1",
-      "created_at": "2026-03-01T14:45:34.474299+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=4145;request_id=tg_update:376211961;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+      "created_at": "2026-03-01T15:01:47.754488+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3369;request_id=tg_update:377185021;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
+    },
+    {
+      "id": "L11",
+      "text": "linear에서 OPT-283 이슈의 설명에 다음 메모로 수정해줘.\n> 프로젝트: 스마트 업무 관리 플랫폼\n> 작성일: 2026-02-26\n\n## 기능 요구사항\n| 항목 | 요구사항 |\n| --- | --- |\n| 성능 | 페이지 로딩 2초 이내 |",
+      "expected": "success",
+      "chain": "linear_replace",
+      "pass": true,
+      "status": "success",
+      "error_code": null,
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T15:01:55.457467+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3721;request_id=tg_update:377185022;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     }
   ]
 }

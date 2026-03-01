@@ -182,14 +182,15 @@ def _merge_linear_description(*, current: str, addition: str) -> str:
 
 def _detect_service(text: str, connected_services: list[str]) -> str | None:
     lower = (text or "").lower()
-    if ("google" in lower or "구글" in lower or "캘린더" in lower) and "google" in connected_services:
-        return "google"
-    if ("notion" in lower or "노션" in lower) and "notion" in connected_services:
-        return "notion"
+    # Prefer explicit Linear cues first. Long requirement docs may mention "Google" as plain text.
     if re.search(r"\b[A-Za-z]{2,10}-\d{1,6}\b", text or "") and "linear" in connected_services:
         return "linear"
     if ("linear" in lower or "리니어" in lower) and "linear" in connected_services:
         return "linear"
+    if ("notion" in lower or "노션" in lower) and "notion" in connected_services:
+        return "notion"
+    if ("google" in lower or "구글" in lower or "캘린더" in lower) and "google" in connected_services:
+        return "google"
     if len(connected_services) == 1:
         return connected_services[0]
     return None
