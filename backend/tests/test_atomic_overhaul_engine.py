@@ -583,6 +583,23 @@ def test_extract_linear_update_description_prefers_replace_tail_with_ro_particle
     assert out == "프로젝트: 스마트 업무 관리 플랫폼"
 
 
+def test_extract_linear_update_description_preserves_markdown_blocks():
+    text = (
+        "linear에서 OPT-283 이슈의 설명에 다음 메모로 수정해줘.\n"
+        "> 프로젝트: 스마트 업무 관리 플랫폼\n"
+        "> 작성일: 2026-02-26\n\n"
+        "## 기능 요구사항\n"
+        "| 항목 | 요구사항 |\n"
+        "| --- | --- |\n"
+        "| 성능 | 페이지 로딩 2초 이내 |"
+    )
+    out = _extract_linear_update_description(text)
+    assert out is not None
+    assert out.startswith("> 프로젝트: 스마트 업무 관리 플랫폼")
+    assert "\n## 기능 요구사항\n" in out
+    assert "| 항목 | 요구사항 |" in out
+
+
 def test_atomic_overhaul_linear_issue_key_append_without_linear_keyword(monkeypatch):
     class _Settings:
         pending_action_ttl_seconds = 900
