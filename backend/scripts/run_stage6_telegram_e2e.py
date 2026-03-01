@@ -35,8 +35,8 @@ SCENARIOS: list[Scenario] = [
     Scenario("S4", "linear에 이슈 생성", "success_or_needs_input", chain="linear_create"),
     Scenario("S5", "팀: operate", "success_or_needs_input", chain="linear_create"),
     Scenario("S6", "제목: stage6 자동화 테스트 이슈", "success_or_needs_input", chain="linear_create"),
-    Scenario("S7", '노션에서 "스프린트 보고서" 페이지 제목을 "스프린트 보고서 v2"로 업데이트', "success_or_needs_input", chain="single_s7"),
-    Scenario("S8", '노션에서 "스프린트 보고서 v2" 페이지 본문 업데이트: 이번 주 배포 리스크와 대응 현황을 3줄로 추가', "success_or_needs_input", chain="single_s8"),
+    Scenario("S7", '노션에서 "서비스 기획서" 페이지 제목을 "서비스 기획서 v2"로 업데이트', "success_or_needs_input", chain="single_s7"),
+    Scenario("S8", '노션에서 "서비스 기획서" 페이지 본문 업데이트: 이번 주 배포 리스크와 대응 현황을 3줄로 추가', "success_or_needs_input", chain="single_s8"),
     Scenario("S9", "linear OPT-47 이슈로 notion에 페이지 생성하세요", "success_or_needs_input", chain="single_s9"),
     Scenario("S10", "linear 최근 이슈 5개 검색해줘", "success", chain="single_s10"),
 ]

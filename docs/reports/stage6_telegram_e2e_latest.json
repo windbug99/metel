@@ -1,10 +1,10 @@
 {
-  "generated_at": "2026-03-01T08:23:28.261173Z",
+  "generated_at": "2026-03-01T09:01:41.036662Z",
   "chat_id": 178936796,
   "total": 10,
-  "passed": 8,
-  "failed": 2,
-  "pass_rate": 0.8,
+  "passed": 10,
+  "failed": 0,
+  "pass_rate": 1.0,
   "rows": [
     {
       "id": "S1",
@@ -14,9 +14,9 @@
       "pass": true,
       "status": "success",
       "error_code": null,
-      "plan_source": "llm",
-      "created_at": "2026-03-01T08:20:54.633103+00:00",
-      "detail": "services=linear;slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;validated_payloads=[{\"task_id\": \"task_linear_update_issue\", \"tool_name\": \"linear_update_issue\", \"payload\": {\"description\": \"API 타임아웃 재현 조건과 임시 우회 방법을 추가했습니다.\", \"issue_id\": \"501ad4b8-8c5a-494c-850c-4ad6b4dbca44\"}}];atomic_overhaul_rollout=disabled;atomic_overhaul_shadow_mode=0;analysis_latency_ms=14307;request_id=tg_update:353228100;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[]"
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T09:00:28.719253+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2946;request_id=tg_update:355624463;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "S2",
@@ -24,11 +24,11 @@
       "expected": "success_or_needs_input",
       "chain": "single_s2",
       "pass": true,
-      "status": "error",
-      "error_code": "validation_error",
-      "plan_source": "rule",
-      "created_at": "2026-03-01T08:21:16.94939+00:00",
-      "detail": "services=linear, spotify, google;slot_loop_enabled=1;slot_loop_started=1;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=disabled;atomic_overhaul_shadow_mode=0;analysis_latency_ms=9005;request_id=tg_update:353228101;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_r"
+      "status": "success",
+      "error_code": null,
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T09:00:36.964408+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2494;request_id=tg_update:355624464;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "S3",
@@ -37,10 +37,10 @@
       "chain": "single_s3",
       "pass": true,
       "status": "error",
-      "error_code": "delete_disabled",
-      "plan_source": "rule",
-      "created_at": "2026-03-01T08:21:31.495284+00:00",
-      "detail": "services=linear;slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=disabled;atomic_overhaul_shadow_mode=0;analysis_latency_ms=7093;request_id=tg_update:353228102;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histogram\":"
+      "error_code": "risk_gate_blocked",
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T09:00:44.339509+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2889;request_id=tg_update:355624465;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":\"approval_confirmed\",\"slot_action\":null};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false,\"replan"
     },
     {
       "id": "S4",
@@ -49,10 +49,10 @@
       "chain": "linear_create",
       "pass": true,
       "status": "error",
-      "error_code": "validation_error",
-      "plan_source": "llm",
-      "created_at": "2026-03-01T08:21:51.887927+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;missing_slot=title;slot_action=linear_create_issue;atomic_overhaul_rollout=disabled;atomic_overhaul_shadow_mode=0;analysis_latency_ms=6024;request_id=tg_update:353228103;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":\"title\",\"slot_action\":\"linear_create_issue\"};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":tr"
+      "error_code": "clarification_needed",
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T09:00:51.299473+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3080;request_id=tg_update:355624466;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":\"team_id\",\"slot_action\":null};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_his"
     },
     {
       "id": "S5",
@@ -60,11 +60,11 @@
       "expected": "success_or_needs_input",
       "chain": "linear_create",
       "pass": true,
-      "status": "success",
-      "error_code": null,
-      "plan_source": "llm",
-      "created_at": "2026-03-01T08:21:57.858098+00:00",
-      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=1;slot_loop_turns=0;validated_payloads=[{\"task_id\": \"task_linear_create_issue\", \"tool_name\": \"linear_create_issue\", \"payload\": {\"team_id\": \"795811ba-a88a-4afd-9878-95e4f236a90c\", \"title\": \"팀: operate\"}}];atomic_overhaul_rollout=disabled;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2300;request_id=tg_update:353228104;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_li"
+      "status": "error",
+      "error_code": "validation_error",
+      "plan_source": "atomic_overhaul_v1_clarification2",
+      "created_at": "2026-03-01T09:00:55.550924+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=1;missing_slot=title;slot_action=linear_create_issue;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=628;request_id=tg_update:355624467;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":\"title\",\"slot_action\":\"linear_create_issue\"};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":"
     },
     {
       "id": "S6",
@@ -72,35 +72,35 @@
       "expected": "success_or_needs_input",
       "chain": "linear_create",
       "pass": true,
-      "status": "error",
-      "error_code": "validation_error",
-      "plan_source": "rule",
-      "created_at": "2026-03-01T08:22:01.686467+00:00",
-      "detail": "services=linear;slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=disabled;atomic_overhaul_shadow_mode=0;analysis_latency_ms=312;request_id=tg_update:353228105;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histogram\":{"
+      "status": "success",
+      "error_code": null,
+      "plan_source": "atomic_overhaul_v1_clarification2",
+      "created_at": "2026-03-01T09:01:02.300423+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=1;slot_loop_turns=0;validated_payloads=[{\"task_id\": \"task_linear_create_issue\", \"tool_name\": \"linear_create_issue\", \"payload\": {\"title\": \"stage6 자동화 테스트 이슈\", \"priority\": 3, \"team_id\": \"795811ba-a88a-4afd-9878-95e4f236a90c\"}}];atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=3134;request_id=tg_update:355624468;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filt"
     },
     {
       "id": "S7",
-      "text": "노션에서 \"스프린트 보고서\" 페이지 제목을 \"스프린트 보고서 v2\"로 업데이트",
+      "text": "노션에서 \"서비스 기획서\" 페이지 제목을 \"서비스 기획서 v2\"로 업데이트",
       "expected": "success_or_needs_input",
       "chain": "single_s7",
-      "pass": false,
-      "status": "error",
-      "error_code": "auto_fill_failed",
-      "plan_source": "llm",
-      "created_at": "2026-03-01T08:22:25.456733+00:00",
-      "detail": "services=notion;slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=disabled;atomic_overhaul_shadow_mode=0;analysis_latency_ms=9446;request_id=tg_update:353228106;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":\"notion_append_block_children\"};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false,"
+      "pass": true,
+      "status": "success",
+      "error_code": null,
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T09:01:10.669043+00:00",
+      "detail": "services=notion;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=4674;request_id=tg_update:355624469;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "S8",
-      "text": "노션에서 \"스프린트 보고서 v2\" 페이지 본문 업데이트: 이번 주 배포 리스크와 대응 현황을 3줄로 추가",
+      "text": "노션에서 \"서비스 기획서\" 페이지 본문 업데이트: 이번 주 배포 리스크와 대응 현황을 3줄로 추가",
       "expected": "success_or_needs_input",
       "chain": "single_s8",
-      "pass": false,
-      "status": "error",
-      "error_code": "auto_fill_failed",
-      "plan_source": "llm",
-      "created_at": "2026-03-01T08:22:51.543975+00:00",
-      "detail": "services=notion;slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=disabled;atomic_overhaul_shadow_mode=0;analysis_latency_ms=11647;request_id=tg_update:353228107;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":\"notion_append_block_children\"};autonomous_json={\"attempted\":true,\"success\":false,\"fallback\":true,\"shadow_executed\":false,\"shadow_ok\":false"
+      "pass": true,
+      "status": "success",
+      "error_code": null,
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T09:01:24.838662+00:00",
+      "detail": "services=notion;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=10029;request_id=tg_update:355624470;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histo"
     },
     {
       "id": "S9",
@@ -110,9 +110,9 @@
       "pass": true,
       "status": "success",
       "error_code": null,
-      "plan_source": "llm",
-      "created_at": "2026-03-01T08:23:12.590987+00:00",
-      "detail": "services=notion;slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;validated_payloads=[{\"task_id\": \"task_notion_create_page\", \"tool_name\": \"notion_create_page\", \"payload\": {\"parent\": {\"page_id\": \"30c50e84a3bf807ba36df74f0d4993ca\"}, \"properties\": {\"title\": {\"title\": [{\"type\": \"text\", \"text\": {\"content\": \"linear OPT-47 이슈로 notion에\"}}]}}}}];atomic_overhaul_rollout=disabled;atomic_overhaul_shadow_mode=0;analysis_latency_ms=7415;request_id=tg_update:353228108;intent_json="
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T09:01:33.026274+00:00",
+      "detail": "services=notion;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=4261;request_id=tg_update:355624471;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     },
     {
       "id": "S10",
@@ -122,9 +122,9 @@
       "pass": true,
       "status": "success",
       "error_code": null,
-      "plan_source": "rule_recent_lookup",
-      "created_at": "2026-03-01T08:23:27.285864+00:00",
-      "detail": "services=linear;slot_loop_enabled=1;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;validated_payloads=[{\"task_id\": \"task_linear_issues\", \"tool_name\": \"linear_list_issues\", \"payload\": {\"first\": 5}}];atomic_overhaul_rollout=disabled;atomic_overhaul_shadow_mode=0;analysis_latency_ms=1928;request_id=tg_update:353228109;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"a"
+      "plan_source": "atomic_overhaul_v1",
+      "created_at": "2026-03-01T09:01:39.850837+00:00",
+      "detail": "services=linear;slot_loop_enabled=0;slot_loop_started=0;slot_loop_completed=0;slot_loop_turns=0;atomic_overhaul_rollout=rollout_100;atomic_overhaul_shadow_mode=0;analysis_latency_ms=2723;request_id=tg_update:355624472;intent_json={\"time_scope\":null,\"target_scope\":null,\"filter_include\":[],\"filter_exclude\":[],\"result_limit\":null,\"missing_slot\":null,\"slot_action\":null};autonomous_json={\"attempted\":false,\"success\":false,\"fallback\":false,\"shadow_executed\":false,\"shadow_ok\":false,\"replan_reason_histog"
     }
   ]
 }

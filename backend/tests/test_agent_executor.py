@@ -2167,6 +2167,40 @@ def test_task_orchestration_notion_append_never_writes_raw_request_when_generati
     assert [name for name, _ in calls] == ["notion_search", "notion_append_block_children"]
 
 
+def test_task_orchestration_notion_update_missing_page_returns_clarification_needed(monkeypatch):
+    async def _fake_execute_tool(user_id: str, tool_name: str, payload: dict):
+        if tool_name == "notion_search":
+            return {"ok": True, "data": {"results": []}}
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+    monkeypatch.setattr("agent.executor.execute_tool", _fake_execute_tool)
+
+    plan = AgentPlan(
+        user_text='노션에서 "없는 페이지" 페이지 제목을 "새 제목"으로 업데이트',
+        requirements=[AgentRequirement(summary="노션 페이지 제목 업데이트")],
+        target_services=["notion"],
+        selected_tools=["notion_search", "notion_update_page"],
+        workflow_steps=[],
+        tasks=[
+            AgentTask(
+                id="task_update",
+                title="페이지 제목 업데이트",
+                task_type="TOOL",
+                service="notion",
+                tool_name="notion_update_page",
+                payload={},
+                output_schema={"type": "tool_result"},
+            )
+        ],
+        notes=[],
+    )
+
+    result = asyncio.run(execute_agent_plan("user-1", plan))
+    assert result.success is False
+    assert result.artifacts.get("error_code") == "clarification_needed"
+    assert result.artifacts.get("slot_action") == "notion_update_page"
+
+
 def test_execute_linear_create_issue_uses_task_payload(monkeypatch):
     calls = []
 

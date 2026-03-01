@@ -3995,6 +3995,26 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
                     normalized2, missing_slots2, validation_errors2 = validate_slots(tool_name, payload)
                     payload = normalized2
                     if validation_errors2:
+                        if any(token in tool_name.lower() for token in ("notion_update_page", "notion_append_block_children")):
+                            ask_slot = validation_errors2[0].split(":", 1)[0]
+                            return AgentExecutionResult(
+                                success=False,
+                                summary="추가 정보가 필요합니다.",
+                                user_message=(
+                                    f"요청을 계속하려면 `{ask_slot}` 정보를 알려주세요.\n"
+                                    f"예: {_slot_prompt_example(tool_name, ask_slot)}"
+                                ),
+                                artifacts={
+                                    "error_code": "clarification_needed",
+                                    "slot_action": tool_name,
+                                    "slot_task_id": task.id,
+                                    "missing_slot": ask_slot,
+                                    "missing_slots": ask_slot,
+                                    "validation_error": validation_errors2[0],
+                                    "slot_payload_json": json.dumps(payload, ensure_ascii=False),
+                                },
+                                steps=steps + [AgentExecutionStep(name=task.id, status="error", detail=f"clarification_validation:{ask_slot}")],
+                            )
                         return AgentExecutionResult(
                             success=False,
                             summary="자동 입력 보정에 실패했습니다.",
@@ -4009,6 +4029,25 @@ async def _execute_task_orchestration(user_id: str, plan: AgentPlan) -> AgentExe
                             steps=steps + [AgentExecutionStep(name=task.id, status="error", detail=f"autofill_validation:{validation_errors2[0]}")],
                         )
                     if missing_slots2:
+                        if any(token in tool_name.lower() for token in ("notion_update_page", "notion_append_block_children")):
+                            missing_slot = missing_slots2[0]
+                            return AgentExecutionResult(
+                                success=False,
+                                summary="추가 정보가 필요합니다.",
+                                user_message=(
+                                    f"`{missing_slot}` 값을 먼저 알려주세요.\n"
+                                    f"예: {_slot_prompt_example(tool_name, missing_slot)}"
+                                ),
+                                artifacts={
+                                    "error_code": "clarification_needed",
+                                    "slot_action": tool_name,
+                                    "slot_task_id": task.id,
+                                    "missing_slot": missing_slot,
+                                    "missing_slots": ",".join(missing_slots2),
+                                    "slot_payload_json": json.dumps(payload, ensure_ascii=False),
+                                },
+                                steps=steps + [AgentExecutionStep(name=task.id, status="error", detail=f"clarification_missing:{missing_slot}")],
+                            )
                         return AgentExecutionResult(
                             success=False,
                             summary="자동 입력 보정에 실패했습니다.",

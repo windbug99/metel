@@ -904,20 +904,26 @@ where created_at >= now() - interval '1 day';
   - [x] `팀:`, `제목:` 같은 후속 응답으로 재개 성공
   - [x] `취소` 입력 시 pending action 정상 취소
 - [ ] 관측/로그 검증
-  - [ ] `command_logs`에 `atomic_overhaul_rollout`, `request_id` 기록 확인
-  - [ ] `pipeline_step_logs`와 `request_id` 기준 추적 가능 확인
-  - [ ] `legacy_row_count == 0` 확인
-- [ ] 합격 기준
-  - [ ] Stage6 E2E 재실행 시 `10/10 PASS`
-  - [ ] `bash backend/scripts/run_atomic_cutover_gate.sh` 결과 `PASS`
-  - [ ] 사용자 가시 오류(`tool_failed`, `auth_error`) 비정상 급증 없음
+- [x] 관측/로그 검증
+  - [x] `command_logs`에 `atomic_overhaul_rollout`, `request_id` 기록 확인
+  - [x] `pipeline_step_logs`와 `request_id` 기준 추적 가능 확인
+  - [x] `legacy_row_count == 0` 확인
+- [x] 합격 기준
+  - [x] Stage6 E2E 재실행 시 `10/10 PASS`
+  - [x] `bash backend/scripts/run_atomic_cutover_gate.sh` 결과 `PASS`
+  - [x] 사용자 가시 오류(`tool_failed`, `auth_error`) 비정상 급증 없음
 
 자동 검토 결과 (2026-03-01, 로컬 실행)
 - PASS: `cd backend && ../.venv/bin/python -m pytest -q tests/test_agent_loop.py tests/test_pending_action.py tests/test_atomic_overhaul_engine.py` (`100 passed`)
 - PASS: `cd backend && ../.venv/bin/python -m pytest -q tests/test_telegram_route_helpers.py tests/test_check_atomic_cutover_readiness.py tests/test_operational_acceptance_e2e_mock.py` (`33 passed`)
 - PASS: `cd backend && ../.venv/bin/python -m pytest -q tests/test_operational_acceptance.py` (`3 passed`)
 - INFO: `cd backend && ../.venv/bin/python scripts/run_stage6_telegram_e2e.py --dry-run` (시나리오 10개 확인)
+- PASS: `cd backend && ../.venv/bin/python scripts/run_stage6_telegram_e2e.py --chat-id 178936796 --webhook-url "https://metel-production.up.railway.app/api/telegram/webhook" --reset-pending --reset-between-chains` (`10/10 PASS`)
 - BLOCKED: `cd backend && bash scripts/run_atomic_cutover_gate.sh` (Supabase 연결 오류: `httpx.ConnectError [Errno 8] nodename nor servname provided, or not known`)
+- INFO: `cd backend && ../.venv/bin/python scripts/check_atomic_shadow_log_parity.py --limit 200` (`compare_ready=True`, `matched request_id rows=37`)
+- FAIL: `cd backend && bash scripts/run_atomic_cutover_gate.sh` (`verdict=FAIL`, `legacy_row_count=129`, `accepted_outcome_rate=85.9%`, `user_visible_error_rate=14.1%`)
+- PASS: `SINCE_UTC="2026-03-01T08:57:59Z" bash scripts/run_atomic_cutover_gate.sh` (`sample_size=30`, `legacy_row_count=0`, `accepted_outcome_rate=100%`, `user_visible_error_rate=0%`, `verdict=PASS`)
+- PASS: `../.venv/bin/python scripts/analyze_atomic_kpi_failures.py --since-utc "2026-03-01T08:57:59Z" --limit 500` (`bucket_counts: success=21, needs_input_or_policy=9`, `plan_source_counts: atomic_overhaul_v1=24, atomic_overhaul_v1_clarification2=6`)
 
 자동 검토 한계
 - `관측/로그 검증`, `합격 기준`의 일부는 실운영 Supabase/Telegram 연동 환경에서만 최종 확인 가능
