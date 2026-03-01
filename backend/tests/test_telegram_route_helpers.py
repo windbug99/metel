@@ -8,7 +8,10 @@ from app.routes.telegram import (
     _build_user_preface_template,
     _build_user_facing_message,
     _build_capabilities_message,
+    _build_service_help_message,
     _is_capabilities_query,
+    _map_natural_text_to_command,
+    _normalize_help_target,
     _should_use_preface_llm,
     _truncate_telegram_message,
     _record_pipeline_step_logs,
@@ -106,6 +109,25 @@ def test_build_capabilities_message_all_connected_services(monkeypatch):
     assert "[notion] 지원 API/기능" in msg
     assert "[linear] 지원 API/기능" in msg
     assert "linear_create_issue" in msg
+
+
+def test_map_natural_text_to_command_help_with_target():
+    command, rest = _map_natural_text_to_command("/help linear")
+    assert command == "/help"
+    assert rest == "linear"
+
+
+def test_normalize_help_target_with_korean_alias(monkeypatch):
+    monkeypatch.setattr("app.routes.telegram.load_registry", lambda: SimpleNamespace(list_services=lambda: ["linear", "notion"]))
+    target = _normalize_help_target("리니어", ["linear", "notion"])
+    assert target == "linear"
+
+
+def test_build_service_help_message_filters_unavailable_features():
+    msg = _build_service_help_message("linear", {"linear_list_issues", "linear_search_issues"})
+    assert "최근 이슈 조회" in msg
+    assert "이슈 검색" in msg
+    assert "이슈 생성" not in msg
 
 
 def test_build_user_preface_template_success():
