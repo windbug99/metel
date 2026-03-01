@@ -168,7 +168,7 @@ def _is_calendar_pipeline_intent(user_text: str, connected_services: list[str]) 
         return False
     text = user_text or ""
     lower = text.lower()
-    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "회의", "일정"))
+    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "일정"))
     if not has_calendar:
         return False
     has_notion = _mentions_service(text, "notion")
@@ -187,7 +187,7 @@ def _is_calendar_linear_issue_intent(user_text: str, connected_services: list[st
         return False
     text = user_text or ""
     lower = text.lower()
-    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "회의", "일정"))
+    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "일정"))
     if not has_calendar:
         return False
     has_linear = _mentions_service(text, "linear")
@@ -202,7 +202,7 @@ def _is_calendar_linear_minutes_intent(user_text: str, connected_services: list[
         return False
     text = user_text or ""
     lower = text.lower()
-    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "일정", "회의"))
+    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "일정"))
     if not has_calendar:
         return False
     if not _mentions_service(text, "linear"):
@@ -245,7 +245,7 @@ def _is_calendar_notion_minutes_intent(user_text: str, connected_services: list[
         return False
     text = user_text or ""
     lower = text.lower()
-    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "일정", "회의"))
+    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "일정"))
     if not has_calendar:
         return False
     if not _mentions_service(text, "notion"):
@@ -273,7 +273,7 @@ def _skill_llm_transform_compile_miss_reason(user_text: str, connected_services:
     if "google" not in connected:
         return "missing_google_connection"
 
-    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "일정", "회의"))
+    has_calendar = any(token in text or token in lower for token in ("구글캘린더", "캘린더", "calendar", "일정"))
     has_meeting = any(token in text or token in lower for token in ("회의", "meeting"))
     has_minutes = any(
         token in text or token in lower

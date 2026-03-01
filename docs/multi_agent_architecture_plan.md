@@ -881,6 +881,37 @@ where created_at >= now() - interval '1 day';
   - Google Calendar `time_min/time_max` 잘못된 datetime 입력은 API 호출 전 `semantic_validation_failed`로 차단
   - Linear update 보정 경로(issue_id 해석/patch field 보강) 회귀 없음 확인
 
+### 운영 수동 테스트 체크리스트
+
+- [x] 테스트 시작 전 환경 확인
+  - [x] `ATOMIC_OVERHAUL_ENABLED=true`
+  - [x] `ATOMIC_OVERHAUL_TRAFFIC_PERCENT=100`
+  - [x] `ATOMIC_OVERHAUL_LEGACY_FALLBACK_ENABLED=false`
+- [ ] Linear 시나리오
+  - [x] 이슈 조회: 최근 이슈 5개 조회 성공
+  - [ ] 이슈 수정: 특정 이슈 설명/제목 업데이트 성공
+  - [ ] 이슈 생성: 팀/제목 입력 기반 생성 성공
+  - [x] 위험 요청: 삭제 요청 시 `risk_gate_blocked` 또는 승인 질문 동작
+- [ ] Notion 시나리오
+  - [ ] 페이지 제목 업데이트 성공
+  - [ ] 페이지 본문 append/update 성공
+  - [ ] Linear 참조 기반 Notion 페이지 생성 성공
+- [ ] Google Calendar 시나리오
+  - [ ] 오늘 일정 조회 성공
+  - [ ] 잘못된 datetime 입력 시 semantic validation 차단 확인
+- [ ] Clarification 시나리오
+  - [ ] 슬롯 누락 시 `clarification_needed` 유도
+  - [ ] `팀:`, `제목:` 같은 후속 응답으로 재개 성공
+  - [ ] `취소` 입력 시 pending action 정상 취소
+- [ ] 관측/로그 검증
+  - [ ] `command_logs`에 `atomic_overhaul_rollout`, `request_id` 기록 확인
+  - [ ] `pipeline_step_logs`와 `request_id` 기준 추적 가능 확인
+  - [ ] `legacy_row_count == 0` 확인
+- [ ] 합격 기준
+  - [ ] Stage6 E2E 재실행 시 `10/10 PASS`
+  - [ ] `bash backend/scripts/run_atomic_cutover_gate.sh` 결과 `PASS`
+  - [ ] 사용자 가시 오류(`tool_failed`, `auth_error`) 비정상 급증 없음
+
 ## Phase 1 — 관측/기준선 고정 (1주)
 
 - 목표:

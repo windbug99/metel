@@ -507,6 +507,40 @@ def test_run_agent_analysis_calendar_linear_minutes_shadow_mode_runs_compiled_an
     assert "skill_llm_transform_shadow_executed=1" in result.plan.notes
 
 
+def test_run_agent_analysis_linear_minutes_phrase_without_calendar_keyword_uses_legacy(monkeypatch):
+    class _Settings:
+        llm_autonomous_enabled = False
+        slot_loop_enabled = False
+        slot_loop_rollout_percent = 0
+        skill_llm_transform_pipeline_enabled = True
+        skill_llm_transform_pipeline_shadow_mode = False
+        skill_llm_transform_pipeline_traffic_percent = 100
+
+    class _PendingSettings:
+        pending_action_storage = "memory"
+        pending_action_ttl_seconds = 900
+        pending_action_table = "pending_actions"
+
+    async def _fake_execute_agent_plan(user_id: str, plan: AgentPlan):
+        assert user_id == "user-linear-no-calendar"
+        assert not (plan.tasks and plan.tasks[0].task_type == "PIPELINE_DAG")
+        return AgentExecutionResult(success=True, user_message="legacy", summary="legacy")
+
+    monkeypatch.setattr("agent.loop.get_settings", lambda: _Settings())
+    monkeypatch.setattr("agent.pending_action.get_settings", lambda: _PendingSettings())
+    monkeypatch.setattr("agent.loop.execute_agent_plan", _fake_execute_agent_plan)
+
+    result = asyncio.run(
+        run_agent_analysis(
+            "linear에 서비스구조 오버홀 기획 이슈의 설명에 회의록 서식을 업데이트하세요",
+            ["google", "linear"],
+            "user-linear-no-calendar",
+        )
+    )
+    assert result.ok is True
+    assert result.plan_source != "dag_template"
+
+
 def test_run_agent_analysis_location_food_recommendation_requires_map_skill(monkeypatch):
     class _Settings:
         llm_autonomous_enabled = False
