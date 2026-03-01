@@ -205,6 +205,15 @@ def test_build_agent_plan_extracts_notion_create_title_hint_from_natural_phrase(
     assert create_task.payload.get("title_hint") == "서비스 기획서"
 
 
+def test_build_agent_plan_notion_description_update_prefers_append_tool():
+    plan = build_agent_plan(
+        "notion에서 서비스 기획서 페이지의 설명에 회의록 서식을 생성해서 업데이트 하세요",
+        connected_services=["notion"],
+    )
+    assert plan.tasks
+    assert plan.tasks[0].tool_name == "notion_append_block_children"
+
+
 def test_execute_agent_plan_runs_notion_data_source_llm_notion_bridge(monkeypatch):
     calls = []
 

@@ -202,6 +202,11 @@ def _pick_primary_tool_for_intent(user_text: str, selected_tools: list[str]) -> 
             or tools[0]
         )
     if is_update_intent(user_text):
+        # Notion page body/content update should use append_block_children, not update_page metadata.
+        if any(token in normalized for token in ("notion", "노션")) and any(
+            token in normalized for token in ("본문", "내용", "설명", "description")
+        ):
+            return _first_match("append") or _first_match("update") or _first_match("comment") or tools[0]
         return _first_match("update") or _first_match("append") or _first_match("comment") or tools[0]
     if is_create_intent(user_text):
         return _first_match("create") or _first_match("append") or tools[0]

@@ -75,7 +75,7 @@ ACTION_SLOT_SCHEMAS: dict[str, ActionSlotSchema] = {
         aliases={
             "block_id": ("페이지", "page", "대상페이지", "target_page", "page_id", "block_id"),
             "children": ("children", "블록목록"),
-            "content": ("본문", "내용", "text"),
+            "content": ("본문", "내용", "설명", "description", "text"),
             "content_type": ("형식", "타입", "type"),
         },
         validation_rules={

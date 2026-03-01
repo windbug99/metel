@@ -3567,7 +3567,7 @@ async def _autofill_task_payload(
                     page_title=candidate_title,
                     steps=steps,
                 )
-            if _missing(filled.get("children")) and content:
+            if _missing(filled.get("children")) and content and not _should_force_generate_notion_append_content(user_text):
                 filled["children"] = [
                     {
                         "object": "block",
@@ -3578,9 +3578,10 @@ async def _autofill_task_payload(
         if page_id:
             filled["block_id"] = page_id
 
-    if "notion_append_block_children" in tool_name and _missing(filled.get("children")):
+    force_generate_notion_append = _should_force_generate_notion_append_content(user_text)
+    if "notion_append_block_children" in tool_name and (_missing(filled.get("children")) or force_generate_notion_append):
         _, content = _extract_append_target_and_content(user_text)
-        if _should_force_generate_notion_append_content(user_text):
+        if force_generate_notion_append:
             generated = await _generate_notion_append_content_with_llm(user_text=user_text, filled=filled)
             if generated:
                 content = generated
@@ -4226,16 +4227,20 @@ def _extract_nested_create_request(user_text: str) -> tuple[str | None, str | No
 
 def _extract_target_page_title(user_text: str) -> str | None:
     patterns = [
-        r"(?i)(?:노션에서\s*)?(.+?)의\s*(?:내용|본문)",
-        r"(?i)(?:노션에서\s*)?(.+?)\s*페이지(?:의)?\s*(?:내용|본문)",
-        r"(?i)(?:노션에서\s*)?(.+?)\s*(?:페이지)?\s*요약(?:해줘|해|해서|해봐)?",
+        r"(?i)(?:(?:노션|notion)(?:에서|에)?\s*)?(.+?)의\s*(?:내용|본문)",
+        r"(?i)(?:(?:노션|notion)(?:에서|에)?\s*)?(.+?)\s*페이지(?:의)?\s*(?:내용|본문)",
+        r"(?i)(?:(?:노션|notion)(?:에서|에)?\s*)?(.+?)의\s*(?:설명|description)",
+        r"(?i)(?:(?:노션|notion)(?:에서|에)?\s*)?(.+?)\s*페이지(?:의)?\s*(?:설명|description)",
+        r"(?i)(?:(?:노션|notion)(?:에서|에)?\s*)?(.+?)\s*(?:페이지)?\s*요약(?:해줘|해|해서|해봐)?",
     ]
     for pattern in patterns:
         match = re.search(pattern, user_text)
         if not match:
             continue
         candidate = match.group(1).strip(" \"'`")
-        candidate = re.sub(r"^(노션|notion)\s*", "", candidate, flags=re.IGNORECASE).strip()
+        candidate = re.sub(r"^(?:노션|notion)(?:에서|에)?\s*", "", candidate, flags=re.IGNORECASE).strip()
+        if any(token in (user_text or "").lower() for token in ("설명", "description")):
+            candidate = re.sub(r"\s*페이지$", "", candidate, flags=re.IGNORECASE).strip()
         if candidate:
             return candidate
     return None
@@ -4281,6 +4286,18 @@ def _extract_append_target_and_content(user_text: str) -> tuple[str | None, str 
     )
     if match:
         title = re.sub(r"^(노션|notion)\s*", "", match.group("title").strip(" \"'`"), flags=re.IGNORECASE).strip()
+        content = match.group("content").strip(" \"'`")
+        if title and content:
+            return title, content
+
+    # update form:
+    # "노션에서 서비스 기획서 페이지의 설명에 회의록 서식을 생성해서 업데이트 하세요"
+    match = re.search(
+        r'(?is)(?:(?:노션|notion)에서\s*)?(?P<title>.+?)\s*(?:페이지)?(?:의)?\s*(?:설명|내용|본문|description)에\s*(?P<content>.+?)\s*(?:을|를)?\s*(?:생성(?:해서)?\s*)?(?:업데이트|수정|변경)\s*(?:해줘|해|해줘요|해주세요|하세요)?$',
+        text_for_parse,
+    )
+    if match:
+        title = re.sub(r"^(?:노션|notion)(?:에서|에)?\s*", "", match.group("title").strip(" \"'`"), flags=re.IGNORECASE).strip()
         content = match.group("content").strip(" \"'`")
         if title and content:
             return title, content

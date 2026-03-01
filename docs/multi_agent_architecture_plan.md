@@ -894,7 +894,7 @@ where created_at >= now() - interval '1 day';
   - [x] 위험 요청: 삭제 요청 시 `risk_gate_blocked` 또는 승인 질문 동작
 - [ ] Notion 시나리오
   - [x] 페이지 제목 업데이트 성공
-  - [x] 페이지 본문 append/update 성공
+  - [ ] 페이지 본문 append/update 성공
   - [ ] Linear 참조 기반 Notion 페이지 생성 성공
 - [ ] Google Calendar 시나리오
   - [ ] 오늘 일정 조회 성공

@@ -125,6 +125,11 @@ def test_extract_target_page_title_with_trailing_body():
     assert title == "주간 회의록 페이지"
 
 
+def test_extract_target_page_title_description_pattern():
+    title = _extract_target_page_title("notion에서 서비스 기획서 페이지의 설명에 회의록 서식을 생성해서 업데이트 하세요")
+    assert title == "서비스 기획서"
+
+
 def test_extract_requested_line_count():
     count = _extract_requested_line_count("노션에서 Metel test page의 내용 중 상위 10줄 출력")
     assert count == 10
@@ -210,6 +215,14 @@ def test_extract_append_target_and_content_content_first_formal():
     title, content = _extract_append_target_and_content("다음 요약을 데일리 페이지에 추가해주세요")
     assert title == "데일리"
     assert content == "다음 요약을"
+
+
+def test_extract_append_target_and_content_update_description_form():
+    title, content = _extract_append_target_and_content(
+        "notion에서 서비스 기획서 페이지의 설명에 회의록 서식을 생성해서 업데이트 하세요"
+    )
+    assert title == "서비스 기획서"
+    assert content == "회의록 서식"
 
 
 def test_extract_page_rename_request():
