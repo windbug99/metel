@@ -974,12 +974,12 @@ def _extract_linear_issue_nodes(payload: object) -> list[dict]:
     return []
 
 
-async def _resolve_linear_issue_for_update(user_id: str, issue_ref: str) -> tuple[str, str, str]:
+async def _resolve_linear_issue_for_update(user_id: str, issue_ref: str) -> tuple[str, str, str, str]:
     ref = str(issue_ref or "").strip()
     if not ref:
-        return "", "", ""
+        return "", "", "", ""
     if _looks_like_linear_internal_issue_id(ref):
-        return ref, "", ""
+        return ref, "", "", ""
     queries = [{"tool_name": "linear_search_issues", "payload": {"query": ref, "first": 10}}]
     queries.append({"tool_name": "linear_list_issues", "payload": {"first": 20}})
     for query in queries:
@@ -1009,11 +1009,12 @@ async def _resolve_linear_issue_for_update(user_id: str, issue_ref: str) -> tupl
                 str(matched.get("id") or "").strip(),
                 str(matched.get("url") or "").strip(),
                 str(matched.get("description") or "").strip(),
+                str(((matched.get("team") or {}) if isinstance(matched.get("team"), dict) else {}).get("id") or "").strip(),
             )
-    return "", "", ""
+    return "", "", "", ""
 
 
-async def _resolve_linear_state_id(user_id: str, state_value: str) -> str:
+async def _resolve_linear_state_id(user_id: str, state_value: str, team_id: str | None = None) -> str:
     candidate = str(state_value or "").strip()
     if not candidate:
         return ""
@@ -1022,6 +1023,23 @@ async def _resolve_linear_state_id(user_id: str, state_value: str) -> str:
     normalized = _normalize_linear_state_name(candidate)
     if not normalized:
         return ""
+    try:
+        listed_states = await execute_tool(user_id=user_id, tool_name="linear_list_workflow_states", payload={"first": 200})
+        data_states = (listed_states or {}).get("data") if isinstance(listed_states, dict) else {}
+        workflow_states = (((data_states or {}).get("workflowStates") or {}).get("nodes") if isinstance(data_states, dict) else None) or []
+        if isinstance(workflow_states, list):
+            for state in workflow_states:
+                if not isinstance(state, dict):
+                    continue
+                state_name = str(state.get("name") or "").strip()
+                state_id = str(state.get("id") or "").strip()
+                state_team_id = str(((state.get("team") or {}) if isinstance(state.get("team"), dict) else {}).get("id") or "").strip()
+                if team_id and state_team_id and team_id != state_team_id:
+                    continue
+                if state_name and state_id and _normalize_linear_state_name(state_name) == normalized:
+                    return state_id
+    except Exception:
+        pass
     try:
         listed = await execute_tool(user_id=user_id, tool_name="linear_list_issues", payload={"first": 20})
     except Exception:
@@ -1344,8 +1362,9 @@ async def _run_from_contract(
         issue_ref = str(slots.get("issue_id") or "").strip()
         resolved_issue_id = ""
         current_issue_description = ""
+        issue_team_id = ""
         if issue_ref:
-            resolved_issue_id, _resolved_issue_url, current_issue_description = await _resolve_linear_issue_for_update(
+            resolved_issue_id, _resolved_issue_url, current_issue_description, issue_team_id = await _resolve_linear_issue_for_update(
                 user_id=user_id,
                 issue_ref=issue_ref,
             )
@@ -1353,7 +1372,11 @@ async def _run_from_contract(
                 slots["issue_id"] = resolved_issue_id
         state_value = str(slots.get("state_id") or "").strip()
         if state_value and not _looks_like_linear_internal_issue_id(state_value):
-            resolved_state_id = await _resolve_linear_state_id(user_id=user_id, state_value=state_value)
+            resolved_state_id = await _resolve_linear_state_id(
+                user_id=user_id,
+                state_value=state_value,
+                team_id=issue_team_id or None,
+            )
             if resolved_state_id:
                 slots["state_id"] = resolved_state_id
         append_intent = str(slots.get("description_append") or "").strip().lower() in {"1", "true", "yes", "y"}

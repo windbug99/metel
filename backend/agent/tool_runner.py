@@ -519,6 +519,11 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
                   title
                   description
                   url
+                  team {
+                    id
+                    key
+                    name
+                  }
                   state {
                     id
                     name
@@ -528,6 +533,26 @@ def _linear_query_and_variables(tool_name: str, payload: dict[str, Any]) -> tupl
             }
             """,
             {"query": query, "first": max(1, min(20, first))},
+        )
+    if tool_name == "linear_list_workflow_states":
+        first = int(payload.get("first", 50))
+        return (
+            """
+            query WorkflowStates($first: Int!) {
+              workflowStates(first: $first) {
+                nodes {
+                  id
+                  name
+                  team {
+                    id
+                    key
+                    name
+                  }
+                }
+              }
+            }
+            """,
+            {"first": max(1, min(200, first))},
         )
     if tool_name == "linear_create_issue":
         input_data: dict[str, Any] = {

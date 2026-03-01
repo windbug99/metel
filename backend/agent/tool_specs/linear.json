@@ -119,6 +119,26 @@
       }
     },
     {
+      "tool_name": "linear_list_workflow_states",
+      "description": "List workflow states in connected Linear workspace",
+      "method": "POST",
+      "path": "/graphql",
+      "adapter_function": "linear_list_workflow_states",
+      "required_scopes": ["read"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "first": { "type": "integer", "minimum": 1, "maximum": 200 }
+        }
+      },
+      "error_map": {
+        "401": "AUTH_REQUIRED",
+        "403": "AUTH_FORBIDDEN",
+        "429": "RATE_LIMITED"
+      }
+    },
+    {
       "tool_name": "linear_update_issue",
       "description": "Update an existing issue in Linear",
       "method": "POST",

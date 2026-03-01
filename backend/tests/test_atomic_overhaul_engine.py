@@ -507,20 +507,21 @@ def test_atomic_overhaul_linear_state_change_resolves_state_name(monkeypatch):
                                 "title": "상태 변경 테스트",
                                 "description": "기존 설명",
                                 "url": "https://linear.app/issue/OPT-283",
+                                "team": {"id": "team-opt"},
                                 "state": {"id": "state-backlog", "name": "Backlog"},
                             }
                         ]
                     }
                 },
             }
-        if tool_name == "linear_list_issues":
+        if tool_name == "linear_list_workflow_states":
             return {
                 "ok": True,
                 "data": {
-                    "issues": {
+                    "workflowStates": {
                         "nodes": [
-                            {"state": {"id": "state-backlog", "name": "Backlog"}},
-                            {"state": {"id": "state-todo", "name": "Todo"}},
+                            {"id": "state-backlog", "name": "Backlog", "team": {"id": "team-opt"}},
+                            {"id": "state-todo", "name": "Todo", "team": {"id": "team-opt"}},
                         ]
                     }
                 },
