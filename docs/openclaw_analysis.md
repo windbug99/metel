@@ -1,5 +1,9 @@
 # OpenClaw 소스코드 분석 — 텔레그램 연동 & 에이전트 구현
 
+> Legacy notice (2026-03-02):
+> 본 문서는 Telegram/에이전트 구조 분석 기록입니다.
+> 현재 제품 실행 경로는 MCP Gateway 기반이며 기준 문서는 `docs/overhaul-20260302.md`입니다.
+
 > OpenClaw GitHub(https://github.com/openclaw/openclaw) 소스코드 및 공식 문서 분석 기반
 > 우리 서비스 구현에 필요한 부분만 추출·정리
 

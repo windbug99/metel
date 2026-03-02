@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+
 import { supabase } from "../../lib/supabase";
 import { detectBrowserTimezone, updateUserTimezone, upsertUserProfile } from "../../lib/profile";
 
@@ -13,7 +14,7 @@ type UserProfile = {
   timezone: string | null;
 } | null;
 
-type NotionStatus = {
+type OAuthStatus = {
   connected: boolean;
   integration?: {
     workspace_name: string | null;
@@ -22,101 +23,82 @@ type NotionStatus = {
   } | null;
 } | null;
 
-type LinearStatus = {
-  connected: boolean;
-  integration?: {
-    workspace_name: string | null;
-    workspace_id: string | null;
-    updated_at: string | null;
-  } | null;
-} | null;
-
-type GoogleStatus = {
-  connected: boolean;
-  integration?: {
-    workspace_name: string | null;
-    workspace_id: string | null;
-    updated_at: string | null;
-  } | null;
-} | null;
-
-type TelegramStatus = {
-  connected: boolean;
-  telegram_chat_id?: number | null;
-  telegram_username?: string | null;
-} | null;
-
-type TelegramConnectInfo = {
-  deepLink: string;
-  tgDeepLink: string;
-  startCommand: string;
-  botUsername: string;
-  expiresInSeconds: number;
-} | null;
-
-type CommandLog = {
+type ApiKeyItem = {
   id: number;
-  channel: string;
-  command: string;
-  status: string;
-  error_code: string | null;
-  detail: string | null;
-  plan_source: string | null;
-  execution_mode: string | null;
-  autonomous_fallback_reason: string | null;
-  verification_reason: string | null;
-  llm_provider: string | null;
-  llm_model: string | null;
+  name: string;
+  key_prefix: string;
+  allowed_tools?: string[] | null;
+  is_active: boolean;
+  last_used_at: string | null;
   created_at: string;
+  revoked_at: string | null;
+};
+
+type ToolCallItem = {
+  id: number;
+  tool_name: string;
+  status: "success" | "fail";
+  error_code: string | null;
+  latency_ms: number;
+  created_at: string;
+  api_key: {
+    id: number | null;
+    name: string | null;
+    key_prefix: string | null;
+  };
+};
+
+type ToolCallSummary = {
+  recent_success: number;
+  recent_fail: number;
+  calls_24h: number;
+  success_24h: number;
+  fail_24h: number;
 };
 
 function ServiceLogo({ src, alt }: { src: string; alt: string }) {
-  return (
-    <img
-      src={src}
-      alt={alt}
-      width={20}
-      height={20}
-      className="h-5 w-5 rounded-sm object-contain"
-    />
-  );
+  return <img src={src} alt={alt} width={20} height={20} className="h-5 w-5 rounded-sm object-contain" />;
 }
 
 export default function DashboardPage() {
   const router = useRouter();
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+
   const [loading, setLoading] = useState(true);
+  const [loggingOut, setLoggingOut] = useState(false);
+
   const [profile, setProfile] = useState<UserProfile>(null);
   const [timezoneDraft, setTimezoneDraft] = useState("UTC");
   const [timezoneSaving, setTimezoneSaving] = useState(false);
   const [timezoneMessage, setTimezoneMessage] = useState<string | null>(null);
-  const [notionStatus, setNotionStatus] = useState<NotionStatus>(null);
-  const [notionStatusError, setNotionStatusError] = useState<string | null>(null);
-  const [disconnecting, setDisconnecting] = useState(false);
-  const [linearStatus, setLinearStatus] = useState<LinearStatus>(null);
-  const [linearStatusError, setLinearStatusError] = useState<string | null>(null);
-  const [linearConnecting, setLinearConnecting] = useState(false);
-  const [linearDisconnecting, setLinearDisconnecting] = useState(false);
-  const [googleStatus, setGoogleStatus] = useState<GoogleStatus>(null);
-  const [googleStatusError, setGoogleStatusError] = useState<string | null>(null);
-  const [googleConnecting, setGoogleConnecting] = useState(false);
-  const [googleDisconnecting, setGoogleDisconnecting] = useState(false);
-  const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>(null);
-  const [telegramStatusError, setTelegramStatusError] = useState<string | null>(null);
-  const [telegramDisconnecting, setTelegramDisconnecting] = useState(false);
-  const [telegramConnecting, setTelegramConnecting] = useState(false);
-  const [telegramConnectInfo, setTelegramConnectInfo] = useState<TelegramConnectInfo>(null);
-  const [telegramPolling, setTelegramPolling] = useState(false);
-  const [commandLogs, setCommandLogs] = useState<CommandLog[]>([]);
-  const [commandLogsLoading, setCommandLogsLoading] = useState(false);
-  const [commandLogsError, setCommandLogsError] = useState<string | null>(null);
-  const [commandLogStatusFilter, setCommandLogStatusFilter] = useState<"all" | "success" | "error">("all");
-  const [commandLogCommandFilter, setCommandLogCommandFilter] = useState<string>("all");
-  const [loggingOut, setLoggingOut] = useState(false);
 
-  const telegramPollIntervalRef = useRef<number | null>(null);
-  const telegramPollTimeoutRef = useRef<number | null>(null);
+  const [notionStatus, setNotionStatus] = useState<OAuthStatus>(null);
+  const [linearStatus, setLinearStatus] = useState<OAuthStatus>(null);
 
-  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  const [notionError, setNotionError] = useState<string | null>(null);
+  const [linearError, setLinearError] = useState<string | null>(null);
+
+  const [notionBusy, setNotionBusy] = useState(false);
+  const [linearBusy, setLinearBusy] = useState(false);
+  const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([]);
+  const [apiKeysLoading, setApiKeysLoading] = useState(false);
+  const [apiKeysError, setApiKeysError] = useState<string | null>(null);
+  const [creatingApiKey, setCreatingApiKey] = useState(false);
+  const [newApiKeyName, setNewApiKeyName] = useState("default");
+  const [newApiKeyAllowedTools, setNewApiKeyAllowedTools] = useState("");
+  const [createdApiKey, setCreatedApiKey] = useState<string | null>(null);
+  const [revokingApiKeyId, setRevokingApiKeyId] = useState<number | null>(null);
+  const [updatingApiKeyId, setUpdatingApiKeyId] = useState<number | null>(null);
+  const [apiKeyAllowedDraft, setApiKeyAllowedDraft] = useState<Record<number, string>>({});
+  const [toolCalls, setToolCalls] = useState<ToolCallItem[]>([]);
+  const [toolCallsSummary, setToolCallsSummary] = useState<ToolCallSummary | null>(null);
+  const [toolCallsLoading, setToolCallsLoading] = useState(false);
+  const [toolCallsError, setToolCallsError] = useState<string | null>(null);
+  const [toolCallStatusFilter, setToolCallStatusFilter] = useState<"all" | "success" | "fail">("all");
+  const [toolCallNameFilter, setToolCallNameFilter] = useState("");
+  const [toolCallFromFilter, setToolCallFromFilter] = useState("");
+  const [toolCallToFilter, setToolCallToFilter] = useState("");
+
   const browserTimezone = useMemo(() => detectBrowserTimezone(), []);
 
   const timezoneOptions = useMemo(() => {
@@ -128,1120 +110,711 @@ export default function DashboardPage() {
     } catch {
       // ignore
     }
-    return [
-      "UTC",
-      "Asia/Seoul",
-      "Asia/Tokyo",
-      "Asia/Singapore",
-      "Europe/London",
-      "Europe/Paris",
-      "America/New_York",
-      "America/Chicago",
-      "America/Denver",
-      "America/Los_Angeles",
-    ];
+    return ["UTC", "Asia/Seoul", "America/Los_Angeles", "America/New_York", "Europe/London"];
   }, []);
-  const timezoneOptionValues = useMemo(() => {
-    if (!timezoneDraft || timezoneOptions.includes(timezoneDraft)) {
-      return timezoneOptions;
-    }
-    return [timezoneDraft, ...timezoneOptions];
-  }, [timezoneDraft, timezoneOptions]);
 
   const getAuthHeaders = useCallback(async () => {
     const {
       data: { session }
     } = await supabase.auth.getSession();
+
     const accessToken = session?.access_token;
     if (!accessToken) {
       throw new Error("No active login session was found.");
     }
+
     return { Authorization: `Bearer ${accessToken}` };
   }, []);
 
-  const fetchNotionStatus = useCallback(
-    async () => {
+  const fetchUserProfile = useCallback(async () => {
+    const {
+      data: { user }
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return null;
+    }
+
+    const { data } = await supabase
+      .from("users")
+      .select("id, email, full_name, created_at, timezone")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    return (data as UserProfile) ?? null;
+  }, []);
+
+  const fetchOAuthStatus = useCallback(
+    async (provider: "notion" | "linear") => {
       if (!apiBaseUrl) {
         return;
       }
-
-      try {
-        const headers = await getAuthHeaders();
-        const notionResponse = await fetch(
-          `${apiBaseUrl}/api/oauth/notion/status`,
-          { headers }
-        );
-        if (notionResponse.ok) {
-          const notionData: NotionStatus = await notionResponse.json();
-          setNotionStatus(notionData);
-          setNotionStatusError(null);
-        } else {
-          setNotionStatusError("Failed to fetch Notion status.");
-        }
-      } catch {
-        setNotionStatusError("Network error while fetching Notion status.");
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/oauth/${provider}/status`, { headers });
+      if (!response.ok) {
+        throw new Error(`failed_${provider}_status`);
       }
+      return (await response.json()) as OAuthStatus;
     },
     [apiBaseUrl, getAuthHeaders]
   );
 
-  const fetchLinearStatus = useCallback(
-    async () => {
-      if (!apiBaseUrl) {
-        return;
-      }
+  const refreshStatuses = useCallback(async () => {
+    try {
+      const [notion, linear] = await Promise.all([
+        fetchOAuthStatus("notion"),
+        fetchOAuthStatus("linear")
+      ]);
+      setNotionStatus(notion ?? null);
+      setLinearStatus(linear ?? null);
+      setNotionError(null);
+      setLinearError(null);
+    } catch {
+      setNotionError("Failed to load status.");
+      setLinearError("Failed to load status.");
+    }
+  }, [fetchOAuthStatus]);
 
-      try {
-        const headers = await getAuthHeaders();
-        const response = await fetch(
-          `${apiBaseUrl}/api/oauth/linear/status`,
-          { headers }
-        );
-        if (response.ok) {
-          const data: LinearStatus = await response.json();
-          setLinearStatus(data);
-          setLinearStatusError(null);
-        } else {
-          setLinearStatusError("Failed to fetch Linear status.");
-        }
-      } catch {
-        setLinearStatusError("Network error while fetching Linear status.");
-      }
-    },
-    [apiBaseUrl, getAuthHeaders]
-  );
-
-  const fetchGoogleStatus = useCallback(
-    async () => {
-      if (!apiBaseUrl) {
-        return;
-      }
-
-      try {
-        const headers = await getAuthHeaders();
-        const response = await fetch(
-          `${apiBaseUrl}/api/oauth/google/status`,
-          { headers }
-        );
-        if (response.ok) {
-          const data: GoogleStatus = await response.json();
-          setGoogleStatus(data);
-          setGoogleStatusError(null);
-        } else {
-          setGoogleStatusError("Failed to fetch Google status.");
-        }
-      } catch {
-        setGoogleStatusError("Network error while fetching Google status.");
-      }
-    },
-    [apiBaseUrl, getAuthHeaders]
-  );
-
-  const fetchTelegramStatus = useCallback(async () => {
+  const fetchApiKeys = useCallback(async () => {
     if (!apiBaseUrl) {
       return;
     }
-
+    setApiKeysLoading(true);
     try {
       const headers = await getAuthHeaders();
-      const response = await fetch(`${apiBaseUrl}/api/telegram/status`, { headers });
-      if (response.ok) {
-        const data: TelegramStatus = await response.json();
-        setTelegramStatus(data);
-        setTelegramStatusError(null);
-        if (data?.connected) {
-          setTelegramConnectInfo(null);
-          setTelegramPolling(false);
-          if (telegramPollIntervalRef.current) {
-            window.clearInterval(telegramPollIntervalRef.current);
-            telegramPollIntervalRef.current = null;
-          }
-          if (telegramPollTimeoutRef.current) {
-            window.clearTimeout(telegramPollTimeoutRef.current);
-            telegramPollTimeoutRef.current = null;
-          }
-        }
-      } else {
-        setTelegramStatusError("Failed to fetch Telegram status.");
+      const response = await fetch(`${apiBaseUrl}/api/api-keys`, { headers });
+      if (!response.ok) {
+        throw new Error("failed_api_keys_list");
       }
+      const payload = (await response.json()) as { items?: ApiKeyItem[] };
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      setApiKeys(items);
+      setApiKeyAllowedDraft((prev) => {
+        const next = { ...prev };
+        for (const item of items) {
+          if (next[item.id] !== undefined) {
+            continue;
+          }
+          next[item.id] = (item.allowed_tools ?? []).join(", ");
+        }
+        return next;
+      });
+      setApiKeysError(null);
     } catch {
-      setTelegramStatusError("Network error while fetching Telegram status.");
+      setApiKeysError("Failed to load API keys.");
+    } finally {
+      setApiKeysLoading(false);
     }
   }, [apiBaseUrl, getAuthHeaders]);
 
-  const startTelegramStatusPolling = useCallback(() => {
-    if (telegramPollIntervalRef.current) {
-      window.clearInterval(telegramPollIntervalRef.current);
-    }
-    if (telegramPollTimeoutRef.current) {
-      window.clearTimeout(telegramPollTimeoutRef.current);
-    }
-
-    setTelegramPolling(true);
-    telegramPollIntervalRef.current = window.setInterval(() => {
-      void fetchTelegramStatus();
-    }, 3000);
-    telegramPollTimeoutRef.current = window.setTimeout(() => {
-      if (telegramPollIntervalRef.current) {
-        window.clearInterval(telegramPollIntervalRef.current);
-        telegramPollIntervalRef.current = null;
-      }
-      setTelegramPolling(false);
-    }, 120000);
-  }, [fetchTelegramStatus]);
-
-  const fetchCommandLogs = useCallback(async () => {
-    setCommandLogsLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("command_logs")
-        .select(
-          "id, channel, command, status, error_code, detail, plan_source, execution_mode, autonomous_fallback_reason, verification_reason, llm_provider, llm_model, created_at"
-        )
-        .order("created_at", { ascending: false })
-        .limit(20);
-
-      if (error) {
-        setCommandLogsError("Failed to fetch command logs.");
-        return;
-      }
-
-      setCommandLogs(Array.isArray(data) ? (data as CommandLog[]) : []);
-      setCommandLogsError(null);
-    } catch {
-      setCommandLogsError("Network error while fetching command logs.");
-    } finally {
-      setCommandLogsLoading(false);
-    }
-  }, []);
-
-  const commandFilterOptions = useMemo(() => {
-    const unique = Array.from(new Set(commandLogs.map((log) => log.command).filter(Boolean)));
-    return unique.sort((a, b) => a.localeCompare(b));
-  }, [commandLogs]);
-
-  const filteredCommandLogs = useMemo(() => {
-    return commandLogs.filter((log) => {
-      if (commandLogStatusFilter !== "all" && log.status !== commandLogStatusFilter) {
-        return false;
-      }
-      if (commandLogCommandFilter !== "all" && log.command !== commandLogCommandFilter) {
-        return false;
-      }
-      return true;
-    });
-  }, [commandLogs, commandLogStatusFilter, commandLogCommandFilter]);
-
-  const agentTelemetry = useMemo(() => {
-    const agentLogs = commandLogs.filter((log) => log.command === "agent_plan");
-    const total = agentLogs.length;
-    const autonomous = agentLogs.filter((log) => log.execution_mode === "autonomous").length;
-    const rule = agentLogs.filter((log) => log.execution_mode === "rule").length;
-    const llmPlan = agentLogs.filter((log) => log.plan_source === "llm").length;
-    const rulePlan = agentLogs.filter((log) => log.plan_source === "rule").length;
-    const success = agentLogs.filter((log) => log.status === "success").length;
-    const error = agentLogs.filter((log) => log.status === "error").length;
-    const autonomousSuccess = agentLogs.filter(
-      (log) => log.execution_mode === "autonomous" && log.status === "success"
-    ).length;
-    const fallbackLogs = agentLogs.filter((log) => Boolean(log.autonomous_fallback_reason));
-    const fallbackReasonCount = fallbackLogs.reduce<Record<string, number>>((acc, log) => {
-      const key = log.autonomous_fallback_reason ?? "unknown";
-      acc[key] = (acc[key] ?? 0) + 1;
-      return acc;
-    }, {});
-    const topFallbackReasons = Object.entries(fallbackReasonCount)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3);
-    const verificationLogs = agentLogs.filter((log) => Boolean(log.verification_reason));
-    const verificationReasonCount = verificationLogs.reduce<Record<string, number>>((acc, log) => {
-      const key = log.verification_reason ?? "unknown";
-      acc[key] = (acc[key] ?? 0) + 1;
-      return acc;
-    }, {});
-    const topVerificationReasons = Object.entries(verificationReasonCount)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3);
-
-    const autonomousSuccessRate = autonomous > 0 ? autonomousSuccess / autonomous : 0;
-    const fallbackRate = total > 0 ? fallbackLogs.length / total : 0;
-
-    return {
-      total,
-      autonomous,
-      rule,
-      llmPlan,
-      rulePlan,
-      success,
-      error,
-      autonomousSuccess,
-      autonomousSuccessRate,
-      fallbackCount: fallbackLogs.length,
-      fallbackRate,
-      topFallbackReasons,
-      verificationCount: verificationLogs.length,
-      topVerificationReasons
-    };
-  }, [commandLogs]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
+  const fetchToolCalls = useCallback(async () => {
+    if (!apiBaseUrl) {
       return;
     }
-    const url = new URL(window.location.href);
-    if (url.searchParams.has("notion")) {
-      url.searchParams.delete("notion");
-    }
-    if (url.searchParams.has("linear")) {
-      url.searchParams.delete("linear");
-    }
-    if (url.searchParams.has("google")) {
-      url.searchParams.delete("google");
-    }
-    window.history.replaceState({}, "", url.toString());
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (telegramPollIntervalRef.current) {
-        window.clearInterval(telegramPollIntervalRef.current);
+    setToolCallsLoading(true);
+    try {
+      const headers = await getAuthHeaders();
+      const query = new URLSearchParams({
+        limit: "20",
+        status: toolCallStatusFilter,
+      });
+      if (toolCallNameFilter.trim()) {
+        query.set("tool_name", toolCallNameFilter.trim());
       }
-      if (telegramPollTimeoutRef.current) {
-        window.clearTimeout(telegramPollTimeoutRef.current);
+      if (toolCallFromFilter) {
+        query.set("from", new Date(toolCallFromFilter).toISOString());
       }
-    };
-  }, []);
+      if (toolCallToFilter) {
+        query.set("to", new Date(toolCallToFilter).toISOString());
+      }
+      const response = await fetch(`${apiBaseUrl}/api/tool-calls?${query.toString()}`, { headers });
+      if (!response.ok) {
+        throw new Error("failed_tool_calls_list");
+      }
+      const payload = (await response.json()) as {
+        items?: ToolCallItem[];
+        summary?: ToolCallSummary;
+      };
+      setToolCalls(Array.isArray(payload.items) ? payload.items : []);
+      setToolCallsSummary(payload.summary ?? null);
+      setToolCallsError(null);
+    } catch {
+      setToolCallsError("Failed to load tool call usage.");
+    } finally {
+      setToolCallsLoading(false);
+    }
+  }, [apiBaseUrl, getAuthHeaders, toolCallFromFilter, toolCallNameFilter, toolCallStatusFilter, toolCallToFilter]);
 
   useEffect(() => {
     let mounted = true;
 
-    const load = async () => {
-      try {
-        const {
-          data: { user }
-        } = await supabase.auth.getUser();
+    const bootstrap = async () => {
+      const {
+        data: { session }
+      } = await supabase.auth.getSession();
 
-        if (!mounted) {
-          return;
-        }
-
-        if (!user) {
-          router.replace("/");
-          return;
-        }
-
-        const { data } = await supabase
-          .from("users")
-          .select("id, email, full_name, created_at, timezone")
-          .eq("id", user.id)
-          .single();
-
-        if (!data) {
-          await upsertUserProfile();
-        }
-
-        const { data: refreshed } = await supabase
-          .from("users")
-          .select("id, email, full_name, created_at,timezone")
-          .eq("id", user.id)
-          .single();
-
-        await fetchNotionStatus();
-        await fetchLinearStatus();
-        await fetchGoogleStatus();
-        await fetchTelegramStatus();
-        await fetchCommandLogs();
-
-        if (!mounted) {
-          return;
-        }
-
-        const loaded = (refreshed ?? data ?? null) as UserProfile;
-        setProfile(loaded);
-        setTimezoneDraft(loaded?.timezone ?? browserTimezone);
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
+      if (!session) {
+        router.replace("/");
+        return;
       }
+
+      const { data: userData } = await supabase.auth.getUser();
+      const user = userData.user;
+      if (!user) {
+        router.replace("/");
+        return;
+      }
+
+      const upsertResult = await upsertUserProfile();
+      if (upsertResult.error) {
+        throw upsertResult.error;
+      }
+      const profileData = await fetchUserProfile();
+
+      if (!mounted) {
+        return;
+      }
+
+      setProfile(profileData);
+      setTimezoneDraft(profileData?.timezone ?? browserTimezone);
+
+      await Promise.all([refreshStatuses(), fetchApiKeys(), fetchToolCalls()]);
+      setLoading(false);
     };
 
-    void load();
+    void bootstrap();
 
     return () => {
       mounted = false;
     };
-  }, [router, fetchNotionStatus, fetchLinearStatus, fetchGoogleStatus, fetchTelegramStatus, fetchCommandLogs]);
+  }, [browserTimezone, fetchApiKeys, fetchToolCalls, fetchUserProfile, refreshStatuses, router]);
 
-  useEffect(() => {
-    if (!profile?.id) {
+  const handleOAuthStart = async (provider: "notion" | "linear") => {
+    if (!apiBaseUrl) {
       return;
     }
-    if (profile.timezone) {
-      return;
-    }
-    const defaultTimezone = browserTimezone || "UTC";
-    let cancelled = false;
-    const applyDefaultTimezone = async () => {
-      const { error } = await updateUserTimezone(defaultTimezone);
-      if (cancelled || error) {
-        return;
+
+    const setBusy = provider === "notion" ? setNotionBusy : setLinearBusy;
+    setBusy(true);
+
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/oauth/${provider}/start`, {
+        method: "POST",
+        headers
+      });
+
+      const payload = (await response.json()) as { auth_url?: string };
+      if (!response.ok || !payload.auth_url) {
+        throw new Error(`failed_${provider}_start`);
       }
-      setProfile((prev) => (prev ? { ...prev, timezone: defaultTimezone } : prev));
-      setTimezoneDraft(defaultTimezone);
-    };
-    void applyDefaultTimezone();
-    return () => {
-      cancelled = true;
-    };
-  }, [profile?.id, profile?.timezone, browserTimezone]);
+      window.location.href = payload.auth_url;
+    } catch {
+      const setError = provider === "notion" ? setNotionError : setLinearError;
+      setError("Failed to start OAuth flow.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
-  const handleSaveTimezone = useCallback(async () => {
-    if (!profile?.id || timezoneSaving) {
+  const handleDisconnect = async (provider: "notion" | "linear") => {
+    if (!apiBaseUrl) {
       return;
     }
-    const value = timezoneDraft.trim() || "UTC";
+
+    const setBusy = provider === "notion" ? setNotionBusy : setLinearBusy;
+    setBusy(true);
+
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/oauth/${provider}/disconnect`, {
+        method: "DELETE",
+        headers
+      });
+
+      if (!response.ok) {
+        throw new Error(`failed_${provider}_disconnect`);
+      }
+
+      await refreshStatuses();
+    } catch {
+      const setError = provider === "notion" ? setNotionError : setLinearError;
+      setError("Failed to disconnect OAuth.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSaveTimezone = async () => {
+    if (!profile) {
+      return;
+    }
+
     setTimezoneSaving(true);
     setTimezoneMessage(null);
     try {
-      const { error } = await updateUserTimezone(value);
-      if (error) {
-        setTimezoneMessage("Failed to save timezone.");
-        return;
+      const result = await updateUserTimezone(timezoneDraft);
+      if (result.error) {
+        throw result.error;
       }
-      setProfile((prev) => (prev ? { ...prev, timezone: value } : prev));
+      setProfile((prev) => (prev ? { ...prev, timezone: timezoneDraft } : prev));
       setTimezoneMessage("Timezone saved.");
     } catch {
-      setTimezoneMessage("Network error while saving timezone.");
+      setTimezoneMessage("Failed to save timezone.");
     } finally {
       setTimezoneSaving(false);
     }
-  }, [profile?.id, timezoneDraft, timezoneSaving]);
+  };
 
-  const handleDisconnectNotion = async () => {
-    if (!apiBaseUrl || !profile?.id || disconnecting) {
+  const handleCreateApiKey = async () => {
+    if (!apiBaseUrl) {
       return;
     }
 
-    setDisconnecting(true);
+    setCreatingApiKey(true);
+    setCreatedApiKey(null);
     try {
       const headers = await getAuthHeaders();
-      const response = await fetch(
-        `${apiBaseUrl}/api/oauth/notion/disconnect`,
-        { method: "DELETE", headers }
-      );
+      const allowedTools = newApiKeyAllowedTools
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const response = await fetch(`${apiBaseUrl}/api/api-keys`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newApiKeyName.trim() || "default",
+          allowed_tools: allowedTools.length > 0 ? allowedTools : null,
+        })
+      });
       if (!response.ok) {
-        setNotionStatusError("Failed to disconnect Notion.");
-        return;
+        throw new Error("failed_create_api_key");
       }
-      setNotionStatus({ connected: false, integration: null });
-      setNotionStatusError(null);
+      const payload = (await response.json()) as { api_key?: string };
+      setCreatedApiKey(payload.api_key ?? null);
+      await Promise.all([fetchApiKeys(), fetchToolCalls()]);
     } catch {
-      setNotionStatusError("Network error while disconnecting Notion.");
+      setApiKeysError("Failed to create API key.");
     } finally {
-      setDisconnecting(false);
+      setCreatingApiKey(false);
     }
   };
 
-  const handleConnectNotion = async () => {
-    if (!apiBaseUrl || !profile?.id) {
+  const handleRevokeApiKey = async (id: number) => {
+    if (!apiBaseUrl) {
       return;
     }
-
+    setRevokingApiKeyId(id);
     try {
       const headers = await getAuthHeaders();
-      const response = await fetch(`${apiBaseUrl}/api/oauth/notion/start`, {
-        method: "POST",
-        headers,
-      });
-      const payload = await response.json();
-      if (!response.ok || !payload?.auth_url) {
-        setNotionStatusError("Failed to start Notion connection.");
-        return;
-      }
-      window.location.href = payload.auth_url;
-    } catch {
-      setNotionStatusError("Network error while starting Notion connection.");
-    }
-  };
-
-  const handleDisconnectLinear = async () => {
-    if (!apiBaseUrl || !profile?.id || linearDisconnecting) {
-      return;
-    }
-
-    setLinearDisconnecting(true);
-    try {
-      const headers = await getAuthHeaders();
-      const response = await fetch(
-        `${apiBaseUrl}/api/oauth/linear/disconnect`,
-        { method: "DELETE", headers }
-      );
-      if (!response.ok) {
-        setLinearStatusError("Failed to disconnect Linear.");
-        return;
-      }
-      setLinearStatus({ connected: false, integration: null });
-      setLinearStatusError(null);
-    } catch {
-      setLinearStatusError("Network error while disconnecting Linear.");
-    } finally {
-      setLinearDisconnecting(false);
-    }
-  };
-
-  const handleConnectLinear = async () => {
-    if (!apiBaseUrl || !profile?.id || linearConnecting) {
-      return;
-    }
-
-    setLinearConnecting(true);
-    try {
-      const headers = await getAuthHeaders();
-      const response = await fetch(`${apiBaseUrl}/api/oauth/linear/start`, {
-        method: "POST",
-        headers,
-      });
-      const payload = await response.json();
-      if (!response.ok || !payload?.auth_url) {
-        setLinearStatusError("Failed to start Linear connection.");
-        return;
-      }
-      window.location.href = payload.auth_url;
-    } catch {
-      setLinearStatusError("Network error while starting Linear connection.");
-    } finally {
-      setLinearConnecting(false);
-    }
-  };
-
-  const handleDisconnectGoogle = async () => {
-    if (!apiBaseUrl || !profile?.id || googleDisconnecting) {
-      return;
-    }
-
-    setGoogleDisconnecting(true);
-    try {
-      const headers = await getAuthHeaders();
-      const response = await fetch(
-        `${apiBaseUrl}/api/oauth/google/disconnect`,
-        { method: "DELETE", headers }
-      );
-      if (!response.ok) {
-        setGoogleStatusError("Failed to disconnect Google.");
-        return;
-      }
-      setGoogleStatus({ connected: false, integration: null });
-      setGoogleStatusError(null);
-    } catch {
-      setGoogleStatusError("Network error while disconnecting Google.");
-    } finally {
-      setGoogleDisconnecting(false);
-    }
-  };
-
-  const handleConnectGoogle = async () => {
-    if (!apiBaseUrl || !profile?.id || googleConnecting) {
-      return;
-    }
-
-    setGoogleConnecting(true);
-    try {
-      const headers = await getAuthHeaders();
-      const response = await fetch(`${apiBaseUrl}/api/oauth/google/start`, {
-        method: "POST",
-        headers,
-      });
-      const payload = await response.json();
-      if (!response.ok || !payload?.auth_url) {
-        setGoogleStatusError("Failed to start Google connection.");
-        return;
-      }
-      window.location.href = payload.auth_url;
-    } catch {
-      setGoogleStatusError("Network error while starting Google connection.");
-    } finally {
-      setGoogleConnecting(false);
-    }
-  };
-
-  const handleConnectTelegram = async () => {
-    if (!apiBaseUrl || !profile?.id || telegramConnecting) {
-      return;
-    }
-
-    setTelegramConnecting(true);
-    try {
-      const headers = await getAuthHeaders();
-      const response = await fetch(`${apiBaseUrl}/api/telegram/connect-link`, {
-        method: "POST",
-        headers,
-      });
-      const payload = await response.json();
-      if (!response.ok || !payload?.deep_link) {
-        const message =
-          payload?.error?.message ?? payload?.detail ?? "Failed to create Telegram connection link.";
-        setTelegramStatusError(message);
-        return;
-      }
-      const startCommand = typeof payload.start_command === "string" ? payload.start_command : "";
-      const botUsername = typeof payload.bot_username === "string" ? payload.bot_username : "";
-      const expiresInSeconds = typeof payload.expires_in_seconds === "number" ? payload.expires_in_seconds : 1800;
-      const tgDeepLink = typeof payload.tg_deep_link === "string" ? payload.tg_deep_link : "";
-      setTelegramConnectInfo({
-        deepLink: payload.deep_link,
-        tgDeepLink,
-        startCommand,
-        botUsername,
-        expiresInSeconds,
-      });
-      if (tgDeepLink) {
-        window.location.href = tgDeepLink;
-        window.setTimeout(() => {
-          window.open(payload.deep_link, "_blank", "noopener,noreferrer");
-        }, 500);
-      } else {
-        window.open(payload.deep_link, "_blank", "noopener,noreferrer");
-      }
-      setTelegramStatusError(null);
-      startTelegramStatusPolling();
-    } catch {
-      setTelegramStatusError("Network error while starting Telegram connection.");
-    } finally {
-      setTelegramConnecting(false);
-    }
-  };
-
-  const handleDisconnectTelegram = async () => {
-    if (!apiBaseUrl || !profile?.id || telegramDisconnecting) {
-      return;
-    }
-
-    setTelegramDisconnecting(true);
-    try {
-      const headers = await getAuthHeaders();
-      const response = await fetch(`${apiBaseUrl}/api/telegram/disconnect`, {
+      const response = await fetch(`${apiBaseUrl}/api/api-keys/${id}`, {
         method: "DELETE",
-        headers,
+        headers
       });
       if (!response.ok) {
-        setTelegramStatusError("Failed to disconnect Telegram.");
-        return;
+        throw new Error("failed_revoke_api_key");
       }
-      setTelegramStatus({ connected: false, telegram_chat_id: null, telegram_username: null });
-      setTelegramConnectInfo(null);
-      setTelegramStatusError(null);
-      await fetchTelegramStatus();
+      await Promise.all([fetchApiKeys(), fetchToolCalls()]);
     } catch {
-      setTelegramStatusError("Network error while disconnecting Telegram.");
+      setApiKeysError("Failed to revoke API key.");
     } finally {
-      setTelegramDisconnecting(false);
+      setRevokingApiKeyId(null);
+    }
+  };
+
+  const handleUpdateApiKeyAllowedTools = async (id: number) => {
+    if (!apiBaseUrl) {
+      return;
+    }
+    setUpdatingApiKeyId(id);
+    try {
+      const headers = await getAuthHeaders();
+      const raw = apiKeyAllowedDraft[id] ?? "";
+      const allowedTools = raw
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const response = await fetch(`${apiBaseUrl}/api/api-keys/${id}`, {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          allowed_tools: allowedTools.length > 0 ? allowedTools : null,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error("failed_update_api_key");
+      }
+      await fetchApiKeys();
+    } catch {
+      setApiKeysError("Failed to update API key allowed tools.");
+    } finally {
+      setUpdatingApiKeyId(null);
     }
   };
 
   const copyText = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      setTelegramStatusError("Copied. Paste and run the command in Telegram.");
     } catch {
-      setTelegramStatusError("Clipboard copy failed. Please copy manually.");
+      // ignore clipboard errors in unsupported environments
     }
   };
 
   const handleLogout = async () => {
-    if (loggingOut) {
-      return;
-    }
     setLoggingOut(true);
-    try {
-      await supabase.auth.signOut();
-      router.replace("/");
-    } finally {
-      setLoggingOut(false);
-    }
+    await supabase.auth.signOut();
+    router.replace("/");
+    setLoggingOut(false);
   };
 
   if (loading) {
-    return (
-      <main className="relative min-h-screen overflow-hidden bg-[#050506] text-[#f5f5f5]">
-        <div className="pointer-events-none absolute inset-0 opacity-70">
-          <div className="absolute inset-0 bg-[linear-gradient(to_right,#1a1a1c_1px,transparent_1px),linear-gradient(to_bottom,#1a1a1c_1px,transparent_1px)] bg-[size:56px_56px]" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,#1d2430_0px,transparent_380px),radial-gradient(circle_at_84%_8%,#2a1f2a_0px,transparent_340px),radial-gradient(circle_at_50%_82%,#122025_0px,transparent_420px)]" />
-        </div>
-        <div className="relative mx-auto max-w-[1080px] px-6 py-16">
-          <p className="text-sm text-[#a5adbc]">Loading dashboard...</p>
-        </div>
-      </main>
-    );
+    return <main className="mx-auto max-w-5xl p-8">Loading dashboard...</main>;
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#050506] text-[#f5f5f5]">
-      <div className="pointer-events-none absolute inset-0 opacity-70">
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#1a1a1c_1px,transparent_1px),linear-gradient(to_bottom,#1a1a1c_1px,transparent_1px)] bg-[size:56px_56px]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,#1d2430_0px,transparent_380px),radial-gradient(circle_at_84%_8%,#2a1f2a_0px,transparent_340px),radial-gradient(circle_at_50%_82%,#122025_0px,transparent_420px)]" />
-      </div>
-      <div className="relative mx-auto max-w-[1080px] px-6 py-14">
-      <header className="rounded-2xl border border-[#2a2a33] bg-[#111116] p-7 shadow-sm">
-        <p className="font-mono text-xs uppercase tracking-wider text-[#8d96a8]">metel</p>
-        <h1 className="mt-2 text-4xl font-semibold tracking-tight text-[#f7f8fa]">Dashboard</h1>
-        <p className="mt-2 text-sm text-[#a5adbc]">
-          Control messenger links, service integrations, and autonomous agent logs.
-        </p>
+    <main className="mx-auto max-w-5xl p-8">
+      <header className="mb-8 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
+          <p className="text-sm text-gray-600">OAuth connections and profile settings for MCP Gateway.</p>
+        </div>
+        <button
+          type="button"
+          onClick={handleLogout}
+          disabled={loggingOut}
+          className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+        >
+          {loggingOut ? "Signing out..." : "Sign out"}
+        </button>
       </header>
 
-      <section className="mt-6 rounded-2xl border border-[#2a2a33] bg-[#111116] p-6 shadow-sm">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold text-[#f7f8fa]">User</h2>
+      <section className="mb-8 rounded-xl border border-gray-200 p-5">
+        <h2 className="text-base font-semibold text-gray-900">Profile</h2>
+        <p className="mt-1 text-sm text-gray-600">{profile?.email ?? "Unknown user"}</p>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <select
+            value={timezoneDraft}
+            onChange={(event) => setTimezoneDraft(event.target.value)}
+            className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+          >
+            {timezoneOptions.map((tz) => (
+              <option key={tz} value={tz}>
+                {tz}
+              </option>
+            ))}
+          </select>
           <button
             type="button"
-            onClick={() => {
-              void handleLogout();
-            }}
-            disabled={loggingOut}
-            className="rounded-md border border-[#353540] px-3 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
+            onClick={handleSaveTimezone}
+            disabled={timezoneSaving}
+            className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
           >
-            {loggingOut ? "Logging out..." : "Logout"}
+            {timezoneSaving ? "Saving..." : "Save timezone"}
+          </button>
+          <span className="text-xs text-gray-500">Browser: {browserTimezone}</span>
+        </div>
+        {timezoneMessage ? <p className="mt-2 text-sm text-gray-700">{timezoneMessage}</p> : null}
+      </section>
+
+      <section className="mb-8 rounded-xl border border-gray-200 p-5">
+        <h2 className="text-base font-semibold text-gray-900">API Keys</h2>
+        <p className="mt-1 text-sm text-gray-600">Use API keys for MCP authentication (`Authorization: Bearer metel_xxx`).</p>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <input
+            value={newApiKeyName}
+            onChange={(event) => setNewApiKeyName(event.target.value)}
+            placeholder="Key name"
+            className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+          />
+          <input
+            value={newApiKeyAllowedTools}
+            onChange={(event) => setNewApiKeyAllowedTools(event.target.value)}
+            placeholder="Allowed tools (comma separated)"
+            className="min-w-[260px] rounded-md border border-gray-300 px-3 py-2 text-sm"
+          />
+          <button
+            type="button"
+            onClick={() => void handleCreateApiKey()}
+            disabled={creatingApiKey}
+            className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+          >
+            {creatingApiKey ? "Creating..." : "Create API key"}
           </button>
         </div>
-        <div className="mt-4 grid gap-4 sm:grid-cols-4">
-          <div>
-            <p className="text-xs text-[#8d96a8]">Email</p>
-            <p className="mt-1 text-sm text-[#edf0f5]">{profile?.email ?? "-"}</p>
-          </div>
-          <div>
-            <p className="text-xs text-[#8d96a8]">User ID</p>
-            <p className="mt-1 break-all text-sm text-[#edf0f5]">{profile?.id ?? "-"}</p>
-          </div>
-          <div>
-            <p className="text-xs text-[#8d96a8]">Created</p>
-            <p className="mt-1 text-sm text-[#edf0f5]">
-              {profile?.created_at ? new Date(profile.created_at).toLocaleString() : "-"}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-[#8d96a8]">Timezone</p>
-            <div className="mt-1 flex items-center gap-2">
-              <select
-                value={timezoneDraft}
-                onChange={(event) => {
-                  setTimezoneDraft(event.target.value);
-                  setTimezoneMessage(null);
-                }}
-                className="w-full rounded-md border border-[#353540] bg-[#0f1015] px-2 py-2 text-sm text-[#edf0f5]"
-              >
-                {timezoneOptionValues.map((timezone) => (
-                  <option key={timezone} value={timezone}>
-                    {timezone}
-                  </option>
-                ))}
-              </select>
+        <p className="mt-2 text-xs text-gray-500">Leave allowed tools empty to allow all Phase 1 tools.</p>
+
+        {createdApiKey ? (
+          <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3">
+            <p className="text-xs font-medium text-amber-900">Copy now. This key is shown only once.</p>
+            <div className="mt-2 flex items-center gap-2">
+              <code className="block flex-1 overflow-x-auto rounded bg-white px-2 py-1 text-xs text-gray-800">{createdApiKey}</code>
               <button
                 type="button"
-                onClick={() => {
-                  void handleSaveTimezone();
-                }}
-                disabled={timezoneSaving || !profile?.id || timezoneDraft === (profile?.timezone ?? browserTimezone)}
-                className="rounded-md border border-[#353540] px-3 py-2 text-xs font-medium text-[#edf0f5] disabled:opacity-50"
+                onClick={() => void copyText(createdApiKey)}
+                className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-800 hover:bg-gray-100"
               >
-                {timezoneSaving ? "Saving..." : "Save"}
+                Copy
               </button>
             </div>
-            <p className="mt-1 text-xs text-[#8d96a8]">Default: browser timezone ({browserTimezone})</p>
-            {timezoneMessage ? <p className="mt-1 text-xs text-[#a5adbc]">{timezoneMessage}</p> : null}
+          </div>
+        ) : null}
+
+        {apiKeysError ? <p className="mt-2 text-xs text-red-600">{apiKeysError}</p> : null}
+        {apiKeysLoading ? <p className="mt-2 text-xs text-gray-500">Loading keys...</p> : null}
+
+        <div className="mt-4 space-y-2">
+          {apiKeys.length === 0 ? (
+            <p className="text-xs text-gray-500">No API keys yet.</p>
+          ) : (
+            apiKeys.map((key) => (
+              <article key={key.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 p-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">{key.name}</p>
+                  <p className="text-xs text-gray-600">
+                    {key.key_prefix}... · {key.is_active ? "active" : "revoked"}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <input
+                      value={apiKeyAllowedDraft[key.id] ?? ""}
+                      onChange={(event) =>
+                        setApiKeyAllowedDraft((prev) => ({
+                          ...prev,
+                          [key.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="Allowed tools (comma separated)"
+                      className="min-w-[280px] rounded-md border border-gray-300 px-2 py-1 text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleUpdateApiKeyAllowedTools(key.id)}
+                      disabled={updatingApiKeyId === key.id}
+                      className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+                    >
+                      {updatingApiKeyId === key.id ? "Saving..." : "Save allowed tools"}
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500">Empty value means all Phase 1 tools are allowed.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleRevokeApiKey(key.id)}
+                  disabled={!key.is_active || revokingApiKeyId === key.id}
+                  className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+                >
+                  {revokingApiKeyId === key.id ? "Revoking..." : "Revoke"}
+                </button>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="mb-8 rounded-xl border border-gray-200 p-5">
+        <h2 className="text-base font-semibold text-gray-900">MCP Quick Guide</h2>
+        <p className="mt-1 text-sm text-gray-600">Use your API key in `Authorization: Bearer ...` and call JSON-RPC endpoints.</p>
+        <div className="mt-3 space-y-3">
+          <div>
+            <p className="text-xs font-medium text-gray-700">1) List tools</p>
+            <pre className="mt-1 overflow-x-auto rounded bg-gray-50 p-3 text-[11px] text-gray-800">{`curl -X POST "$API_BASE_URL/mcp/list_tools" \\
+  -H "Authorization: Bearer metel_xxx" \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":"1","method":"list_tools"}'`}</pre>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-gray-700">2) Call tool</p>
+            <pre className="mt-1 overflow-x-auto rounded bg-gray-50 p-3 text-[11px] text-gray-800">{`curl -X POST "$API_BASE_URL/mcp/call_tool" \\
+  -H "Authorization: Bearer metel_xxx" \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":"2","method":"call_tool","params":{"name":"linear_list_issues","arguments":{"first":3}}}'`}</pre>
           </div>
         </div>
       </section>
 
-      <section className="mt-6 rounded-2xl border border-[#2a2a33] bg-[#111116] p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-[#f7f8fa]">Messenger Connection</h2>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <article className="rounded-xl border border-[#2a2a33] bg-[#15151b] p-4">
-            <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 text-base font-semibold text-[#edf0f5]">
-                <ServiceLogo src="/logos/telegram.svg" alt="Telegram" />
-                Telegram
-              </p>
-              <p className="text-xs text-[#a5adbc]">{telegramStatus?.connected ? "Connected" : "Not connected"}</p>
-            </div>
-            <p className="mt-2 text-sm text-[#bcc2cf]">
-              Account: {telegramStatus?.telegram_username ? `@${telegramStatus.telegram_username}` : "-"}
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                if (telegramStatus?.connected) {
-                  void handleDisconnectTelegram();
-                  return;
-                }
-                void handleConnectTelegram();
-              }}
-              disabled={!apiBaseUrl || !profile?.id || telegramConnecting || telegramDisconnecting}
-              className="mt-3 inline-block rounded-md border border-[#353540] bg-[#111116] px-4 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
-            >
-              {telegramStatus?.connected
-                ? (telegramDisconnecting ? "Disconnecting..." : "Disconnect")
-                : (telegramConnecting ? "Generating link..." : "Connect")}
-            </button>
-          </article>
-
-          <article className="rounded-xl border border-[#2a2a33] bg-[#15151b] p-4 opacity-60">
-            <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 text-base font-semibold text-[#edf0f5]">
-                <ServiceLogo src="/logos/slack.svg" alt="Slack" />
-                Slack
-              </p>
-              <p className="text-xs text-[#a5adbc]">Disabled</p>
-            </div>
-            <p className="mt-2 text-sm text-[#bcc2cf]">Slack connection is not enabled in this prototype.</p>
-            <button
-              type="button"
-              disabled
-              className="mt-3 inline-block rounded-md border border-[#353540] bg-[#111116] px-4 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
-            >
-              Connect
-            </button>
-          </article>
-        </div>
-        {telegramStatusError ? <p className="mt-3 text-sm text-amber-300">{telegramStatusError}</p> : null}
-        {!apiBaseUrl || !profile?.id ? (
-          <p className="mt-3 text-sm text-amber-300">
-            Set NEXT_PUBLIC_API_BASE_URL to enable messenger connection.
-          </p>
-        ) : null}
-        {telegramConnectInfo && !telegramStatus?.connected ? (
-          <div className="mt-4 rounded-lg border border-[#2a2a33] bg-[#15151b] p-4">
-            <p className="text-sm text-[#bcc2cf]">
-              If Start does not respond in Telegram, copy and send this command manually to{" "}
-              {telegramConnectInfo.botUsername ? `@${telegramConnectInfo.botUsername}` : "your bot"}.
-            </p>
-            <p className="font-mono mt-2 break-all rounded border border-[#2a2a33] bg-[#111116] p-2 text-xs text-[#bcc2cf]">
-              {telegramConnectInfo.startCommand || "(no start command)"}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (telegramConnectInfo.startCommand) {
-                    void copyText(telegramConnectInfo.startCommand);
-                  }
-                }}
-                className="inline-block rounded-md border border-[#353540] px-3 py-2 text-sm font-medium text-[#edf0f5]"
-              >
-                Copy Start Command
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (telegramConnectInfo.tgDeepLink) {
-                    window.location.href = telegramConnectInfo.tgDeepLink;
-                    window.setTimeout(() => {
-                      window.open(telegramConnectInfo.deepLink, "_blank", "noopener,noreferrer");
-                    }, 500);
-                    return;
-                  }
-                  window.open(telegramConnectInfo.deepLink, "_blank", "noopener,noreferrer");
-                }}
-                className="inline-block rounded-md border border-[#353540] px-3 py-2 text-sm font-medium text-[#edf0f5]"
-              >
-                Open Telegram Again
-              </button>
-            </div>
-            <p className="mt-2 text-xs text-[#a5adbc]">
-              {telegramPolling ? "Auto-checking connection status..." : "Auto-check stopped. Re-run connect if needed."}
-            </p>
-            <p className="mt-1 text-xs text-[#8d96a8]">
-              Expires in about {Math.max(1, Math.floor(telegramConnectInfo.expiresInSeconds / 60))} min
-            </p>
-          </div>
-        ) : null}
-      </section>
-
-      <section className="mt-6 rounded-2xl border border-[#2a2a33] bg-[#111116] p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-[#f7f8fa]">Service Connection</h2>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <article className="rounded-xl border border-[#2a2a33] bg-[#15151b] p-4">
-            <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 text-base font-semibold text-[#edf0f5]">
-                <ServiceLogo src="/logos/notion.svg" alt="Notion" />
-                Notion
-              </p>
-              <p className="text-xs text-[#a5adbc]">{notionStatus?.connected ? "Connected" : "Not connected"}</p>
-            </div>
-            <p className="mt-2 text-sm text-[#bcc2cf]">
-              Workspace: {notionStatus?.integration?.workspace_name ?? "-"}
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                if (notionStatus?.connected) {
-                  void handleDisconnectNotion();
-                  return;
-                }
-                void handleConnectNotion();
-              }}
-              disabled={!apiBaseUrl || !profile?.id || disconnecting}
-              className="mt-3 inline-block rounded-md border border-[#353540] bg-[#111116] px-4 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
-            >
-              {notionStatus?.connected ? (disconnecting ? "Disconnecting..." : "Disconnect") : "Connect"}
-            </button>
-          </article>
-
-          <article className="rounded-xl border border-[#2a2a33] bg-[#15151b] p-4">
-            <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 text-base font-semibold text-[#edf0f5]">
-                <ServiceLogo src="/logos/linear.svg" alt="Linear" />
-                Linear
-              </p>
-              <p className="text-xs text-[#a5adbc]">{linearStatus?.connected ? "Connected" : "Not connected"}</p>
-            </div>
-            <p className="mt-2 text-sm text-[#bcc2cf]">
-              User: {linearStatus?.integration?.workspace_name ?? "-"}
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                if (linearStatus?.connected) {
-                  void handleDisconnectLinear();
-                  return;
-                }
-                void handleConnectLinear();
-              }}
-              disabled={!apiBaseUrl || !profile?.id || linearConnecting || linearDisconnecting}
-              className="mt-3 inline-block rounded-md border border-[#353540] bg-[#111116] px-4 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
-            >
-              {linearStatus?.connected
-                ? (linearDisconnecting ? "Disconnecting..." : "Disconnect")
-                : (linearConnecting ? "Connecting..." : "Connect")}
-            </button>
-          </article>
-
-          <article className="rounded-xl border border-[#2a2a33] bg-[#15151b] p-4">
-            <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 text-base font-semibold text-[#edf0f5]">
-                <ServiceLogo src="/logos/google.svg" alt="Google" />
-                Google Calendar
-              </p>
-              <p className="text-xs text-[#a5adbc]">{googleStatus?.connected ? "Connected" : "Not connected"}</p>
-            </div>
-            <p className="mt-2 text-sm text-[#bcc2cf]">
-              Workspace: {googleStatus?.integration?.workspace_name ?? "-"}
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                if (googleStatus?.connected) {
-                  void handleDisconnectGoogle();
-                  return;
-                }
-                void handleConnectGoogle();
-              }}
-              disabled={!apiBaseUrl || !profile?.id || googleConnecting || googleDisconnecting}
-              className="mt-3 inline-block rounded-md border border-[#353540] bg-[#111116] px-4 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
-            >
-              {googleStatus?.connected
-                ? (googleDisconnecting ? "Disconnecting..." : "Disconnect")
-                : (googleConnecting ? "Connecting..." : "Connect")}
-            </button>
-          </article>
-
-          <article className="rounded-xl border border-[#2a2a33] bg-[#15151b] p-4 opacity-60">
-            <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 text-base font-semibold text-[#edf0f5]">
-                <ServiceLogo src="/logos/spotify.svg" alt="Spotify" />
-                Spotify
-              </p>
-              <p className="text-xs text-[#a5adbc]">Disabled</p>
-            </div>
-            <p className="mt-2 text-sm text-[#bcc2cf]">
-              Spotify integration is disabled due to current API limit.
-            </p>
-            <button
-              type="button"
-              disabled
-              className="mt-3 inline-block rounded-md border border-[#353540] bg-[#111116] px-4 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
-            >
-              Connect
-            </button>
-          </article>
-        </div>
-        {notionStatusError ? <p className="mt-3 text-sm text-amber-300">{notionStatusError}</p> : null}
-        {linearStatusError ? <p className="mt-3 text-sm text-amber-300">{linearStatusError}</p> : null}
-        {googleStatusError ? <p className="mt-3 text-sm text-amber-300">{googleStatusError}</p> : null}
-        {!apiBaseUrl || !profile?.id ? (
-          <p className="mt-3 text-sm text-amber-300">
-            Set NEXT_PUBLIC_API_BASE_URL to enable service connection.
-          </p>
-        ) : null}
-      </section>
-
-      <section className="mt-6 rounded-2xl border border-[#2a2a33] bg-[#111116] p-6 shadow-sm">
+      <section className="mb-8 rounded-xl border border-gray-200 p-5">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold text-[#f7f8fa]">Execution Logs (latest 20)</h2>
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={commandLogStatusFilter}
-              onChange={(event) => {
-                setCommandLogStatusFilter(event.target.value as "all" | "success" | "error");
-              }}
-              className="rounded-md border border-[#353540] bg-[#111116] px-2 py-2 text-sm text-[#edf0f5]"
-            >
-              <option value="all">Status: All</option>
-              <option value="success">Status: Success</option>
-              <option value="error">Status: Error</option>
-            </select>
-            <select
-              value={commandLogCommandFilter}
-              onChange={(event) => {
-                setCommandLogCommandFilter(event.target.value);
-              }}
-              className="rounded-md border border-[#353540] bg-[#111116] px-2 py-2 text-sm text-[#edf0f5]"
-            >
-              <option value="all">Command: All</option>
-              {commandFilterOptions.map((commandName) => (
-                <option key={commandName} value={commandName}>
-                  {commandName}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => {
-                void fetchCommandLogs();
-              }}
-              disabled={commandLogsLoading}
-              className="rounded-md border border-[#353540] bg-[#111116] px-3 py-2 text-sm font-medium text-[#edf0f5] disabled:opacity-50"
-            >
-              {commandLogsLoading ? "Refreshing..." : "Refresh"}
-            </button>
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">MCP Usage</h2>
+            <p className="mt-1 text-sm text-gray-600">Recent tool calls and 24h execution summary.</p>
           </div>
+          <button
+            type="button"
+            onClick={() => void fetchToolCalls()}
+            disabled={toolCallsLoading}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+          >
+            Refresh
+          </button>
         </div>
-        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-md border border-[#2a2a33] bg-[#15151b] p-3">
-            <p className="text-xs text-[#a5adbc]">Agent Logs</p>
-            <p className="mt-1 text-sm font-semibold text-[#edf0f5]">{agentTelemetry.total}</p>
-          </div>
-          <div className="rounded-md border border-[#2a2a33] bg-[#15151b] p-3">
-            <p className="text-xs text-[#a5adbc]">Execution Mode</p>
-            <p className="mt-1 text-sm font-semibold text-[#edf0f5]">
-              auto {agentTelemetry.autonomous} / rule {agentTelemetry.rule}
-            </p>
-          </div>
-          <div className="rounded-md border border-[#2a2a33] bg-[#15151b] p-3">
-            <p className="text-xs text-[#a5adbc]">Plan Source</p>
-            <p className="mt-1 text-sm font-semibold text-[#edf0f5]">
-              llm {agentTelemetry.llmPlan} / rule {agentTelemetry.rulePlan}
-            </p>
-          </div>
-          <div className="rounded-md border border-[#2a2a33] bg-[#15151b] p-3">
-            <p className="text-xs text-[#a5adbc]">Success / Error</p>
-            <p className="mt-1 text-sm font-semibold text-[#edf0f5]">
-              {agentTelemetry.success} / {agentTelemetry.error}
-            </p>
-          </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <select
+            value={toolCallStatusFilter}
+            onChange={(event) => setToolCallStatusFilter(event.target.value as "all" | "success" | "fail")}
+            className="rounded-md border border-gray-300 px-3 py-2 text-xs"
+          >
+            <option value="all">All status</option>
+            <option value="success">Success</option>
+            <option value="fail">Fail</option>
+          </select>
+          <input
+            value={toolCallNameFilter}
+            onChange={(event) => setToolCallNameFilter(event.target.value)}
+            placeholder="Filter by tool name (exact)"
+            className="rounded-md border border-gray-300 px-3 py-2 text-xs"
+          />
+          <input
+            type="datetime-local"
+            value={toolCallFromFilter}
+            onChange={(event) => setToolCallFromFilter(event.target.value)}
+            className="rounded-md border border-gray-300 px-3 py-2 text-xs"
+          />
+          <input
+            type="datetime-local"
+            value={toolCallToFilter}
+            onChange={(event) => setToolCallToFilter(event.target.value)}
+            className="rounded-md border border-gray-300 px-3 py-2 text-xs"
+          />
+          <button
+            type="button"
+            onClick={() => void fetchToolCalls()}
+            disabled={toolCallsLoading}
+            className="rounded-md border border-gray-300 px-3 py-2 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+          >
+            Apply
+          </button>
         </div>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <div className="rounded-md border border-[#2a2a33] bg-[#15151b] p-3">
-            <p className="text-xs text-[#a5adbc]">Autonomous Success Rate (target 80%+)</p>
-            <p className="mt-1 text-sm font-semibold text-[#edf0f5]">
-              {(agentTelemetry.autonomousSuccessRate * 100).toFixed(1)}%
-              {" "}
-              <span
-                className={
-                  agentTelemetry.autonomousSuccessRate >= 0.8
-                    ? "text-emerald-700"
-                    : "text-amber-300"
-                }
-              >
-                {agentTelemetry.autonomousSuccessRate >= 0.8 ? "PASS" : "CHECK"}
-              </span>
-            </p>
-            <p className="mt-1 text-xs text-[#a5adbc]">
-              autonomous success {agentTelemetry.autonomousSuccess} / {agentTelemetry.autonomous}
-            </p>
-          </div>
-          <div className="rounded-md border border-[#2a2a33] bg-[#15151b] p-3">
-            <p className="text-xs text-[#a5adbc]">Fallback Rate (target 20% or less)</p>
-            <p className="mt-1 text-sm font-semibold text-[#edf0f5]">
-              {(agentTelemetry.fallbackRate * 100).toFixed(1)}%
-              {" "}
-              <span
-                className={
-                  agentTelemetry.fallbackRate <= 0.2
-                    ? "text-emerald-700"
-                    : "text-amber-300"
-                }
-              >
-                {agentTelemetry.fallbackRate <= 0.2 ? "PASS" : "CHECK"}
-              </span>
-            </p>
-            <p className="mt-1 text-xs text-[#a5adbc]">
-              fallback {agentTelemetry.fallbackCount} / {agentTelemetry.total}
-            </p>
-          </div>
+
+        <div className="mt-4 grid gap-2 sm:grid-cols-3">
+          <article className="rounded-lg border border-gray-200 p-3">
+            <p className="text-xs text-gray-500">Calls (24h)</p>
+            <p className="mt-1 text-xl font-semibold text-gray-900">{toolCallsSummary?.calls_24h ?? 0}</p>
+          </article>
+          <article className="rounded-lg border border-gray-200 p-3">
+            <p className="text-xs text-gray-500">Success (24h)</p>
+            <p className="mt-1 text-xl font-semibold text-emerald-700">{toolCallsSummary?.success_24h ?? 0}</p>
+          </article>
+          <article className="rounded-lg border border-gray-200 p-3">
+            <p className="text-xs text-gray-500">Fail (24h)</p>
+            <p className="mt-1 text-xl font-semibold text-rose-700">{toolCallsSummary?.fail_24h ?? 0}</p>
+          </article>
         </div>
-        {agentTelemetry.fallbackCount > 0 ? (
-          <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
-            <p className="text-xs font-medium text-amber-300">
-              autonomous fallback count: {agentTelemetry.fallbackCount}
-            </p>
-            <p className="mt-1 break-all text-xs text-amber-300">
-              top reasons:{" "}
-              {agentTelemetry.topFallbackReasons.map(([reason, count]) => `${reason}(${count})`).join(", ")}
-            </p>
-          </div>
-        ) : null}
-        {agentTelemetry.verificationCount > 0 ? (
-          <div className="mt-3 rounded-md border border-rose-500/40 bg-rose-500/10 p-3">
-            <p className="text-xs font-medium text-rose-300">
-              verification reason records: {agentTelemetry.verificationCount}
-            </p>
-            <p className="mt-1 break-all text-xs text-rose-300">
-              top reasons:{" "}
-              {agentTelemetry.topVerificationReasons.map(([reason, count]) => `${reason}(${count})`).join(", ")}
-            </p>
-          </div>
-        ) : null}
-        {commandLogsError ? <p className="mt-3 text-sm text-amber-300">{commandLogsError}</p> : null}
-        <p className="mt-3 text-xs text-[#a5adbc]">
-          Showing: {filteredCommandLogs.length} / {commandLogs.length}
-        </p>
-        {filteredCommandLogs.length > 0 ? (
-          <ul className="mt-4 space-y-2">
-            {filteredCommandLogs.map((log) => (
-              <li key={log.id} className="overflow-hidden rounded-md border border-[#2a2a33] bg-[#15151b] p-3">
-                <p className="text-sm font-medium text-[#edf0f5]">
-                  {log.command} · {log.status}
-                </p>
-                <p className="mt-1 text-xs text-[#a5adbc]">
-                  {new Date(log.created_at).toLocaleString()} · {log.channel}
-                </p>
-                {(log.plan_source || log.execution_mode) ? (
-                  <p className="mt-1 break-all text-xs text-[#a5adbc]">
-                    mode: {log.plan_source || "-"} / {log.execution_mode || "-"}
-                    {log.autonomous_fallback_reason ? ` · fallback=${log.autonomous_fallback_reason}` : ""}
-                    {log.verification_reason ? ` · verify=${log.verification_reason}` : ""}
-                  </p>
-                ) : null}
-                {(log.llm_provider || log.llm_model) ? (
-                  <p className="mt-1 break-all text-xs text-[#a5adbc]">
-                    llm: {log.llm_provider || "-"} / {log.llm_model || "-"}
-                  </p>
-                ) : null}
-                {log.error_code ? (
-                  <p className="mt-1 break-all text-xs text-amber-300">error_code: {log.error_code}</p>
-                ) : null}
-                {log.detail ? (
-                  <p className="mt-1 whitespace-pre-wrap break-all text-xs text-[#a5adbc]">detail: {log.detail}</p>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-3 text-sm text-[#a5adbc]">No logs match the current filters.</p>
-        )}
+
+        {toolCallsError ? <p className="mt-2 text-xs text-red-600">{toolCallsError}</p> : null}
+        {toolCallsLoading ? <p className="mt-2 text-xs text-gray-500">Loading usage...</p> : null}
+
+        <div className="mt-4 space-y-2">
+          {toolCalls.length === 0 ? (
+            <p className="text-xs text-gray-500">No tool call logs yet.</p>
+          ) : (
+            toolCalls.map((call) => (
+              <article key={call.id} className="rounded-lg border border-gray-200 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{call.tool_name}</p>
+                    <p className="text-xs text-gray-600">
+                      {call.api_key?.name ?? "unknown key"} ({call.api_key?.key_prefix ?? "n/a"}...)
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className={`text-xs font-medium ${call.status === "success" ? "text-emerald-700" : "text-rose-700"}`}>
+                      {call.status}
+                    </p>
+                    <p className="text-xs text-gray-500">{call.latency_ms} ms</p>
+                  </div>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">{new Date(call.created_at).toLocaleString()}</p>
+                {call.error_code ? <p className="mt-1 text-xs text-rose-700">error: {call.error_code}</p> : null}
+              </article>
+            ))
+          )}
+        </div>
       </section>
-      </div>
+
+      <section className="rounded-xl border border-gray-200 p-5">
+        <h2 className="text-base font-semibold text-gray-900">OAuth Connections</h2>
+        <p className="mt-1 text-sm text-gray-600">Connect Notion and Linear to expose MCP tools.</p>
+
+        <div className="mt-4 space-y-3">
+          <ServiceRow
+            name="Notion"
+            logo="/logos/notion.svg"
+            status={notionStatus}
+            error={notionError}
+            busy={notionBusy}
+            onConnect={() => void handleOAuthStart("notion")}
+            onDisconnect={() => void handleDisconnect("notion")}
+          />
+          <ServiceRow
+            name="Linear"
+            logo="/logos/linear.svg"
+            status={linearStatus}
+            error={linearError}
+            busy={linearBusy}
+            onConnect={() => void handleOAuthStart("linear")}
+            onDisconnect={() => void handleDisconnect("linear")}
+          />
+        </div>
+      </section>
     </main>
+  );
+}
+
+function ServiceRow({
+  name,
+  logo,
+  status,
+  error,
+  busy,
+  onConnect,
+  onDisconnect
+}: {
+  name: string;
+  logo: string;
+  status: OAuthStatus;
+  error: string | null;
+  busy: boolean;
+  onConnect: () => void;
+  onDisconnect: () => void;
+}) {
+  return (
+    <article className="rounded-lg border border-gray-200 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <ServiceLogo src={logo} alt={name} />
+          <div>
+            <p className="text-sm font-medium text-gray-900">{name}</p>
+            <p className="text-xs text-gray-600">{status?.connected ? "Connected" : "Not connected"}</p>
+          </div>
+        </div>
+
+        {status?.connected ? (
+          <button
+            type="button"
+            onClick={onDisconnect}
+            disabled={busy}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+          >
+            Disconnect
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onConnect}
+            disabled={busy}
+            className="rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+          >
+            Connect
+          </button>
+        )}
+      </div>
+
+      {status?.integration?.workspace_name ? (
+        <p className="mt-2 text-xs text-gray-500">Workspace: {status.integration.workspace_name}</p>
+      ) : null}
+
+      {error ? <p className="mt-2 text-xs text-red-600">{error}</p> : null}
+    </article>
   );
 }

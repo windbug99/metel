@@ -1,5 +1,9 @@
 # S9 Follow-up: `linear issue -> notion create` 간헐 `not_found`
 
+> Legacy notice (2026-03-02):
+> 이 문서는 Telegram/Stage6 운영 맥락의 이슈 추적 문서입니다.
+> 현재 제품 실행 경로는 MCP Gateway 중심이며 기준 문서는 `docs/overhaul-20260302.md`입니다.
+
 ## 배경
 - 시나리오: `linear OPT-47 이슈로 notion에 페이지 생성하세요`
 - 현상: 간헐적으로 `error_code=not_found` 발생
@@ -25,4 +29,3 @@
 3. 테스트 보강
 - `backend/tests/test_orchestrator_v2.py`의 fallback 케이스 유지
 - 간헐 실패 패턴(검색 결과 0건/지연)을 모의하는 케이스 추가
-

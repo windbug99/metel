@@ -14,14 +14,8 @@ else
 fi
 
 "$PYTHON_BIN" -m pytest -q \
-  tests/test_telegram_route_helpers.py \
-  tests/test_telegram_command_mapping.py \
-  tests/test_agent_loop.py \
-  tests/test_agent_executor.py \
-  tests/test_planner_llm.py \
-  tests/test_slot_schema.py \
+  tests/test_mcp_routes.py \
+  tests/test_api_keys_route.py \
+  tests/test_tool_calls_route.py \
   tests/test_tool_runner.py \
-  tests/test_agent_task_decomposition.py \
-  tests/test_operational_acceptance.py \
-  tests/test_registry_extensibility.py \
-  tests/test_operational_acceptance_e2e_mock.py
+  tests/test_registry_extensibility.py

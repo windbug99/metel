@@ -1,5 +1,9 @@
 # Stage 6 E2E Test Sheet
 
+> Legacy notice (2026-03-02):
+> 이 문서는 Telegram 기반 Stage6 전환 검증 시트입니다.
+> 현재 MCP Gateway Phase 1 검증 기준은 `docs/overhaul-20260302.md`를 참고하세요.
+
 목적:
 - Staging에서 V2 전환 전/중에 Telegram 실사용 문장을 검증하고 결과를 기록한다.
 

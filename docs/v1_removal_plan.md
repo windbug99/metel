@@ -1,5 +1,9 @@
 # V1 Removal Plan (Draft)
 
+> Legacy notice (2026-03-02):
+> 본 문서는 V1/V2 전환 시점의 과거 제거 계획 기록입니다.
+> 현재 기준 실행 경로는 MCP Gateway Phase 1이며 `docs/overhaul-20260302.md`를 따릅니다.
+
 ## 목표
 - Skill V2 100% 운영 전환 이후 V1 라우팅/실행 경로를 제거해 코드 복잡도를 낮춘다.
 

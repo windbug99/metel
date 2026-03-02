@@ -7,10 +7,11 @@ from html import unescape
 from json import JSONDecodeError
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal
 
 import httpx
 from fastapi import HTTPException
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 from supabase import create_client
 
 from agent.registry import ToolDefinition, load_registry
@@ -257,50 +258,80 @@ def _split_idempotency_key(payload: dict[str, Any]) -> tuple[dict[str, Any], str
     return body, key
 
 
-def _validate_type(value: Any, expected: str) -> bool:
+def _schema_to_python_type(spec: dict[str, Any]):
+    expected = spec.get("type")
+    enum_values = spec.get("enum")
+    if isinstance(enum_values, list) and enum_values:
+        # pydantic literal handles enum constraints with clear error categories.
+        return Literal[tuple(enum_values)]  # type: ignore[misc,valid-type]
     if expected == "string":
-        return isinstance(value, str)
+        return str
     if expected == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
+        return int
     if expected == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
+        return float
     if expected == "boolean":
-        return isinstance(value, bool)
+        return bool
     if expected == "array":
-        return isinstance(value, list)
+        return list[Any]
     if expected == "object":
-        return isinstance(value, dict)
-    return True
+        return dict[str, Any]
+    return Any
+
+
+def _build_payload_model(tool: ToolDefinition):
+    schema = tool.input_schema or {}
+    properties = schema.get("properties", {})
+    required_fields = set(schema.get("required", []))
+    fields: dict[str, tuple[Any, Any]] = {}
+    for key, raw_spec in properties.items():
+        spec = raw_spec if isinstance(raw_spec, dict) else {}
+        py_type = _schema_to_python_type(spec)
+        if key in required_fields:
+            annotation = py_type
+            default = ...
+        else:
+            annotation = py_type | None
+            default = None
+        constraints: dict[str, Any] = {}
+        if spec.get("type") in {"integer", "number"}:
+            if spec.get("minimum") is not None:
+                constraints["ge"] = spec.get("minimum")
+            if spec.get("maximum") is not None:
+                constraints["le"] = spec.get("maximum")
+        fields[key] = (annotation, Field(default=default, **constraints))
+
+    model = create_model(  # type: ignore[call-overload]
+        f"ToolPayloadModel_{tool.tool_name}",
+        __base__=BaseModel,
+        __config__=ConfigDict(extra="ignore"),
+        **fields,
+    )
+    return model
 
 
 def _validate_payload_by_schema(tool: ToolDefinition, payload: dict[str, Any]) -> None:
-    schema = tool.input_schema or {}
-    required = schema.get("required", [])
-    properties = schema.get("properties", {})
-
-    for req in required:
-        if payload.get(req) is None:
-            raise HTTPException(status_code=400, detail=f"{tool.tool_name}:VALIDATION_REQUIRED:{req}")
-
-    for key, value in payload.items():
-        spec = properties.get(key)
-        if not isinstance(spec, dict):
-            continue
-        expected_type = spec.get("type")
-        if expected_type and not _validate_type(value, expected_type):
-            raise HTTPException(status_code=400, detail=f"{tool.tool_name}:VALIDATION_TYPE:{key}")
-
-        if expected_type == "integer":
-            minimum = spec.get("minimum")
-            maximum = spec.get("maximum")
-            if minimum is not None and value < minimum:
-                raise HTTPException(status_code=400, detail=f"{tool.tool_name}:VALIDATION_MIN:{key}")
-            if maximum is not None and value > maximum:
-                raise HTTPException(status_code=400, detail=f"{tool.tool_name}:VALIDATION_MAX:{key}")
-
-        enum_values = spec.get("enum")
-        if enum_values and value not in enum_values:
-            raise HTTPException(status_code=400, detail=f"{tool.tool_name}:VALIDATION_ENUM:{key}")
+    model = _build_payload_model(tool)
+    try:
+        model.model_validate(payload)
+        return
+    except ValidationError as exc:
+        issues = exc.errors()
+        if not issues:
+            raise HTTPException(status_code=400, detail=f"{tool.tool_name}:VALIDATION_TYPE:unknown") from exc
+        first = issues[0]
+        loc = first.get("loc")
+        field = str(loc[-1]) if isinstance(loc, (list, tuple)) and loc else "unknown"
+        issue_type = str(first.get("type") or "")
+        if issue_type == "missing":
+            raise HTTPException(status_code=400, detail=f"{tool.tool_name}:VALIDATION_REQUIRED:{field}") from exc
+        if issue_type in {"greater_than_equal", "greater_than"}:
+            raise HTTPException(status_code=400, detail=f"{tool.tool_name}:VALIDATION_MIN:{field}") from exc
+        if issue_type in {"less_than_equal", "less_than"}:
+            raise HTTPException(status_code=400, detail=f"{tool.tool_name}:VALIDATION_MAX:{field}") from exc
+        if issue_type in {"literal_error"}:
+            raise HTTPException(status_code=400, detail=f"{tool.tool_name}:VALIDATION_ENUM:{field}") from exc
+        raise HTTPException(status_code=400, detail=f"{tool.tool_name}:VALIDATION_TYPE:{field}") from exc
 
 
 def _default_notion_parent() -> dict[str, Any]:

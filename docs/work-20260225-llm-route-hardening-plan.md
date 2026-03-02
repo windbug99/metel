@@ -1,5 +1,9 @@
 # work-20260225-llm-route-hardening-plan
 
+> Legacy notice (2026-03-02):
+> 본 문서는 autonomous/stepwise 경로 안정화 중심 과거 계획 문서입니다.
+> 현재 Phase 1 구현 기준은 `docs/overhaul-20260302.md`를 따릅니다.
+
 ## 1) 배경
 - 현재 일부 복합 요청(예: "오늘 일정 중 회의만 Linear 이슈 생성")이 `LLM 분석 -> autonomous 실행` 경로에서 `replan_limit`로 실패한다.
 - 단기적으로는 deterministic 템플릿 라우팅으로 보완했지만, 중장기적으로는 LLM 경로 자체의 복원력/정확도를 높여야 한다.

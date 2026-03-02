@@ -10,7 +10,6 @@ export default function Home() {
     { name: "Notion", icon: "/logos/notion.svg", status: "Connected" },
     { name: "Linear", icon: "/logos/linear.svg", status: "Connected" },
     { name: "Google Calendar", icon: "/logos/google.svg", status: "Connected" },
-    { name: "Telegram", icon: "/logos/telegram.svg", status: "Connected" },
     { name: "Spotify", icon: "/logos/spotify.svg", status: "Limited" }
   ];
   const useCases = [

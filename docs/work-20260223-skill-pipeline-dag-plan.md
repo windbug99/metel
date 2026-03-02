@@ -1,5 +1,9 @@
 # Skill Pipeline DAG 에이전트화 작업 계획 (2026-02-23)
 
+> Legacy notice (2026-03-02):
+> 본 문서는 Telegram/에이전트 DAG 전환 단계 기록입니다.
+> 현재 실행 기준은 MCP Gateway 중심의 `docs/overhaul-20260302.md`입니다.
+
 ## 0) 진행 체크리스트 (업데이트: 2026-02-25)
 - [x] 새 작업 브랜치 생성 (`feature-20260223-skill-pipeline-dag-impl`)
 - [x] Pipeline DSL 스키마/기본 제약 반영 (`backend/agent/pipeline_dsl_schema.json`)
@@ -42,8 +46,8 @@
 
 ## 0.1) 배포 전 필수 체크리스트 (DAG)
 - [x] DB 마이그레이션 적용
-  - `docs/sql/009_create_pipeline_links_table.sql`
-  - `docs/sql/010_add_pipeline_links_error_columns.sql`
+  - `docs/sql/legacy/009_create_pipeline_links_table.sql`
+  - `docs/sql/legacy/010_add_pipeline_links_error_columns.sql`
   - `docs/sql/011_add_oauth_tokens_granted_scopes.sql`
   - `docs/sql/012_add_users_timezone.sql`
 - [x] OAuth 기존 토큰 `granted_scopes` 백필 적용

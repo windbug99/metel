@@ -1,5 +1,9 @@
 # Stage 6 Run Commands
 
+> Legacy notice (2026-03-02):
+> 이 문서는 Telegram/Stage6 전환 단계 기록입니다.
+> 현재 기준 구현/운영 절차는 `docs/overhaul-20260302.md`를 우선 참고하세요.
+
 이 문서는 Staging/Production 전환 시 그대로 실행할 수 있는 명령 모음입니다.
 
 ## 1) Staging 사전 점검

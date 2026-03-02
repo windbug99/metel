@@ -1,5 +1,9 @@
 # metel 핵심 엔진 오버홀 기획서 (초안)
 
+> Legacy context notice (2026-03-02):
+> 본 문서는 Telegram/오케스트레이터 중심 과거 아키텍처 논의 기록을 포함합니다.
+> 현재 실행 우선순위/작업 기준은 `docs/overhaul-20260302.md`를 기준으로 유지합니다.
+
 > 작성 목적: 핵심 실행 엔진 전면 재설계를 위한 기획 문서
 > 버전: v1.0 Draft
 
@@ -720,8 +724,8 @@ Phase 3 shadow 로그 비교 점검 (완료)
 Atomic 오버홀 로그 지표 확장을 위해 다음 순서로 SQL을 적용한다.
 
 1. 적용 대상 파일
-- `docs/sql/013_add_pipeline_step_logs_and_command_logs_stepwise_columns.sql`
-- `docs/sql/014_add_command_logs_atomic_overhaul_columns.sql`
+- `docs/sql/legacy/013_add_pipeline_step_logs_and_command_logs_stepwise_columns.sql`
+- `docs/sql/legacy/014_add_command_logs_atomic_overhaul_columns.sql`
 
 2. 적용 순서
 - 스테이징 DB에 `013 -> 014` 순서로 적용

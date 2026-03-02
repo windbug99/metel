@@ -1,5 +1,9 @@
 # metel 프로토타입 개발 계획
 
+> Legacy notice (2026-03-02):
+> 본 문서는 Telegram 중심 초기 프로토타입 계획 문서입니다.
+> 현재 실행 기준은 `docs/overhaul-20260302.md`를 우선 참고하세요.
+
 ## 1. 개요
 
 본 문서는 **Promethium**의 AI 비서 SaaS 서비스인 **metel**의 핵심 플로우(웹사이트 사용자 계정 생성 및 로그인, 외부 서비스 OAuth 연동, 텔레그램 연결, 텔레그램 작업 요청 및 AI 답변)를 구현하기 위한 프로토타입 개발 계획을 상세히 기술합니다. 기획서 및 OpenClaw 분석 문서를 기반으로 기술 스택(Next.js, FastAPI, Supabase, python-telegram-bot, 사용자가 웹사이트 대시보드에서 선택 가능한 LLM API (Gemini-2.5-flash-lite, GPT-4o mini))을 활용하여 각 단계별 구현 내용, 진행 순서, 예상 소요 시간, 필요한 외부 서비스 설정, 그리고 완료 기준을 명시합니다.

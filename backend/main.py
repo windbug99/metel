@@ -8,12 +8,11 @@ from fastapi.responses import JSONResponse
 
 from agent.registry import ToolSpecValidationError, validate_registry_on_startup
 from app.core.config import get_settings
+from app.routes.api_keys import router as api_keys_router
 from app.routes.linear import router as linear_router
+from app.routes.mcp import router as mcp_router
 from app.routes.notion import router as notion_router
-from app.routes.spotify import router as spotify_router
-from app.routes.google import router as google_router
-from app.routes.telegram import router as telegram_router
-from app.routes.pipeline_links import router as pipeline_links_router
+from app.routes.tool_calls import router as tool_calls_router
 
 settings = get_settings()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -137,7 +136,6 @@ async def health_check():
 
 app.include_router(notion_router)
 app.include_router(linear_router)
-app.include_router(spotify_router)
-app.include_router(google_router)
-app.include_router(telegram_router)
-app.include_router(pipeline_links_router)
+app.include_router(api_keys_router)
+app.include_router(mcp_router)
+app.include_router(tool_calls_router)

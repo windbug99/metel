@@ -1,6 +1,16 @@
 # metel 프로젝트 초기 세팅 가이드
 
+> Legacy notice (2026-03-02):
+> 본 문서는 Telegram 기반 초기 세팅 가이드를 포함합니다.
+> 현재 개발 기준 아키텍처/작업 순서는 `docs/overhaul-20260302.md`를 따릅니다.
+
 본 문서는 AI 비서 SaaS 서비스 "metel" 프로젝트를 시작하기 위한 초기 개발 환경 설정 및 가이드를 제공합니다. 실무에서 바로 적용할 수 있는 수준으로 작성되었습니다.
+
+## SQL Migration Policy (Current)
+
+- 신규 환경에서 실행할 SQL은 `docs/sql/` 루트의 **non-legacy 파일만** 사용합니다.
+- `docs/sql/legacy/` 하위 SQL은 과거 아키텍처 보관용이며 기본 실행 대상이 아닙니다.
+- 현재 baseline 목록은 `docs/sql/legacy/README.md`의 "현재 baseline"을 따릅니다.
 
 ## 1. GitHub 레포지토리 초기 설정
 

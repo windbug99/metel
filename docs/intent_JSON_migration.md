@@ -1,5 +1,9 @@
 # Intent JSON Migration Plan
 
+> Legacy notice (2026-03-02):
+> 본 문서는 Telegram/오케스트레이터 중심 과거 마이그레이션 계획 기록입니다.
+> 현재 구현/운영 기준은 `docs/overhaul-20260302.md`를 우선 참고하세요.
+
 ## 1) 목표
 - "한 문장 = 한 결정 경로"를 보장한다.
 - 라우팅 결과를 `Intent JSON`으로 고정하고, 실행 단계에서 재해석을 금지한다.
