@@ -12,6 +12,22 @@ from agent.registry import ToolDefinition, load_registry
 from agent.tool_runner import execute_tool
 from app.core.api_keys import API_KEY_PREFIX, hash_api_key
 from app.core.config import get_settings
+from app.core.error_codes import (
+    CODE_POLICY_BLOCKED,
+    CODE_QUOTA_EXCEEDED,
+    CODE_RESOLVE_AMBIGUOUS,
+    CODE_RESOLVE_NOT_FOUND,
+    CODE_TOOL_NOT_ALLOWED,
+    CODE_UPSTREAM_TEMPORARY_FAILURE,
+    ERR_POLICY_BLOCKED,
+    ERR_QUOTA_EXCEEDED,
+    ERR_RESOLVE_NOT_FOUND,
+    ERR_UPSTREAM_TEMPORARY_FAILURE,
+)
+from app.core.quota import evaluate_daily_quota
+from app.core.resolver import ResolverException, resolve_tool_payload
+from app.core.retry_policy import run_with_retry
+from app.core.risk_gate import evaluate_risk
 
 router = APIRouter(prefix="/mcp", tags=["mcp"])
 
@@ -95,7 +111,26 @@ def _map_tool_error(exc: HTTPException) -> tuple[int, str, dict[str, Any] | None
     if detail.endswith("_not_connected"):
         provider = detail.removesuffix("_not_connected")
         return 4003, "oauth_not_connected", {"provider": provider}
+    status = _extract_upstream_status(detail)
+    if ":RATE_LIMITED" in detail or status in {429, 500, 502, 503, 504}:
+        return (
+            CODE_UPSTREAM_TEMPORARY_FAILURE,
+            ERR_UPSTREAM_TEMPORARY_FAILURE,
+            {"status": status, "retryable": True},
+        )
     return 5001, "tool_execution_failed", {"detail": detail}
+
+
+def _extract_upstream_status(detail: str) -> int | None:
+    marker = "|status="
+    if marker not in detail:
+        return None
+    tail = detail.split(marker, 1)[1]
+    code_text = tail.split("|", 1)[0].strip()
+    try:
+        return int(code_text)
+    except ValueError:
+        return None
 
 
 def _log_tool_call(
@@ -231,15 +266,72 @@ async def mcp_call_tool(
 
     request_id = getattr(request.state, "request_id", "")
     started = time.perf_counter()
+    quota = evaluate_daily_quota(
+        supabase=supabase,
+        user_id=api_key["user_id"],
+        api_key_id=api_key["id"],
+        per_key_daily_limit=max(0, int(getattr(settings, "mcp_quota_per_key_daily", 0))),
+        per_user_daily_limit=max(0, int(getattr(settings, "mcp_quota_per_user_daily", 0))),
+    )
+    if quota.exceeded:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        _log_tool_call(
+            supabase=supabase,
+            request_id=request_id,
+            user_id=api_key["user_id"],
+            api_key_id=api_key["id"],
+            tool_name=tool_name,
+            status="fail",
+            error_code=ERR_QUOTA_EXCEEDED,
+            latency_ms=latency_ms,
+        )
+        return _jsonrpc_error(
+            req_id=req_id,
+            code=CODE_QUOTA_EXCEEDED,
+            message=ERR_QUOTA_EXCEEDED,
+            data={"scope": quota.scope, "limit": quota.limit, "used": quota.used},
+        )
+
     try:
         tool = load_registry().get_tool(tool_name)
         if tool.service not in _PHASE1_SERVICES:
             return _jsonrpc_error(req_id=req_id, code=4042, message="tool_not_available_in_phase1")
         allowed = _api_key_allowed_set(api_key)
         if allowed is not None and tool_name not in allowed:
-            return _jsonrpc_error(req_id=req_id, code=4031, message="tool_not_allowed_for_api_key")
-
-        result = await execute_tool(user_id=api_key["user_id"], tool_name=tool_name, payload=arguments)
+            return _jsonrpc_error(req_id=req_id, code=CODE_TOOL_NOT_ALLOWED, message="tool_not_allowed_for_api_key")
+        risk = evaluate_risk(tool_name, arguments)
+        if not risk.allowed:
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            _log_tool_call(
+                supabase=supabase,
+                request_id=request_id,
+                user_id=api_key["user_id"],
+                api_key_id=api_key["id"],
+                tool_name=tool_name,
+                status="fail",
+                error_code=ERR_POLICY_BLOCKED,
+                latency_ms=latency_ms,
+            )
+            return _jsonrpc_error(
+                req_id=req_id,
+                code=CODE_POLICY_BLOCKED,
+                message=ERR_POLICY_BLOCKED,
+                data={"reason": risk.reason, "risk_type": risk.risk_type},
+            )
+        resolved_arguments = await resolve_tool_payload(
+            user_id=api_key["user_id"],
+            tool_name=tool_name,
+            payload=arguments,
+            execute_tool=execute_tool,
+        )
+        max_retries = max(0, int(getattr(settings, "mcp_retry_max_retries", 1)))
+        backoff_ms = max(0, int(getattr(settings, "mcp_retry_backoff_ms", 250)))
+        retried = await run_with_retry(
+            operation=lambda: execute_tool(user_id=api_key["user_id"], tool_name=tool_name, payload=resolved_arguments),
+            max_retries=max_retries,
+            backoff_ms=backoff_ms,
+        )
+        result = retried.data
         latency_ms = int((time.perf_counter() - started) * 1000)
         _log_tool_call(
             supabase=supabase,
@@ -252,6 +344,24 @@ async def mcp_call_tool(
             latency_ms=latency_ms,
         )
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
+    except ResolverException as exc:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        _log_tool_call(
+            supabase=supabase,
+            request_id=request_id,
+            user_id=api_key["user_id"],
+            api_key_id=api_key["id"],
+            tool_name=tool_name,
+            status="fail",
+            error_code=exc.error_code,
+            latency_ms=latency_ms,
+        )
+        return _jsonrpc_error(
+            req_id=req_id,
+            code=CODE_RESOLVE_NOT_FOUND if exc.error_code == ERR_RESOLVE_NOT_FOUND else CODE_RESOLVE_AMBIGUOUS,
+            message=exc.message,
+            data=exc.data,
+        )
     except HTTPException as exc:
         latency_ms = int((time.perf_counter() - started) * 1000)
         code, message, data = _map_tool_error(exc)

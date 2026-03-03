@@ -109,6 +109,10 @@ class Settings(BaseSettings):
     rule_reparse_for_llm_plan_enabled: bool = False
     delete_operations_enabled: bool = False
     auto_fill_no_question_enabled: bool = True
+    mcp_retry_max_retries: int = 1
+    mcp_retry_backoff_ms: int = 250
+    mcp_quota_per_key_daily: int = 0
+    mcp_quota_per_user_daily: int = 0
 
 
 @lru_cache

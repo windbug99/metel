@@ -54,6 +54,17 @@ type ToolCallSummary = {
   calls_24h: number;
   success_24h: number;
   fail_24h: number;
+  fail_rate_24h: number;
+  blocked_rate_24h: number;
+  retryable_fail_rate_24h: number;
+  policy_blocked_24h: number;
+  quota_exceeded_24h: number;
+  resolve_fail_24h: number;
+  upstream_temporary_24h: number;
+  top_failure_codes: Array<{
+    error_code: string;
+    count: number;
+  }>;
 };
 
 function ServiceLogo({ src, alt }: { src: string; alt: string }) {
@@ -699,10 +710,58 @@ export default function DashboardPage() {
             <p className="text-xs text-gray-500">Fail (24h)</p>
             <p className="mt-1 text-xl font-semibold text-rose-700">{toolCallsSummary?.fail_24h ?? 0}</p>
           </article>
+          <article className="rounded-lg border border-gray-200 p-3">
+            <p className="text-xs text-gray-500">Fail Rate (24h)</p>
+            <p className="mt-1 text-xl font-semibold text-rose-700">{((toolCallsSummary?.fail_rate_24h ?? 0) * 100).toFixed(1)}%</p>
+          </article>
+          <article className="rounded-lg border border-gray-200 p-3">
+            <p className="text-xs text-gray-500">Blocked Rate (24h)</p>
+            <p className="mt-1 text-xl font-semibold text-amber-700">
+              {((toolCallsSummary?.blocked_rate_24h ?? 0) * 100).toFixed(1)}%
+            </p>
+          </article>
+          <article className="rounded-lg border border-gray-200 p-3">
+            <p className="text-xs text-gray-500">Retryable Fail Rate (24h)</p>
+            <p className="mt-1 text-xl font-semibold text-indigo-700">
+              {((toolCallsSummary?.retryable_fail_rate_24h ?? 0) * 100).toFixed(1)}%
+            </p>
+          </article>
+        </div>
+
+        <div className="mt-2 grid gap-2 sm:grid-cols-4">
+          <article className="rounded-lg border border-gray-200 p-3">
+            <p className="text-xs text-gray-500">Policy Blocked</p>
+            <p className="mt-1 text-lg font-semibold text-amber-700">{toolCallsSummary?.policy_blocked_24h ?? 0}</p>
+          </article>
+          <article className="rounded-lg border border-gray-200 p-3">
+            <p className="text-xs text-gray-500">Quota Exceeded</p>
+            <p className="mt-1 text-lg font-semibold text-rose-700">{toolCallsSummary?.quota_exceeded_24h ?? 0}</p>
+          </article>
+          <article className="rounded-lg border border-gray-200 p-3">
+            <p className="text-xs text-gray-500">Resolve Fail</p>
+            <p className="mt-1 text-lg font-semibold text-orange-700">{toolCallsSummary?.resolve_fail_24h ?? 0}</p>
+          </article>
+          <article className="rounded-lg border border-gray-200 p-3">
+            <p className="text-xs text-gray-500">Upstream Temporary</p>
+            <p className="mt-1 text-lg font-semibold text-indigo-700">{toolCallsSummary?.upstream_temporary_24h ?? 0}</p>
+          </article>
         </div>
 
         {toolCallsError ? <p className="mt-2 text-xs text-red-600">{toolCallsError}</p> : null}
         {toolCallsLoading ? <p className="mt-2 text-xs text-gray-500">Loading usage...</p> : null}
+
+        {toolCallsSummary?.top_failure_codes?.length ? (
+          <div className="mt-4 rounded-lg border border-gray-200 p-3">
+            <p className="text-xs font-medium text-gray-700">Top Failure Codes (24h)</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {toolCallsSummary.top_failure_codes.map((entry) => (
+                <span key={entry.error_code} className="rounded-full border border-gray-300 px-2 py-1 text-xs text-gray-700">
+                  {entry.error_code}: {entry.count}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         <div className="mt-4 space-y-2">
           {toolCalls.length === 0 ? (

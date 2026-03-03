@@ -3,6 +3,7 @@
 ## Current Source Of Truth
 
 - `overhaul-20260302.md`: current implementation and execution checklist (Phase 1 MCP baseline)
+- `phase2-prep-20260303.md`: Phase 2 kickoff prep (scope freeze, ticket backlog, DoD)
 - `mcp_smoke_test_checklist.md`: deploy smoke test for MCP endpoints and usage logs
 - `claude_desktop_mcp_connection.md`: Claude Desktop MCP bridge setup guide
 - `sql/legacy/README.md`: SQL migration policy (`non-legacy` only for fresh setup)

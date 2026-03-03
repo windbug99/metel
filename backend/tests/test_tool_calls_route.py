@@ -60,8 +60,14 @@ def test_list_tool_calls_applies_filters(monkeypatch):
                         }
                     ]
                 )
-            if self.table_name == "tool_calls" and self.selected == "status":
-                return SimpleNamespace(data=[{"status": "success"}, {"status": "fail"}])
+            if self.table_name == "tool_calls" and self.selected == "status,error_code":
+                return SimpleNamespace(
+                    data=[
+                        {"status": "success", "error_code": None},
+                        {"status": "fail", "error_code": "policy_blocked"},
+                        {"status": "fail", "error_code": "upstream_temporary_failure"},
+                    ]
+                )
             if self.table_name == "api_keys":
                 return SimpleNamespace(data=[{"id": 1, "name": "prod", "key_prefix": "metel_prod"}])
             return SimpleNamespace(data=[])
@@ -99,9 +105,15 @@ def test_list_tool_calls_applies_filters(monkeypatch):
 
     assert out["count"] == 1
     assert out["items"][0]["tool_name"] == "linear_list_issues"
-    assert out["summary"]["calls_24h"] == 2
+    assert out["summary"]["calls_24h"] == 3
     assert out["summary"]["success_24h"] == 1
-    assert out["summary"]["fail_24h"] == 1
+    assert out["summary"]["fail_24h"] == 2
+    assert out["summary"]["fail_rate_24h"] == 0.6667
+    assert out["summary"]["blocked_rate_24h"] == 0.3333
+    assert out["summary"]["retryable_fail_rate_24h"] == 0.3333
+    assert out["summary"]["policy_blocked_24h"] == 1
+    assert out["summary"]["upstream_temporary_24h"] == 1
+    assert out["summary"]["top_failure_codes"][0]["error_code"] in {"policy_blocked", "upstream_temporary_failure"}
 
     tool_calls_queries = [item for item in client.query_logs if item[0] == "tool_calls"]
     assert len(tool_calls_queries) >= 2

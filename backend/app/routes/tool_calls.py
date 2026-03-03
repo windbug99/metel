@@ -27,6 +27,12 @@ def _normalize_iso_datetime(value: str | None, *, field_name: str) -> str | None
     return dt.isoformat()
 
 
+def _ratio(numerator: int, denominator: int) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round(numerator / denominator, 4)
+
+
 @router.get("")
 async def list_tool_calls(
     request: Request,
@@ -102,12 +108,7 @@ async def list_tool_calls(
         )
 
     window_start = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-    stats_query = (
-        supabase.table("tool_calls")
-        .select("status")
-        .eq("user_id", user_id)
-        .gte("created_at", window_start)
-    )
+    stats_query = supabase.table("tool_calls").select("status,error_code").eq("user_id", user_id).gte("created_at", window_start)
     if normalized_status != "all":
         stats_query = stats_query.eq("status", normalized_status)
     if normalized_tool_name:
@@ -123,6 +124,24 @@ async def list_tool_calls(
     calls_24h = len(stats_rows)
     success_24h = len([row for row in stats_rows if row.get("status") == "success"])
     fail_24h = len([row for row in stats_rows if row.get("status") == "fail"])
+    policy_blocked_24h = len([row for row in stats_rows if row.get("error_code") == "policy_blocked"])
+    quota_exceeded_24h = len([row for row in stats_rows if row.get("error_code") == "quota_exceeded"])
+    resolve_fail_24h = len(
+        [
+            row
+            for row in stats_rows
+            if str(row.get("error_code") or "") in {"resolve_not_found", "resolve_ambiguous"}
+        ]
+    )
+    upstream_temporary_24h = len([row for row in stats_rows if row.get("error_code") == "upstream_temporary_failure"])
+
+    fail_error_counts: dict[str, int] = {}
+    for row in stats_rows:
+        if row.get("status") != "fail":
+            continue
+        code = str(row.get("error_code") or "").strip() or "unknown_fail"
+        fail_error_counts[code] = fail_error_counts.get(code, 0) + 1
+    top_failure_codes = sorted(fail_error_counts.items(), key=lambda item: item[1], reverse=True)[:5]
 
     return {
         "items": items,
@@ -133,5 +152,13 @@ async def list_tool_calls(
             "calls_24h": calls_24h,
             "success_24h": success_24h,
             "fail_24h": fail_24h,
+            "fail_rate_24h": _ratio(fail_24h, calls_24h),
+            "blocked_rate_24h": _ratio(policy_blocked_24h, calls_24h),
+            "retryable_fail_rate_24h": _ratio(upstream_temporary_24h, calls_24h),
+            "policy_blocked_24h": policy_blocked_24h,
+            "quota_exceeded_24h": quota_exceeded_24h,
+            "resolve_fail_24h": resolve_fail_24h,
+            "upstream_temporary_24h": upstream_temporary_24h,
+            "top_failure_codes": [{"error_code": code, "count": count} for code, count in top_failure_codes],
         },
     }
