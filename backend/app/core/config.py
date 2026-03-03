@@ -118,6 +118,7 @@ class Settings(BaseSettings):
     webhook_retry_max_backoff_seconds: int = 900
     dead_letter_alert_webhook_url: str | None = None
     dead_letter_alert_min_count: int = 1
+    alert_ticket_webhook_url: str | None = None
 
 
 @lru_cache

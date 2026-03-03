@@ -5,9 +5,13 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.routes.admin import (
+    IncidentBannerRevisionCreateRequest,
+    IncidentBannerRevisionReviewRequest,
     IncidentBannerUpdateRequest,
+    create_incident_banner_revision,
     external_health,
     get_incident_banner,
+    review_incident_banner_revision,
     update_incident_banner,
 )
 
@@ -98,5 +102,61 @@ def test_update_incident_banner_rejects_invalid_severity(monkeypatch):
     except HTTPException as exc:
         assert exc.status_code == 400
         assert exc.detail == "invalid_severity"
+    else:
+        assert False, "expected HTTPException"
+
+
+def test_create_incident_banner_revision_returns_item(monkeypatch):
+    class _Query:
+        def __init__(self):
+            self.payload = None
+
+        def insert(self, payload: dict):
+            self.payload = payload
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=[self.payload])
+
+    class _Client:
+        def table(self, _name: str):
+            return _Query()
+
+    async def _fake_user(_request: Request) -> str:
+        return "user-1"
+
+    monkeypatch.setattr("app.routes.admin.get_authenticated_user_id", _fake_user)
+    monkeypatch.setattr("app.routes.admin.create_client", lambda *_args, **_kwargs: _Client())
+    monkeypatch.setattr("app.routes.admin.get_settings", lambda: SimpleNamespace(supabase_url="x", supabase_service_role_key="y"))
+
+    out = asyncio.run(
+        create_incident_banner_revision(
+            _request("/api/admin/incident-banner/revisions", "POST"),
+            IncidentBannerRevisionCreateRequest(enabled=True, message="m", severity="warning"),
+        )
+    )
+    assert out["item"]["status"] == "pending"
+    assert out["item"]["severity"] == "warning"
+
+
+def test_review_incident_banner_revision_rejects_invalid_decision(monkeypatch):
+    async def _fake_user(_request: Request) -> str:
+        return "user-1"
+
+    monkeypatch.setattr("app.routes.admin.get_authenticated_user_id", _fake_user)
+    monkeypatch.setattr("app.routes.admin.create_client", lambda *_args, **_kwargs: SimpleNamespace())
+    monkeypatch.setattr("app.routes.admin.get_settings", lambda: SimpleNamespace(supabase_url="x", supabase_service_role_key="y"))
+
+    try:
+        asyncio.run(
+            review_incident_banner_revision(
+                _request("/api/admin/incident-banner/revisions/1/review", "POST"),
+                "1",
+                IncidentBannerRevisionReviewRequest(decision="skip"),
+            )
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert exc.detail == "invalid_decision"
     else:
         assert False, "expected HTTPException"

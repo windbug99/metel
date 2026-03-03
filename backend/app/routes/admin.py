@@ -21,6 +21,18 @@ class IncidentBannerUpdateRequest(BaseModel):
     ends_at: str | None = None
 
 
+class IncidentBannerRevisionCreateRequest(BaseModel):
+    enabled: bool | None = None
+    message: str | None = Field(default=None, max_length=400)
+    severity: str | None = Field(default=None, max_length=20)
+    starts_at: str | None = None
+    ends_at: str | None = None
+
+
+class IncidentBannerRevisionReviewRequest(BaseModel):
+    decision: str = Field(min_length=1, max_length=20)
+
+
 def _connector_name(row: dict[str, Any]) -> str:
     connector = str(row.get("connector") or "").strip().lower()
     if connector:
@@ -240,3 +252,89 @@ async def update_incident_banner(request: Request, body: IncidentBannerUpdateReq
     }
     supabase.table("incident_banners").upsert(payload, on_conflict="user_id").execute()
     return payload
+
+
+@router.get("/incident-banner/revisions")
+async def list_incident_banner_revisions(request: Request, limit: int = Query(50, ge=1, le=200)):
+    user_id = await get_authenticated_user_id(request)
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    rows = (
+        supabase.table("incident_banner_revisions")
+        .select("id,user_id,enabled,message,severity,starts_at,ends_at,status,requested_by,approved_by,approved_at,created_at,updated_at")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    ).data or []
+    return {"items": rows, "count": len(rows)}
+
+
+@router.post("/incident-banner/revisions")
+async def create_incident_banner_revision(request: Request, body: IncidentBannerRevisionCreateRequest):
+    user_id = await get_authenticated_user_id(request)
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    severity = str(body.severity or "info").strip().lower()
+    if severity not in {"info", "warning", "critical"}:
+        raise HTTPException(status_code=400, detail="invalid_severity")
+    starts_at = _parse_iso(body.starts_at)
+    ends_at = _parse_iso(body.ends_at)
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "user_id": user_id,
+        "enabled": bool(body.enabled) if body.enabled is not None else False,
+        "message": (body.message or "").strip() or None,
+        "severity": severity,
+        "starts_at": starts_at,
+        "ends_at": ends_at,
+        "status": "pending",
+        "requested_by": user_id,
+        "created_at": now,
+        "updated_at": now,
+    }
+    row = supabase.table("incident_banner_revisions").insert(payload).execute().data or []
+    return {"item": row[0] if row else payload}
+
+
+@router.post("/incident-banner/revisions/{revision_id}/review")
+async def review_incident_banner_revision(request: Request, revision_id: str, body: IncidentBannerRevisionReviewRequest):
+    user_id = await get_authenticated_user_id(request)
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    decision = str(body.decision or "").strip().lower()
+    if decision not in {"approve", "reject"}:
+        raise HTTPException(status_code=400, detail="invalid_decision")
+    rows = (
+        supabase.table("incident_banner_revisions")
+        .select("id,user_id,enabled,message,severity,starts_at,ends_at,status")
+        .eq("id", revision_id)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="revision_not_found")
+    revision = rows[0]
+    current_status = str(revision.get("status") or "").strip().lower()
+    if current_status != "pending":
+        raise HTTPException(status_code=409, detail="revision_already_reviewed")
+    now = datetime.now(timezone.utc).isoformat()
+    status = "approved" if decision == "approve" else "rejected"
+    supabase.table("incident_banner_revisions").update(
+        {"status": status, "approved_by": user_id, "approved_at": now, "updated_at": now}
+    ).eq("id", revision_id).eq("user_id", user_id).execute()
+    if status == "approved":
+        supabase.table("incident_banners").upsert(
+            {
+                "user_id": user_id,
+                "enabled": bool(revision.get("enabled")),
+                "message": revision.get("message"),
+                "severity": revision.get("severity"),
+                "starts_at": revision.get("starts_at"),
+                "ends_at": revision.get("ends_at"),
+                "updated_at": now,
+            },
+            on_conflict="user_id",
+        ).execute()
+    return {"ok": True, "status": status}

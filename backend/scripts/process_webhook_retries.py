@@ -41,6 +41,7 @@ async def _run(limit: int, user_id: str) -> int:
     webhook_retry_max_backoff_seconds = max(1, int(os.getenv("WEBHOOK_RETRY_MAX_BACKOFF_SECONDS", "900")))
     dead_letter_alert_webhook_url = str(os.getenv("DEAD_LETTER_ALERT_WEBHOOK_URL", "")).strip()
     dead_letter_alert_min_count = max(1, int(os.getenv("DEAD_LETTER_ALERT_MIN_COUNT", "1")))
+    alert_ticket_webhook_url = str(os.getenv("ALERT_TICKET_WEBHOOK_URL", "")).strip()
 
     supabase = create_client(supabase_url, supabase_service_role_key)
     result = await process_pending_webhook_retries(
@@ -59,6 +60,7 @@ async def _run(limit: int, user_id: str) -> int:
             source="scheduler_process_retries",
             dead_lettered=dead_lettered,
             details={"result": result, "limit": limit},
+            ticket_webhook_url=alert_ticket_webhook_url or None,
         )
     print(json.dumps({"ok": True, **result}, ensure_ascii=False))
     return 0

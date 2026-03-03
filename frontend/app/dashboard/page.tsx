@@ -243,6 +243,34 @@ type OrganizationMemberItem = {
   created_at: string;
 };
 
+type OrganizationInviteItem = {
+  id: number;
+  organization_id: number;
+  token: string;
+  invited_email: string | null;
+  role: string;
+  invited_by: string;
+  expires_at: string;
+  accepted_by: string | null;
+  accepted_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+};
+
+type OrganizationRoleRequestItem = {
+  id: number;
+  organization_id: number;
+  target_user_id: string;
+  requested_role: string;
+  reason: string | null;
+  status: string;
+  requested_by: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type ApiKeyDrilldown = {
   api_key: { id: number; name: string; key_prefix: string };
   window_days: number;
@@ -331,6 +359,22 @@ type IncidentBanner = {
   starts_at: string | null;
   ends_at: string | null;
   updated_at: string | null;
+};
+
+type IncidentBannerRevisionItem = {
+  id: number;
+  user_id: string;
+  enabled: boolean;
+  message: string | null;
+  severity: "info" | "warning" | "critical";
+  starts_at: string | null;
+  ends_at: string | null;
+  status: string;
+  requested_by: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 function ServiceLogo({ src, alt }: { src: string; alt: string }) {
@@ -445,6 +489,19 @@ export default function DashboardPage() {
   const [organizationMembers, setOrganizationMembers] = useState<Record<number, OrganizationMemberItem[]>>({});
   const [organizationMemberUserDraft, setOrganizationMemberUserDraft] = useState<Record<number, string>>({});
   const [organizationMemberRoleDraft, setOrganizationMemberRoleDraft] = useState<Record<number, string>>({});
+  const [organizationInvites, setOrganizationInvites] = useState<Record<number, OrganizationInviteItem[]>>({});
+  const [organizationInvitesLoadingId, setOrganizationInvitesLoadingId] = useState<number | null>(null);
+  const [organizationInviteEmailDraft, setOrganizationInviteEmailDraft] = useState<Record<number, string>>({});
+  const [organizationInviteRoleDraft, setOrganizationInviteRoleDraft] = useState<Record<number, string>>({});
+  const [organizationInviteExpiryDraft, setOrganizationInviteExpiryDraft] = useState<Record<number, string>>({});
+  const [organizationRoleRequests, setOrganizationRoleRequests] = useState<Record<number, OrganizationRoleRequestItem[]>>({});
+  const [organizationRoleRequestsLoadingId, setOrganizationRoleRequestsLoadingId] = useState<number | null>(null);
+  const [organizationRoleTargetUserDraft, setOrganizationRoleTargetUserDraft] = useState<Record<number, string>>({});
+  const [organizationRoleRequestedRoleDraft, setOrganizationRoleRequestedRoleDraft] = useState<Record<number, string>>({});
+  const [organizationRoleReasonDraft, setOrganizationRoleReasonDraft] = useState<Record<number, string>>({});
+  const [organizationRoleReviewLoadingId, setOrganizationRoleReviewLoadingId] = useState<string | null>(null);
+  const [organizationInviteAcceptToken, setOrganizationInviteAcceptToken] = useState("");
+  const [organizationInviteAcceptLoading, setOrganizationInviteAcceptLoading] = useState(false);
   const [webhooks, setWebhooks] = useState<WebhookItem[]>([]);
   const [deliveries, setDeliveries] = useState<WebhookDeliveryItem[]>([]);
   const [integrationsLoading, setIntegrationsLoading] = useState(false);
@@ -468,6 +525,9 @@ export default function DashboardPage() {
   const [incidentStartsAtDraft, setIncidentStartsAtDraft] = useState("");
   const [incidentEndsAtDraft, setIncidentEndsAtDraft] = useState("");
   const [incidentSaving, setIncidentSaving] = useState(false);
+  const [incidentRevisions, setIncidentRevisions] = useState<IncidentBannerRevisionItem[]>([]);
+  const [incidentRevisionSaving, setIncidentRevisionSaving] = useState(false);
+  const [incidentRevisionReviewLoadingId, setIncidentRevisionReviewLoadingId] = useState<number | null>(null);
 
   const browserTimezone = useMemo(() => detectBrowserTimezone(), []);
 
@@ -977,6 +1037,170 @@ export default function DashboardPage() {
     }
   };
 
+  const fetchOrganizationInvites = useCallback(
+    async (organizationId: number) => {
+      if (!apiBaseUrl) {
+        return;
+      }
+      setOrganizationInvitesLoadingId(organizationId);
+      try {
+        const headers = await getAuthHeaders();
+        const response = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}/invites`, { headers });
+        if (!response.ok) {
+          throw new Error("failed_organization_invites");
+        }
+        const payload = (await response.json()) as { items?: OrganizationInviteItem[] };
+        setOrganizationInvites((prev) => ({ ...prev, [organizationId]: Array.isArray(payload.items) ? payload.items : [] }));
+        setOrganizationsError(null);
+      } catch {
+        setOrganizationsError("Failed to load organization invites.");
+      } finally {
+        setOrganizationInvitesLoadingId(null);
+      }
+    },
+    [apiBaseUrl, getAuthHeaders]
+  );
+
+  const handleCreateOrganizationInvite = async (organizationId: number) => {
+    if (!apiBaseUrl) {
+      return;
+    }
+    setOrganizationInvitesLoadingId(organizationId);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}/invites`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invited_email: (organizationInviteEmailDraft[organizationId] ?? "").trim() || null,
+          role: (organizationInviteRoleDraft[organizationId] ?? "member").trim() || "member",
+          expires_in_hours: Number((organizationInviteExpiryDraft[organizationId] ?? "72").trim() || "72"),
+        }),
+      });
+      if (!response.ok) {
+        throw new Error("failed_create_organization_invite");
+      }
+      setOrganizationInviteEmailDraft((prev) => ({ ...prev, [organizationId]: "" }));
+      setOrganizationInviteRoleDraft((prev) => ({ ...prev, [organizationId]: "member" }));
+      setOrganizationInviteExpiryDraft((prev) => ({ ...prev, [organizationId]: "72" }));
+      await fetchOrganizationInvites(organizationId);
+      setOrganizationsError(null);
+    } catch {
+      setOrganizationsError("Failed to create organization invite.");
+    } finally {
+      setOrganizationInvitesLoadingId(null);
+    }
+  };
+
+  const handleAcceptOrganizationInvite = async () => {
+    if (!apiBaseUrl || !organizationInviteAcceptToken.trim()) {
+      return;
+    }
+    setOrganizationInviteAcceptLoading(true);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/organizations/invites/accept`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ token: organizationInviteAcceptToken.trim() }),
+      });
+      if (!response.ok) {
+        throw new Error("failed_accept_organization_invite");
+      }
+      setOrganizationInviteAcceptToken("");
+      await fetchOrganizations();
+      setOrganizationsError(null);
+    } catch {
+      setOrganizationsError("Failed to accept organization invite.");
+    } finally {
+      setOrganizationInviteAcceptLoading(false);
+    }
+  };
+
+  const fetchOrganizationRoleRequests = useCallback(
+    async (organizationId: number) => {
+      if (!apiBaseUrl) {
+        return;
+      }
+      setOrganizationRoleRequestsLoadingId(organizationId);
+      try {
+        const headers = await getAuthHeaders();
+        const response = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}/role-requests`, { headers });
+        if (!response.ok) {
+          throw new Error("failed_organization_role_requests");
+        }
+        const payload = (await response.json()) as { items?: OrganizationRoleRequestItem[] };
+        setOrganizationRoleRequests((prev) => ({ ...prev, [organizationId]: Array.isArray(payload.items) ? payload.items : [] }));
+        setOrganizationsError(null);
+      } catch {
+        setOrganizationsError("Failed to load role requests.");
+      } finally {
+        setOrganizationRoleRequestsLoadingId(null);
+      }
+    },
+    [apiBaseUrl, getAuthHeaders]
+  );
+
+  const handleCreateOrganizationRoleRequest = async (organizationId: number) => {
+    if (!apiBaseUrl) {
+      return;
+    }
+    const targetUserId = (organizationRoleTargetUserDraft[organizationId] ?? "").trim();
+    if (!targetUserId) {
+      setOrganizationsError("Role request target user_id is required.");
+      return;
+    }
+    setOrganizationRoleRequestsLoadingId(organizationId);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}/role-requests`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target_user_id: targetUserId,
+          requested_role: (organizationRoleRequestedRoleDraft[organizationId] ?? "member").trim() || "member",
+          reason: (organizationRoleReasonDraft[organizationId] ?? "").trim() || null,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error("failed_create_organization_role_request");
+      }
+      setOrganizationRoleTargetUserDraft((prev) => ({ ...prev, [organizationId]: "" }));
+      setOrganizationRoleRequestedRoleDraft((prev) => ({ ...prev, [organizationId]: "member" }));
+      setOrganizationRoleReasonDraft((prev) => ({ ...prev, [organizationId]: "" }));
+      await fetchOrganizationRoleRequests(organizationId);
+      setOrganizationsError(null);
+    } catch {
+      setOrganizationsError("Failed to create role request.");
+    } finally {
+      setOrganizationRoleRequestsLoadingId(null);
+    }
+  };
+
+  const handleReviewOrganizationRoleRequest = async (organizationId: number, requestId: number, decision: "approve" | "reject") => {
+    if (!apiBaseUrl) {
+      return;
+    }
+    setOrganizationRoleReviewLoadingId(`${organizationId}:${requestId}:${decision}`);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}/role-requests/${requestId}/review`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ decision }),
+      });
+      if (!response.ok) {
+        throw new Error("failed_review_organization_role_request");
+      }
+      await Promise.all([fetchOrganizationRoleRequests(organizationId), fetchOrganizationMembers(organizationId)]);
+      setOrganizationsError(null);
+    } catch {
+      setOrganizationsError("Failed to review role request.");
+    } finally {
+      setOrganizationRoleReviewLoadingId(null);
+    }
+  };
+
   const runPolicySimulation = useCallback(async () => {
     if (!apiBaseUrl) {
       return;
@@ -1108,25 +1332,28 @@ export default function DashboardPage() {
     setAdminLoading(true);
     try {
       const headers = await getAuthHeaders();
-      const [diagnosticsRes, rateLimitRes, healthRes, externalHealthRes, incidentRes] = await Promise.all([
+      const [diagnosticsRes, rateLimitRes, healthRes, externalHealthRes, incidentRes, incidentRevisionsRes] = await Promise.all([
         fetch(`${apiBaseUrl}/api/admin/connectors/diagnostics`, { headers }),
         fetch(`${apiBaseUrl}/api/admin/rate-limit-events?days=7&limit=20`, { headers }),
         fetch(`${apiBaseUrl}/api/admin/system-health`, { headers }),
         fetch(`${apiBaseUrl}/api/admin/external-health?days=1`, { headers }),
         fetch(`${apiBaseUrl}/api/admin/incident-banner`, { headers }),
+        fetch(`${apiBaseUrl}/api/admin/incident-banner/revisions?limit=20`, { headers }),
       ]);
-      if (!diagnosticsRes.ok || !rateLimitRes.ok || !healthRes.ok || !externalHealthRes.ok || !incidentRes.ok) {
+      if (!diagnosticsRes.ok || !rateLimitRes.ok || !healthRes.ok || !externalHealthRes.ok || !incidentRes.ok || !incidentRevisionsRes.ok) {
         throw new Error("failed_admin_ops");
       }
       const diagnosticsPayload = (await diagnosticsRes.json()) as { items?: ConnectorDiagnosticItem[] };
       const rateLimitPayload = (await rateLimitRes.json()) as { items?: RateLimitEventItem[] };
       const externalHealthPayload = (await externalHealthRes.json()) as { items?: ExternalHealthItem[] };
       const incidentPayload = (await incidentRes.json()) as IncidentBanner;
+      const incidentRevisionPayload = (await incidentRevisionsRes.json()) as { items?: IncidentBannerRevisionItem[] };
       setConnectorDiagnostics(Array.isArray(diagnosticsPayload.items) ? diagnosticsPayload.items : []);
       setRateLimitEvents(Array.isArray(rateLimitPayload.items) ? rateLimitPayload.items : []);
       setSystemHealth((await healthRes.json()) as SystemHealthPayload);
       setExternalHealth(Array.isArray(externalHealthPayload.items) ? externalHealthPayload.items : []);
       setIncidentBanner(incidentPayload);
+      setIncidentRevisions(Array.isArray(incidentRevisionPayload.items) ? incidentRevisionPayload.items : []);
       setIncidentEnabledDraft(Boolean(incidentPayload.enabled));
       setIncidentSeverityDraft((incidentPayload.severity ?? "info") as "info" | "warning" | "critical");
       setIncidentMessageDraft(incidentPayload.message ?? "");
@@ -1167,6 +1394,60 @@ export default function DashboardPage() {
       setAdminError("Failed to save incident banner.");
     } finally {
       setIncidentSaving(false);
+    }
+  };
+
+  const handleCreateIncidentBannerRevision = async () => {
+    if (!apiBaseUrl) {
+      return;
+    }
+    setIncidentRevisionSaving(true);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/admin/incident-banner/revisions`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: incidentEnabledDraft,
+          severity: incidentSeverityDraft,
+          message: incidentMessageDraft.trim() || null,
+          starts_at: incidentStartsAtDraft ? new Date(incidentStartsAtDraft).toISOString() : null,
+          ends_at: incidentEndsAtDraft ? new Date(incidentEndsAtDraft).toISOString() : null,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error("failed_create_incident_banner_revision");
+      }
+      await fetchAdminOps();
+      setAdminError(null);
+    } catch {
+      setAdminError("Failed to create incident banner revision.");
+    } finally {
+      setIncidentRevisionSaving(false);
+    }
+  };
+
+  const handleReviewIncidentBannerRevision = async (revisionId: number, decision: "approve" | "reject") => {
+    if (!apiBaseUrl) {
+      return;
+    }
+    setIncidentRevisionReviewLoadingId(revisionId);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/admin/incident-banner/revisions/${revisionId}/review`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ decision }),
+      });
+      if (!response.ok) {
+        throw new Error("failed_review_incident_banner_revision");
+      }
+      await fetchAdminOps();
+      setAdminError(null);
+    } catch {
+      setAdminError("Failed to review incident banner revision.");
+    } finally {
+      setIncidentRevisionReviewLoadingId(null);
     }
   };
 
@@ -2648,6 +2929,20 @@ export default function DashboardPage() {
           >
             {creatingOrganization ? "Creating..." : "Create Organization"}
           </button>
+          <input
+            value={organizationInviteAcceptToken}
+            onChange={(event) => setOrganizationInviteAcceptToken(event.target.value)}
+            placeholder="Invite token"
+            className="min-w-[280px] rounded-md border border-gray-300 px-3 py-2 text-xs"
+          />
+          <button
+            type="button"
+            onClick={() => void handleAcceptOrganizationInvite()}
+            disabled={organizationInviteAcceptLoading}
+            className="rounded-md border border-gray-300 px-3 py-2 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+          >
+            {organizationInviteAcceptLoading ? "Accepting..." : "Accept Invite"}
+          </button>
         </div>
         {organizationsError ? <p className="mt-2 text-xs text-red-600">{organizationsError}</p> : null}
         {organizationsLoading ? <p className="mt-2 text-xs text-gray-500">Loading organizations...</p> : null}
@@ -2727,6 +3022,165 @@ export default function DashboardPage() {
                 ) : (
                   <p className="mt-2 text-xs text-gray-500">No loaded members.</p>
                 )}
+                <div className="mt-3 rounded-md border border-gray-200 bg-gray-50 p-2">
+                  <p className="text-xs font-medium text-gray-700">Invites</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void fetchOrganizationInvites(org.id)}
+                      disabled={organizationInvitesLoadingId === org.id}
+                      className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+                    >
+                      {organizationInvitesLoadingId === org.id ? "Loading..." : "Load Invites"}
+                    </button>
+                    <input
+                      value={organizationInviteEmailDraft[org.id] ?? ""}
+                      onChange={(event) =>
+                        setOrganizationInviteEmailDraft((prev) => ({
+                          ...prev,
+                          [org.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="invited email (optional)"
+                      className="min-w-[220px] rounded-md border border-gray-300 px-2 py-1 text-xs"
+                    />
+                    <select
+                      value={organizationInviteRoleDraft[org.id] ?? "member"}
+                      onChange={(event) =>
+                        setOrganizationInviteRoleDraft((prev) => ({
+                          ...prev,
+                          [org.id]: event.target.value,
+                        }))
+                      }
+                      className="rounded-md border border-gray-300 px-2 py-1 text-xs"
+                    >
+                      <option value="member">member</option>
+                      <option value="admin">admin</option>
+                      <option value="owner">owner</option>
+                    </select>
+                    <input
+                      value={organizationInviteExpiryDraft[org.id] ?? "72"}
+                      onChange={(event) =>
+                        setOrganizationInviteExpiryDraft((prev) => ({
+                          ...prev,
+                          [org.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="expires hours"
+                      className="w-[110px] rounded-md border border-gray-300 px-2 py-1 text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleCreateOrganizationInvite(org.id)}
+                      disabled={organizationInvitesLoadingId === org.id}
+                      className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+                    >
+                      {organizationInvitesLoadingId === org.id ? "Creating..." : "Create Invite"}
+                    </button>
+                  </div>
+                  {(organizationInvites[org.id] ?? []).length > 0 ? (
+                    <div className="mt-2 space-y-1">
+                      {(organizationInvites[org.id] ?? []).slice(0, 5).map((invite) => (
+                        <p key={`org-${org.id}-invite-${invite.id}`} className="text-xs text-gray-700">
+                          #{invite.id} · {invite.role} · {invite.invited_email ?? "email-any"} · exp{" "}
+                          {new Date(invite.expires_at).toLocaleString()} · {invite.accepted_at ? "accepted" : "pending"} · token {invite.token.slice(0, 8)}...
+                        </p>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-gray-500">No loaded invites.</p>
+                  )}
+                </div>
+                <div className="mt-3 rounded-md border border-gray-200 bg-gray-50 p-2">
+                  <p className="text-xs font-medium text-gray-700">Role Change Requests</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void fetchOrganizationRoleRequests(org.id)}
+                      disabled={organizationRoleRequestsLoadingId === org.id}
+                      className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+                    >
+                      {organizationRoleRequestsLoadingId === org.id ? "Loading..." : "Load Requests"}
+                    </button>
+                    <input
+                      value={organizationRoleTargetUserDraft[org.id] ?? ""}
+                      onChange={(event) =>
+                        setOrganizationRoleTargetUserDraft((prev) => ({
+                          ...prev,
+                          [org.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="target user_id"
+                      className="min-w-[220px] rounded-md border border-gray-300 px-2 py-1 text-xs"
+                    />
+                    <select
+                      value={organizationRoleRequestedRoleDraft[org.id] ?? "member"}
+                      onChange={(event) =>
+                        setOrganizationRoleRequestedRoleDraft((prev) => ({
+                          ...prev,
+                          [org.id]: event.target.value,
+                        }))
+                      }
+                      className="rounded-md border border-gray-300 px-2 py-1 text-xs"
+                    >
+                      <option value="member">member</option>
+                      <option value="admin">admin</option>
+                      <option value="owner">owner</option>
+                    </select>
+                    <input
+                      value={organizationRoleReasonDraft[org.id] ?? ""}
+                      onChange={(event) =>
+                        setOrganizationRoleReasonDraft((prev) => ({
+                          ...prev,
+                          [org.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="reason (optional)"
+                      className="min-w-[180px] rounded-md border border-gray-300 px-2 py-1 text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleCreateOrganizationRoleRequest(org.id)}
+                      disabled={organizationRoleRequestsLoadingId === org.id}
+                      className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+                    >
+                      {organizationRoleRequestsLoadingId === org.id ? "Saving..." : "Create Request"}
+                    </button>
+                  </div>
+                  {(organizationRoleRequests[org.id] ?? []).length > 0 ? (
+                    <div className="mt-2 space-y-1">
+                      {(organizationRoleRequests[org.id] ?? []).slice(0, 5).map((requestItem) => (
+                        <div key={`org-${org.id}-role-request-${requestItem.id}`} className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs text-gray-700">
+                            #{requestItem.id} · {requestItem.target_user_id} {"->"} {requestItem.requested_role} · {requestItem.status}
+                          </p>
+                          {requestItem.status === "pending" ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => void handleReviewOrganizationRoleRequest(org.id, requestItem.id, "approve")}
+                                disabled={organizationRoleReviewLoadingId === `${org.id}:${requestItem.id}:approve`}
+                                className="rounded-md border border-emerald-300 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleReviewOrganizationRoleRequest(org.id, requestItem.id, "reject")}
+                                disabled={organizationRoleReviewLoadingId === `${org.id}:${requestItem.id}:reject`}
+                                className="rounded-md border border-rose-300 px-2 py-1 text-[11px] font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-60"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-gray-500">No loaded role requests.</p>
+                  )}
+                </div>
               </article>
             ))
           )}
@@ -3100,6 +3554,14 @@ export default function DashboardPage() {
               >
                 {incidentSaving ? "Saving..." : "Save Banner"}
               </button>
+              <button
+                type="button"
+                onClick={() => void handleCreateIncidentBannerRevision()}
+                disabled={incidentRevisionSaving}
+                className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+              >
+                {incidentRevisionSaving ? "Requesting..." : "Request Revision"}
+              </button>
             </div>
             <input
               value={incidentMessageDraft}
@@ -3124,6 +3586,42 @@ export default function DashboardPage() {
             <p className="mt-1 text-[11px] text-gray-500">
               updated: {incidentBanner?.updated_at ? new Date(incidentBanner.updated_at).toLocaleString() : "n/a"}
             </p>
+            <div className="mt-2 rounded-md border border-gray-200 bg-white p-2">
+              <p className="text-[11px] font-medium text-gray-700">Revision History</p>
+              {incidentRevisions.length === 0 ? (
+                <p className="mt-1 text-[11px] text-gray-500">No revisions yet.</p>
+              ) : (
+                <div className="mt-1 space-y-1">
+                  {incidentRevisions.slice(0, 6).map((rev) => (
+                    <div key={`incident-revision-${rev.id}`} className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[11px] text-gray-700">
+                        #{rev.id} · {rev.severity} · {rev.status} · {new Date(rev.created_at).toLocaleString()}
+                      </p>
+                      {rev.status === "pending" ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => void handleReviewIncidentBannerRevision(rev.id, "approve")}
+                            disabled={incidentRevisionReviewLoadingId === rev.id}
+                            className="rounded-md border border-emerald-300 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleReviewIncidentBannerRevision(rev.id, "reject")}
+                            disabled={incidentRevisionReviewLoadingId === rev.id}
+                            className="rounded-md border border-rose-300 px-2 py-1 text-[11px] font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-60"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </article>
         </div>
 
