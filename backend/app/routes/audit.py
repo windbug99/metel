@@ -23,6 +23,22 @@ class AuditSettingsUpdateRequest(BaseModel):
     masking_policy: dict[str, Any] | None = None
 
 
+def _normalize_optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
 def _normalize_iso_datetime(value: str | None, *, field_name: str) -> str | None:
     text = str(value or "").strip()
     if not text:
@@ -60,25 +76,65 @@ def _query_audit_rows(
     status: str,
     tool_name: str,
     api_key_id: int | None,
+    team_id: int | None,
+    organization_id: int | None,
     error_code: str,
     connector: str,
     from_iso: str | None,
     to_iso: str | None,
 ) -> list[dict]:
+    scoped_user_ids = [user_id]
+    if organization_id is not None:
+        self_membership = (
+            supabase.table("org_memberships")
+            .select("organization_id")
+            .eq("organization_id", organization_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        ).data or []
+        if not self_membership:
+            return []
+        member_rows = (
+            supabase.table("org_memberships")
+            .select("user_id")
+            .eq("organization_id", organization_id)
+            .execute()
+        ).data or []
+        scoped_user_ids = [str(item.get("user_id") or "").strip() for item in member_rows if str(item.get("user_id") or "").strip()]
+        if not scoped_user_ids:
+            return []
+
+    if team_id is not None:
+        key_query = supabase.table("api_keys").select("id").eq("team_id", team_id)
+        if len(scoped_user_ids) == 1:
+            key_query = key_query.eq("user_id", scoped_user_ids[0])
+        else:
+            key_query = key_query.in_("user_id", scoped_user_ids)
+        key_rows = key_query.execute().data or []
+        key_ids = [item.get("id") for item in key_rows if item.get("id") is not None]
+        if not key_ids:
+            return []
+
     query = (
         supabase.table("tool_calls")
         .select(
-            "id,request_id,trace_id,api_key_id,tool_name,connector,status,error_code,latency_ms,"
+            "id,user_id,request_id,trace_id,api_key_id,tool_name,connector,status,error_code,latency_ms,"
             "request_payload,resolved_payload,risk_result,upstream_status,retry_count,backoff_ms,masked_fields,created_at"
         )
-        .eq("user_id", user_id)
     )
+    if len(scoped_user_ids) == 1:
+        query = query.eq("user_id", scoped_user_ids[0])
+    else:
+        query = query.in_("user_id", scoped_user_ids)
     if status != "all":
         query = query.eq("status", status)
     if tool_name:
         query = query.eq("tool_name", tool_name)
     if api_key_id is not None:
         query = query.eq("api_key_id", api_key_id)
+    if team_id is not None:
+        query = query.in_("api_key_id", key_ids)
     if error_code:
         query = query.eq("error_code", error_code)
     if connector:
@@ -90,13 +146,29 @@ def _query_audit_rows(
     return query.order("created_at", desc=True).limit(limit).execute().data or []
 
 
-def _query_api_key_map(*, supabase, user_id: str) -> dict[str, dict]:
-    key_rows = (
-        supabase.table("api_keys")
-        .select("id,name,key_prefix")
-        .eq("user_id", user_id)
-        .execute()
-    ).data or []
+def _query_api_key_map(*, supabase, user_id: str, organization_id: int | None) -> dict[str, dict]:
+    if organization_id is not None:
+        membership_rows = (
+            supabase.table("org_memberships")
+            .select("user_id")
+            .eq("organization_id", organization_id)
+            .execute()
+        ).data or []
+        member_user_ids = [str(item.get("user_id") or "").strip() for item in membership_rows if str(item.get("user_id") or "").strip()]
+        if not member_user_ids:
+            return {}
+        query = supabase.table("api_keys").select("id,name,key_prefix")
+        if len(member_user_ids) == 1:
+            key_rows = query.eq("user_id", member_user_ids[0]).execute().data or []
+        else:
+            key_rows = query.in_("user_id", member_user_ids).execute().data or []
+    else:
+        key_rows = (
+            supabase.table("api_keys")
+            .select("id,name,key_prefix")
+            .eq("user_id", user_id)
+            .execute()
+        ).data or []
     return {str(item.get("id")): item for item in key_rows}
 
 
@@ -133,6 +205,8 @@ async def list_audit_events(
     status: str = Query("all"),
     tool_name: str = Query(""),
     api_key_id: int | None = Query(default=None),
+    team_id: int | None = Query(default=None),
+    organization_id: int | None = Query(default=None),
     error_code: str = Query(""),
     connector: str = Query(""),
     decision: str = Query("all"),
@@ -147,6 +221,8 @@ async def list_audit_events(
     if normalized_status not in {"all", "success", "fail"}:
         normalized_status = "all"
     normalized_tool_name = tool_name.strip()
+    normalized_team_id = _normalize_optional_int(team_id)
+    normalized_organization_id = _normalize_optional_int(organization_id)
     normalized_error_code = error_code.strip()
     normalized_connector = str(connector or "").strip().lower()
     normalized_decision = str(decision or "").strip().lower()
@@ -162,12 +238,14 @@ async def list_audit_events(
         status=normalized_status,
         tool_name=normalized_tool_name,
         api_key_id=api_key_id,
+        team_id=normalized_team_id,
+        organization_id=normalized_organization_id,
         error_code=normalized_error_code,
         connector=normalized_connector,
         from_iso=from_iso,
         to_iso=to_iso,
     )
-    key_map = _query_api_key_map(supabase=supabase, user_id=user_id)
+    key_map = _query_api_key_map(supabase=supabase, user_id=user_id, organization_id=normalized_organization_id)
 
     items: list[dict] = []
     decision_counts: dict[str, int] = {
@@ -194,7 +272,7 @@ async def list_audit_events(
                 "timestamp": row.get("created_at"),
                 "action": {"tool_name": row.get("tool_name")},
                 "actor": {
-                    "user_id": user_id,
+                    "user_id": row.get("user_id"),
                     "api_key": {
                         "id": api_key_row.get("id") if api_key_row else row.get("api_key_id"),
                         "name": api_key_row.get("name") if api_key_row else None,
@@ -235,6 +313,8 @@ async def export_audit_events(
     status: str = Query("all"),
     tool_name: str = Query(""),
     api_key_id: int | None = Query(default=None),
+    team_id: int | None = Query(default=None),
+    organization_id: int | None = Query(default=None),
     error_code: str = Query(""),
     connector: str = Query(""),
     decision: str = Query("all"),
@@ -244,18 +324,20 @@ async def export_audit_events(
     user_id = await get_authenticated_user_id(request)
     settings = get_settings()
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
-    audit_settings = _load_audit_settings(supabase=supabase, user_id=user_id)
-    if not bool(audit_settings.get("export_enabled", True)):
-        raise HTTPException(status_code=403, detail="audit_export_disabled")
 
     export_format = format.strip().lower()
     if export_format not in {"jsonl", "csv"}:
         raise HTTPException(status_code=400, detail="invalid_export_format")
+    audit_settings = _load_audit_settings(supabase=supabase, user_id=user_id)
+    if not bool(audit_settings.get("export_enabled", True)):
+        raise HTTPException(status_code=403, detail="audit_export_disabled")
 
     normalized_status = status.strip().lower()
     if normalized_status not in {"all", "success", "fail"}:
         normalized_status = "all"
     normalized_tool_name = tool_name.strip()
+    normalized_team_id = _normalize_optional_int(team_id)
+    normalized_organization_id = _normalize_optional_int(organization_id)
     normalized_error_code = error_code.strip()
     normalized_connector = str(connector or "").strip().lower()
     normalized_decision = str(decision or "").strip().lower()
@@ -271,12 +353,14 @@ async def export_audit_events(
         status=normalized_status,
         tool_name=normalized_tool_name,
         api_key_id=api_key_id,
+        team_id=normalized_team_id,
+        organization_id=normalized_organization_id,
         error_code=normalized_error_code,
         connector=normalized_connector,
         from_iso=from_iso,
         to_iso=to_iso,
     )
-    key_map = _query_api_key_map(supabase=supabase, user_id=user_id)
+    key_map = _query_api_key_map(supabase=supabase, user_id=user_id, organization_id=normalized_organization_id)
 
     normalized_rows: list[dict] = []
     for row in rows:
@@ -396,10 +480,9 @@ async def get_audit_event_detail(
     row = (
         supabase.table("tool_calls")
         .select(
-            "id,request_id,trace_id,api_key_id,tool_name,connector,status,error_code,latency_ms,"
+            "id,user_id,request_id,trace_id,api_key_id,tool_name,connector,status,error_code,latency_ms,"
             "request_payload,resolved_payload,risk_result,upstream_status,retry_count,backoff_ms,masked_fields,created_at"
         )
-        .eq("user_id", user_id)
         .eq("id", event_id)
         .limit(1)
         .execute()
@@ -407,11 +490,32 @@ async def get_audit_event_detail(
     if not row:
         raise HTTPException(status_code=404, detail="audit_event_not_found")
     item = row[0]
+    owner_user_id = str(item.get("user_id") or "").strip()
+    if owner_user_id and owner_user_id != user_id:
+        my_org_rows = (
+            supabase.table("org_memberships")
+            .select("organization_id")
+            .eq("user_id", user_id)
+            .execute()
+        ).data or []
+        my_org_ids = [org.get("organization_id") for org in my_org_rows if org.get("organization_id") is not None]
+        if not my_org_ids:
+            raise HTTPException(status_code=404, detail="audit_event_not_found")
+        shared = (
+            supabase.table("org_memberships")
+            .select("organization_id")
+            .eq("user_id", owner_user_id)
+            .in_("organization_id", my_org_ids)
+            .limit(1)
+            .execute()
+        ).data or []
+        if not shared:
+            raise HTTPException(status_code=404, detail="audit_event_not_found")
 
     api_key_row = (
         supabase.table("api_keys")
         .select("id,name,key_prefix")
-        .eq("user_id", user_id)
+        .eq("user_id", owner_user_id or user_id)
         .eq("id", item.get("api_key_id"))
         .limit(1)
         .execute()
@@ -428,7 +532,7 @@ async def get_audit_event_detail(
             "connector": item.get("connector"),
         },
         "actor": {
-            "user_id": user_id,
+            "user_id": owner_user_id or user_id,
             "api_key": {
                 "id": key.get("id") if key else item.get("api_key_id"),
                 "name": key.get("name") if key else None,

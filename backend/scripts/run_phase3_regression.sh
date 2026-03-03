@@ -15,8 +15,15 @@ fi
 
 "$PYTHON_BIN" -m pytest -q \
   tests/test_api_keys_route.py \
+  tests/test_api_keys_drilldown_route.py \
   tests/test_policies_route.py \
   tests/test_mcp_routes.py \
   tests/test_tool_calls_route.py \
   tests/test_audit_route.py \
+  tests/test_audit_settings_route.py \
+  tests/test_organizations_route.py \
+  tests/test_teams_route.py \
+  tests/test_integrations_route.py \
+  tests/test_event_hooks.py \
+  tests/test_admin_route.py \
   tests/test_tenant_isolation_route.py

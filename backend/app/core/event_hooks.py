@@ -8,6 +8,15 @@ from typing import Any
 
 import httpx
 
+STATUS_PENDING = "pending"
+STATUS_RETRYING = "retrying"
+STATUS_SUCCESS = "success"
+STATUS_FAILED = "failed"
+STATUS_DEAD_LETTER = "dead_letter"
+
+ERR_INVALID_ENDPOINT = "invalid_endpoint_url"
+ERR_SUBSCRIPTION_INACTIVE = "subscription_inactive"
+
 
 def _signature(secret: str, body: str) -> str:
     return hmac.new(secret.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -70,8 +79,8 @@ async def _attempt_delivery(
     endpoint_url = str(subscription.get("endpoint_url") or "").strip()
     if not endpoint_url:
         update_payload = {
-            "status": "failed",
-            "error_message": "invalid_endpoint_url",
+            "status": STATUS_DEAD_LETTER,
+            "error_message": ERR_INVALID_ENDPOINT,
             "retry_count": retry_count,
             "next_retry_at": None,
             "delivered_at": None,
@@ -85,9 +94,9 @@ async def _attempt_delivery(
         event_type=event_type,
         payload=delivery_payload,
     )
-    if status == "success":
+    if status == STATUS_SUCCESS:
         update_payload = {
-            "status": "success",
+            "status": STATUS_SUCCESS,
             "http_status": http_status,
             "error_message": None,
             "delivered_at": now_iso,
@@ -101,7 +110,7 @@ async def _attempt_delivery(
     next_retry_count = retry_count + 1
     if next_retry_count <= max_retries:
         update_payload = {
-            "status": "retrying",
+            "status": STATUS_RETRYING,
             "http_status": http_status,
             "error_message": error_message,
             "retry_count": next_retry_count,
@@ -113,10 +122,11 @@ async def _attempt_delivery(
             "delivered_at": None,
         }
     else:
+        normalized_error = str(error_message or "").strip() or STATUS_FAILED
         update_payload = {
-            "status": "failed",
+            "status": STATUS_DEAD_LETTER,
             "http_status": http_status,
-            "error_message": error_message,
+            "error_message": f"max_retries_exceeded:{normalized_error}",
             "retry_count": next_retry_count,
             "next_retry_at": None,
             "delivered_at": None,
@@ -168,7 +178,7 @@ async def emit_webhook_event(
                     "user_id": user_id,
                     "event_type": event_type,
                     "payload": delivery_payload,
-                    "status": "pending",
+                    "status": STATUS_PENDING,
                     "retry_count": 0,
                     "next_retry_at": None,
                     "created_at": now_iso,
@@ -224,7 +234,7 @@ async def retry_webhook_delivery(
         return None
     subscription = subscription_rows[0]
     if not bool(subscription.get("is_active")):
-        update_payload = {"status": "failed", "error_message": "subscription_inactive", "next_retry_at": None}
+        update_payload = {"status": STATUS_DEAD_LETTER, "error_message": ERR_SUBSCRIPTION_INACTIVE, "next_retry_at": None}
         supabase.table("webhook_deliveries").update(update_payload).eq("id", delivery_id).eq("user_id", user_id).execute()
         return update_payload
     payload = row.get("payload")
@@ -267,6 +277,7 @@ async def process_pending_webhook_retries(
     processed = 0
     succeeded = 0
     failed = 0
+    dead_lettered = 0
     skipped = 0
     for row in rows:
         next_retry_at = _parse_iso(row.get("next_retry_at"))
@@ -289,8 +300,10 @@ async def process_pending_webhook_retries(
             skipped += 1
             continue
         processed += 1
-        if result.get("status") == "success":
+        if result.get("status") == STATUS_SUCCESS:
             succeeded += 1
-        elif result.get("status") == "failed":
+        elif result.get("status") == STATUS_FAILED:
             failed += 1
-    return {"processed": processed, "succeeded": succeeded, "failed": failed, "skipped": skipped}
+        elif result.get("status") == STATUS_DEAD_LETTER:
+            dead_lettered += 1
+    return {"processed": processed, "succeeded": succeeded, "failed": failed, "dead_lettered": dead_lettered, "skipped": skipped}

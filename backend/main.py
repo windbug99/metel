@@ -15,6 +15,7 @@ from app.routes.linear import router as linear_router
 from app.routes.integrations import router as integrations_router
 from app.routes.mcp import router as mcp_router
 from app.routes.notion import router as notion_router
+from app.routes.organizations import router as organizations_router
 from app.routes.policies import router as policies_router
 from app.routes.teams import router as teams_router
 from app.routes.tool_calls import router as tool_calls_router
@@ -141,6 +142,7 @@ async def health_check():
 
 app.include_router(notion_router)
 app.include_router(linear_router)
+app.include_router(organizations_router)
 app.include_router(api_keys_router)
 app.include_router(mcp_router)
 app.include_router(tool_calls_router)

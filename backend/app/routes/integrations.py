@@ -9,6 +9,7 @@ from supabase import create_client
 
 from app.core.auth import get_authenticated_user_id
 from app.core.config import get_settings
+from app.core.dead_letter_alert import send_dead_letter_alert
 from app.core.event_hooks import emit_webhook_event, process_pending_webhook_retries, retry_webhook_delivery
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
@@ -204,6 +205,20 @@ async def retry_delivery(request: Request, delivery_id: str):
     )
     if result is None:
         raise HTTPException(status_code=404, detail="delivery_not_found")
+    dead_letter_status = str(result.get("status") or "").strip().lower()
+    dead_letter_alert_url = str(getattr(settings, "dead_letter_alert_webhook_url", "") or "").strip()
+    if dead_letter_status == "dead_letter" and dead_letter_alert_url:
+        await send_dead_letter_alert(
+            webhook_url=dead_letter_alert_url,
+            user_id=user_id,
+            source="manual_retry",
+            dead_lettered=1,
+            details={
+                "delivery_id": delivery_id,
+                "status": dead_letter_status,
+                "error_message": result.get("error_message"),
+            },
+        )
     return {"ok": True, "result": result}
 
 
@@ -220,4 +235,15 @@ async def process_deliveries(request: Request, limit: int = Query(100, ge=1, le=
         base_backoff_seconds=max(1, int(getattr(settings, "webhook_retry_base_backoff_seconds", 30))),
         max_backoff_seconds=max(1, int(getattr(settings, "webhook_retry_max_backoff_seconds", 900))),
     )
+    dead_lettered = max(0, int(result.get("dead_lettered") or 0))
+    dead_letter_alert_url = str(getattr(settings, "dead_letter_alert_webhook_url", "") or "").strip()
+    dead_letter_min_count = max(1, int(getattr(settings, "dead_letter_alert_min_count", 1)))
+    if dead_letter_alert_url and dead_lettered >= dead_letter_min_count:
+        await send_dead_letter_alert(
+            webhook_url=dead_letter_alert_url,
+            user_id=user_id,
+            source="process_retries",
+            dead_lettered=dead_lettered,
+            details={"result": result, "limit": limit},
+        )
     return {"ok": True, **result}

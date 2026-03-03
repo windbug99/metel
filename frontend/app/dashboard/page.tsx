@@ -227,6 +227,22 @@ type TeamMemberItem = {
   created_at: string;
 };
 
+type OrganizationItem = {
+  id: number;
+  name: string;
+  role: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type OrganizationMemberItem = {
+  id: number;
+  organization_id: number;
+  user_id: string;
+  role: string;
+  created_at: string;
+};
+
 type ApiKeyDrilldown = {
   api_key: { id: number; name: string; key_prefix: string };
   window_days: number;
@@ -390,6 +406,8 @@ export default function DashboardPage() {
   const [auditRetentionDraft, setAuditRetentionDraft] = useState("90");
   const [auditExportEnabledDraft, setAuditExportEnabledDraft] = useState(true);
   const [auditMaskingPolicyDraft, setAuditMaskingPolicyDraft] = useState("{}");
+  const [auditTeamFilter, setAuditTeamFilter] = useState("");
+  const [auditOrganizationFilter, setAuditOrganizationFilter] = useState("");
   const [simulatorApiKeyId, setSimulatorApiKeyId] = useState("");
   const [simulatorToolName, setSimulatorToolName] = useState("notion_search");
   const [simulatorArguments, setSimulatorArguments] = useState("{}");
@@ -417,6 +435,16 @@ export default function DashboardPage() {
   const [teamMemberDeleteLoadingId, setTeamMemberDeleteLoadingId] = useState<number | null>(null);
   const [teamMemberUserDraft, setTeamMemberUserDraft] = useState<Record<number, string>>({});
   const [teamMemberRoleDraft, setTeamMemberRoleDraft] = useState<Record<number, string>>({});
+  const [organizations, setOrganizations] = useState<OrganizationItem[]>([]);
+  const [organizationsLoading, setOrganizationsLoading] = useState(false);
+  const [organizationsError, setOrganizationsError] = useState<string | null>(null);
+  const [creatingOrganization, setCreatingOrganization] = useState(false);
+  const [organizationMemberLoadingId, setOrganizationMemberLoadingId] = useState<number | null>(null);
+  const [organizationMemberDeleteLoadingId, setOrganizationMemberDeleteLoadingId] = useState<string | null>(null);
+  const [newOrganizationName, setNewOrganizationName] = useState("");
+  const [organizationMembers, setOrganizationMembers] = useState<Record<number, OrganizationMemberItem[]>>({});
+  const [organizationMemberUserDraft, setOrganizationMemberUserDraft] = useState<Record<number, string>>({});
+  const [organizationMemberRoleDraft, setOrganizationMemberRoleDraft] = useState<Record<number, string>>({});
   const [webhooks, setWebhooks] = useState<WebhookItem[]>([]);
   const [deliveries, setDeliveries] = useState<WebhookDeliveryItem[]>([]);
   const [integrationsLoading, setIntegrationsLoading] = useState(false);
@@ -683,6 +711,12 @@ export default function DashboardPage() {
     try {
       const headers = await getAuthHeaders();
       const query = new URLSearchParams({ limit: "20" });
+      if (auditTeamFilter) {
+        query.set("team_id", auditTeamFilter);
+      }
+      if (auditOrganizationFilter) {
+        query.set("organization_id", auditOrganizationFilter);
+      }
       const response = await fetch(`${apiBaseUrl}/api/audit/events?${query.toString()}`, { headers });
       if (!response.ok) {
         throw new Error("failed_audit_events_list");
@@ -696,7 +730,7 @@ export default function DashboardPage() {
     } finally {
       setAuditLoading(false);
     }
-  }, [apiBaseUrl, getAuthHeaders]);
+  }, [apiBaseUrl, getAuthHeaders, auditOrganizationFilter, auditTeamFilter]);
 
   const fetchAuditSettings = useCallback(async () => {
     if (!apiBaseUrl) {
@@ -790,7 +824,14 @@ export default function DashboardPage() {
     }
     try {
       const headers = await getAuthHeaders();
-      const response = await fetch(`${apiBaseUrl}/api/audit/export?format=${format}&limit=500`, { headers });
+      const query = new URLSearchParams({ format, limit: "500" });
+      if (auditTeamFilter) {
+        query.set("team_id", auditTeamFilter);
+      }
+      if (auditOrganizationFilter) {
+        query.set("organization_id", auditOrganizationFilter);
+      }
+      const response = await fetch(`${apiBaseUrl}/api/audit/export?${query.toString()}`, { headers });
       if (!response.ok) {
         throw new Error("failed_export_audit");
       }
@@ -806,6 +847,133 @@ export default function DashboardPage() {
       setAuditError(null);
     } catch {
       setAuditError("Failed to export audit events.");
+    }
+  };
+
+  const fetchOrganizations = useCallback(async () => {
+    if (!apiBaseUrl) {
+      return;
+    }
+    setOrganizationsLoading(true);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/organizations`, { headers });
+      if (!response.ok) {
+        throw new Error("failed_organization_list");
+      }
+      const payload = (await response.json()) as { items?: OrganizationItem[] };
+      setOrganizations(Array.isArray(payload.items) ? payload.items : []);
+      setOrganizationsError(null);
+    } catch {
+      setOrganizationsError("Failed to load organizations.");
+    } finally {
+      setOrganizationsLoading(false);
+    }
+  }, [apiBaseUrl, getAuthHeaders]);
+
+  const handleCreateOrganization = async () => {
+    if (!apiBaseUrl || !newOrganizationName.trim()) {
+      return;
+    }
+    setCreatingOrganization(true);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/organizations`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newOrganizationName.trim() }),
+      });
+      if (!response.ok) {
+        throw new Error("failed_create_organization");
+      }
+      setNewOrganizationName("");
+      await fetchOrganizations();
+      setOrganizationsError(null);
+    } catch {
+      setOrganizationsError("Failed to create organization.");
+    } finally {
+      setCreatingOrganization(false);
+    }
+  };
+
+  const fetchOrganizationMembers = useCallback(
+    async (organizationId: number) => {
+      if (!apiBaseUrl) {
+        return;
+      }
+      setOrganizationMemberLoadingId(organizationId);
+      try {
+        const headers = await getAuthHeaders();
+        const response = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}/members`, { headers });
+        if (!response.ok) {
+          throw new Error("failed_organization_members");
+        }
+        const payload = (await response.json()) as { items?: OrganizationMemberItem[] };
+        setOrganizationMembers((prev) => ({ ...prev, [organizationId]: Array.isArray(payload.items) ? payload.items : [] }));
+        setOrganizationsError(null);
+      } catch {
+        setOrganizationsError("Failed to load organization members.");
+      } finally {
+        setOrganizationMemberLoadingId(null);
+      }
+    },
+    [apiBaseUrl, getAuthHeaders]
+  );
+
+  const handleUpsertOrganizationMember = async (organizationId: number) => {
+    if (!apiBaseUrl) {
+      return;
+    }
+    const userId = (organizationMemberUserDraft[organizationId] ?? "").trim();
+    if (!userId) {
+      setOrganizationsError("Organization member user_id is required.");
+      return;
+    }
+    setOrganizationMemberLoadingId(organizationId);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}/members`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          role: (organizationMemberRoleDraft[organizationId] ?? "member").trim() || "member",
+        }),
+      });
+      if (!response.ok) {
+        throw new Error("failed_organization_member_upsert");
+      }
+      setOrganizationMemberUserDraft((prev) => ({ ...prev, [organizationId]: "" }));
+      setOrganizationMemberRoleDraft((prev) => ({ ...prev, [organizationId]: "member" }));
+      await fetchOrganizationMembers(organizationId);
+      setOrganizationsError(null);
+    } catch {
+      setOrganizationsError("Failed to add or update organization member.");
+    } finally {
+      setOrganizationMemberLoadingId(null);
+    }
+  };
+
+  const handleDeleteOrganizationMember = async (organizationId: number, memberUserId: string) => {
+    if (!apiBaseUrl) {
+      return;
+    }
+    setOrganizationMemberDeleteLoadingId(`${organizationId}:${memberUserId}`);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}/members/${memberUserId}`, {
+        method: "DELETE",
+        headers,
+      });
+      if (!response.ok) {
+        throw new Error("failed_organization_member_delete");
+      }
+      await fetchOrganizationMembers(organizationId);
+      setOrganizationsError(null);
+    } catch {
+      setOrganizationsError("Failed to delete organization member.");
+    } finally {
+      setOrganizationMemberDeleteLoadingId(null);
     }
   };
 
@@ -1043,6 +1211,7 @@ export default function DashboardPage() {
         fetchToolCalls(),
         fetchAuditEvents(),
         fetchAuditSettings(),
+        fetchOrganizations(),
         fetchTeams(),
         fetchIntegrations(),
         fetchAdminOps(),
@@ -1063,6 +1232,7 @@ export default function DashboardPage() {
     fetchToolCalls,
     fetchAuditEvents,
     fetchAuditSettings,
+    fetchOrganizations,
     fetchTeams,
     fetchIntegrations,
     fetchAdminOps,
@@ -1192,7 +1362,7 @@ export default function DashboardPage() {
       const payload = (await response.json()) as { api_key?: string };
       setCreatedApiKey(payload.api_key ?? null);
       setNewApiKeyTeamId("");
-      await Promise.all([fetchApiKeys(), fetchOverview(), fetchTrendAndBreakdown(), fetchToolCalls(), fetchAuditEvents(), fetchAuditSettings(), fetchTeams(), fetchIntegrations(), fetchAdminOps()]);
+      await Promise.all([fetchApiKeys(), fetchOverview(), fetchTrendAndBreakdown(), fetchToolCalls(), fetchAuditEvents(), fetchAuditSettings(), fetchOrganizations(), fetchTeams(), fetchIntegrations(), fetchAdminOps()]);
     } catch {
       setApiKeysError("Failed to create API key.");
     } finally {
@@ -1214,7 +1384,7 @@ export default function DashboardPage() {
       if (!response.ok) {
         throw new Error("failed_revoke_api_key");
       }
-      await Promise.all([fetchApiKeys(), fetchOverview(), fetchTrendAndBreakdown(), fetchToolCalls(), fetchAuditEvents(), fetchAuditSettings(), fetchTeams(), fetchIntegrations(), fetchAdminOps()]);
+      await Promise.all([fetchApiKeys(), fetchOverview(), fetchTrendAndBreakdown(), fetchToolCalls(), fetchAuditEvents(), fetchAuditSettings(), fetchOrganizations(), fetchTeams(), fetchIntegrations(), fetchAdminOps()]);
     } catch {
       setApiKeysError("Failed to revoke API key.");
     } finally {
@@ -1287,7 +1457,7 @@ export default function DashboardPage() {
       }
       const payload = (await response.json()) as { api_key?: string };
       setCreatedApiKey(payload.api_key ?? null);
-      await Promise.all([fetchApiKeys(), fetchOverview(), fetchTrendAndBreakdown(), fetchToolCalls(), fetchAuditEvents(), fetchAuditSettings(), fetchTeams(), fetchIntegrations(), fetchAdminOps()]);
+      await Promise.all([fetchApiKeys(), fetchOverview(), fetchTrendAndBreakdown(), fetchToolCalls(), fetchAuditEvents(), fetchAuditSettings(), fetchOrganizations(), fetchTeams(), fetchIntegrations(), fetchAdminOps()]);
     } catch {
       setApiKeysError("Failed to rotate API key.");
     } finally {
@@ -2316,7 +2486,41 @@ export default function DashboardPage() {
             >
               {auditSettingsSaving ? "Saving..." : "Save Settings"}
             </button>
+            <select
+              value={auditOrganizationFilter}
+              onChange={(event) => setAuditOrganizationFilter(event.target.value)}
+              className="rounded-md border border-gray-300 px-2 py-1 text-xs"
+            >
+              <option value="">All organizations</option>
+              {organizations.map((org) => (
+                <option key={`audit-org-${org.id}`} value={String(org.id)}>
+                  Org #{org.id} - {org.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={auditTeamFilter}
+              onChange={(event) => setAuditTeamFilter(event.target.value)}
+              className="rounded-md border border-gray-300 px-2 py-1 text-xs"
+            >
+              <option value="">All teams</option>
+              {teams.map((team) => (
+                <option key={`audit-team-${team.id}`} value={String(team.id)}>
+                  Team #{team.id} - {team.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => void fetchAuditEvents()}
+              disabled={auditLoading}
+              className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+            >
+              Apply Filters
+            </button>
           </div>
+          {organizationsError ? <p className="mt-1 text-[11px] text-red-600">{organizationsError}</p> : null}
+          {organizationsLoading ? <p className="mt-1 text-[11px] text-gray-500">Loading organizations...</p> : null}
           <textarea
             value={auditMaskingPolicyDraft}
             onChange={(event) => setAuditMaskingPolicyDraft(event.target.value)}
@@ -2406,12 +2610,127 @@ export default function DashboardPage() {
             ))
           )}
         </div>
-        {auditDetail ? (
+      {auditDetail ? (
           <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
             <p className="text-xs font-medium text-gray-800">Selected Audit Detail: #{auditDetail.id}</p>
             <pre className="mt-2 overflow-x-auto text-[11px] text-gray-700">{JSON.stringify(auditDetail, null, 2)}</pre>
           </div>
         ) : null}
+      </section>
+
+      <section className="mt-8 rounded-xl border border-gray-200 p-5">
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Organizations</h2>
+            <p className="mt-1 text-sm text-gray-600">Create organizations and manage organization membership scope.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void fetchOrganizations()}
+            disabled={organizationsLoading}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+          >
+            Refresh
+          </button>
+        </div>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <input
+            value={newOrganizationName}
+            onChange={(event) => setNewOrganizationName(event.target.value)}
+            placeholder="Organization name"
+            className="rounded-md border border-gray-300 px-3 py-2 text-xs"
+          />
+          <button
+            type="button"
+            onClick={() => void handleCreateOrganization()}
+            disabled={creatingOrganization}
+            className="rounded-md border border-gray-300 px-3 py-2 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+          >
+            {creatingOrganization ? "Creating..." : "Create Organization"}
+          </button>
+        </div>
+        {organizationsError ? <p className="mt-2 text-xs text-red-600">{organizationsError}</p> : null}
+        {organizationsLoading ? <p className="mt-2 text-xs text-gray-500">Loading organizations...</p> : null}
+        <div className="mt-3 space-y-2">
+          {organizations.length === 0 ? (
+            <p className="text-xs text-gray-500">No organizations yet.</p>
+          ) : (
+            organizations.map((org) => (
+              <article key={org.id} className="rounded-lg border border-gray-200 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-gray-900">
+                    Org #{org.id} - {org.name}
+                  </p>
+                  <p className="text-xs text-gray-600">my role: {org.role}</p>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void fetchOrganizationMembers(org.id)}
+                    disabled={organizationMemberLoadingId === org.id}
+                    className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+                  >
+                    {organizationMemberLoadingId === org.id ? "Loading..." : "Load Members"}
+                  </button>
+                  <input
+                    value={organizationMemberUserDraft[org.id] ?? ""}
+                    onChange={(event) =>
+                      setOrganizationMemberUserDraft((prev) => ({
+                        ...prev,
+                        [org.id]: event.target.value,
+                      }))
+                    }
+                    placeholder="member user_id (uuid)"
+                    className="min-w-[260px] rounded-md border border-gray-300 px-2 py-1 text-xs"
+                  />
+                  <select
+                    value={organizationMemberRoleDraft[org.id] ?? "member"}
+                    onChange={(event) =>
+                      setOrganizationMemberRoleDraft((prev) => ({
+                        ...prev,
+                        [org.id]: event.target.value,
+                      }))
+                    }
+                    className="rounded-md border border-gray-300 px-2 py-1 text-xs"
+                  >
+                    <option value="member">member</option>
+                    <option value="admin">admin</option>
+                    <option value="owner">owner</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => void handleUpsertOrganizationMember(org.id)}
+                    disabled={organizationMemberLoadingId === org.id}
+                    className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+                  >
+                    {organizationMemberLoadingId === org.id ? "Saving..." : "Add / Update Member"}
+                  </button>
+                </div>
+                {(organizationMembers[org.id] ?? []).length > 0 ? (
+                  <div className="mt-2 space-y-1">
+                    {(organizationMembers[org.id] ?? []).map((member) => (
+                      <div key={`org-${org.id}-member-${member.user_id}`} className="flex items-center justify-between gap-2">
+                        <p className="text-xs text-gray-700">
+                          {member.user_id} · {member.role}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteOrganizationMember(org.id, member.user_id)}
+                          disabled={organizationMemberDeleteLoadingId === `${org.id}:${member.user_id}`}
+                          className="rounded-md border border-gray-300 px-2 py-1 text-[11px] font-medium text-gray-900 hover:bg-gray-100 disabled:opacity-60"
+                        >
+                          {organizationMemberDeleteLoadingId === `${org.id}:${member.user_id}` ? "Deleting..." : "Delete"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-gray-500">No loaded members.</p>
+                )}
+              </article>
+            ))
+          )}
+        </div>
       </section>
 
       <section className="mt-8 rounded-xl border border-gray-200 p-5">

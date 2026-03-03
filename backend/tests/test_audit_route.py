@@ -341,6 +341,142 @@ def test_export_audit_events_invalid_format_raises(monkeypatch):
         assert False, "expected HTTPException"
 
 
+def test_list_audit_events_team_filter_without_keys_returns_empty(monkeypatch):
+    class _Query:
+        def __init__(self, table_name: str):
+            self.table_name = table_name
+            self.ops: list[tuple[str, str, object]] = []
+
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, field: str, value):
+            self.ops.append(("eq", field, value))
+            return self
+
+        def execute(self):
+            if self.table_name == "api_keys":
+                return SimpleNamespace(data=[])
+            return SimpleNamespace(data=[])
+
+    class _Client:
+        def __init__(self):
+            self.queries: list[str] = []
+
+        def table(self, name: str):
+            self.queries.append(name)
+            return _Query(name)
+
+    client = _Client()
+
+    async def _fake_user(_request: Request) -> str:
+        return "user-1"
+
+    monkeypatch.setattr("app.routes.audit.get_authenticated_user_id", _fake_user)
+    monkeypatch.setattr("app.routes.audit.create_client", lambda *_args, **_kwargs: client)
+    monkeypatch.setattr(
+        "app.routes.audit.get_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.supabase.co", supabase_service_role_key="service-role-key"),
+    )
+
+    out = asyncio.run(
+        list_audit_events(
+            _request(),
+            limit=50,
+            status="all",
+            tool_name="",
+            api_key_id=None,
+            team_id=999,
+            error_code="",
+            connector="",
+            decision="all",
+            from_="",
+            to="",
+        )
+    )
+
+    assert out["count"] == 0
+    assert "api_keys" in client.queries
+    assert "tool_calls" not in client.queries
+
+
+def test_list_audit_events_organization_filter_scopes_to_org_members(monkeypatch):
+    class _Query:
+        def __init__(self, client, table_name: str):
+            self.client = client
+            self.table_name = table_name
+            self.ops: list[tuple[str, str, object]] = []
+
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, field: str, value):
+            self.ops.append(("eq", field, value))
+            return self
+
+        def in_(self, field: str, values):
+            self.ops.append(("in", field, tuple(values)))
+            return self
+
+        def order(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            self.client.query_logs.append((self.table_name, list(self.ops)))
+            if self.table_name == "org_memberships":
+                has_owner_check = any(op == ("eq", "user_id", "user-1") for op in self.ops)
+                if has_owner_check:
+                    return SimpleNamespace(data=[{"organization_id": 1}])
+                return SimpleNamespace(data=[{"user_id": "user-1"}, {"user_id": "user-2"}])
+            if self.table_name == "tool_calls":
+                return SimpleNamespace(data=[])
+            if self.table_name == "api_keys":
+                return SimpleNamespace(data=[])
+            return SimpleNamespace(data=[])
+
+    class _Client:
+        def __init__(self):
+            self.query_logs: list[tuple[str, list[tuple[str, str, object]]]] = []
+
+        def table(self, name: str):
+            return _Query(self, name)
+
+    client = _Client()
+
+    async def _fake_user(_request: Request) -> str:
+        return "user-1"
+
+    monkeypatch.setattr("app.routes.audit.get_authenticated_user_id", _fake_user)
+    monkeypatch.setattr("app.routes.audit.create_client", lambda *_args, **_kwargs: client)
+    monkeypatch.setattr(
+        "app.routes.audit.get_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.supabase.co", supabase_service_role_key="service-role-key"),
+    )
+
+    out = asyncio.run(
+        list_audit_events(
+            _request(),
+            limit=20,
+            status="all",
+            tool_name="",
+            api_key_id=None,
+            team_id=None,
+            organization_id=1,
+            error_code="",
+            connector="",
+            decision="all",
+            from_="",
+            to="",
+        )
+    )
+    assert out["count"] == 0
+    tool_calls_queries = [item for item in client.query_logs if item[0] == "tool_calls"]
+    assert any(("in", "user_id", ("user-1", "user-2")) in ops for _, ops in tool_calls_queries)
+
+
 def test_get_audit_event_detail(monkeypatch):
     class _Query:
         def __init__(self, table_name: str):
