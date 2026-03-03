@@ -24,6 +24,9 @@ def _load_env() -> tuple[str, str]:
         raise BridgeConfigError("API_BASE_URL is required")
     if not api_key:
         raise BridgeConfigError("API_KEY is required")
+    # Allow both root URL and /mcp URL in env for operator safety.
+    if base_url.endswith("/mcp"):
+        base_url = base_url[: -len("/mcp")]
     return base_url, api_key
 
 

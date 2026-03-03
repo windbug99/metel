@@ -43,6 +43,8 @@ cat <<'EOF'
 
 [predeploy-dag] 6) staging smoke scenario (manual)
 - Run: follow `docs/mcp_smoke_test_checklist.md`
+- Automated option:
+  cd backend && API_BASE_URL="https://<host>/mcp" API_KEY="metel_xxx" ./scripts/run_mcp_smoke.sh
 - Verify:
   1) `list_tools` success
   2) Notion/Linear `call_tool` success

@@ -9,6 +9,24 @@ export API_BASE_URL="https://metel-production.up.railway.app"
 export API_KEY="metel_xxx"
 ```
 
+## 0.1) Automated smoke (recommended)
+
+```bash
+cd backend
+API_BASE_URL="$API_BASE_URL" API_KEY="$API_KEY" ./scripts/run_mcp_smoke.sh
+```
+
+Optional rate limit check:
+
+```bash
+cd backend
+API_BASE_URL="$API_BASE_URL" API_KEY="$API_KEY" RUN_RATE_LIMIT_TEST=1 RATE_LIMIT_CALLS=40 ./scripts/run_mcp_smoke.sh
+```
+
+Expected:
+- exit code `0` when all checks pass
+- non-zero exit code if any check fails
+
 ## 1) list_tools
 
 ```bash

@@ -30,6 +30,18 @@ Then send a JSON-RPC line manually:
 
 You should receive a JSON response line with `result.protocolVersion`.
 
+Automated quick check (recommended):
+
+```bash
+cd backend
+API_BASE_URL="https://metel-production.up.railway.app" \
+API_KEY="metel_xxx" \
+python scripts/check_claude_bridge_tools.py
+```
+
+Expected:
+- `OK tools_count=N` (N >= 1)
+
 ## 3) Claude Desktop config
 
 Add an MCP server entry in `claude_desktop_config.json`.
@@ -42,7 +54,8 @@ Add an MCP server entry in `claude_desktop_config.json`.
       "args": ["/Users/tomato/cursor/metel/backend/scripts/mcp_stdio_bridge.py"],
       "env": {
         "API_BASE_URL": "https://metel-production.up.railway.app",
-        "API_KEY": "metel_xxx"
+        "API_KEY": "metel_xxx",
+        "BRIDGE_DEBUG": "1"
       }
     }
   }
@@ -60,6 +73,7 @@ Add an MCP server entry in `claude_desktop_config.json`.
 - No tools shown:
   - Check OAuth connection status in dashboard (Notion/Linear).
   - Check API key validity and `allowed_tools`.
+  - Run `python scripts/check_claude_bridge_tools.py` first.
 - Bridge exits immediately:
   - Ensure `API_BASE_URL` and `API_KEY` are set.
 - Tool call fails:
