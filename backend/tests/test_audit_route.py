@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from app.routes.audit import list_audit_events
+from app.routes.audit import export_audit_events, list_audit_events
 
 
 def _request() -> Request:
@@ -151,5 +151,191 @@ def test_list_audit_events_invalid_datetime_raises(monkeypatch):
     except HTTPException as exc:
         assert exc.status_code == 400
         assert exc.detail == "invalid_datetime:from"
+    else:
+        assert False, "expected HTTPException"
+
+
+def test_export_audit_events_jsonl(monkeypatch):
+    class _Query:
+        def __init__(self, table_name: str):
+            self.table_name = table_name
+
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def gte(self, *_args, **_kwargs):
+            return self
+
+        def lte(self, *_args, **_kwargs):
+            return self
+
+        def order(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            if self.table_name == "tool_calls":
+                return SimpleNamespace(
+                    data=[
+                        {
+                            "id": 1,
+                            "request_id": "r1",
+                            "api_key_id": 10,
+                            "tool_name": "notion_search",
+                            "status": "success",
+                            "error_code": None,
+                            "latency_ms": 100,
+                            "created_at": "2026-03-03T00:00:00+00:00",
+                        }
+                    ]
+                )
+            if self.table_name == "api_keys":
+                return SimpleNamespace(data=[{"id": 10, "name": "prod", "key_prefix": "metel_prod"}])
+            return SimpleNamespace(data=[])
+
+    class _Client:
+        def table(self, name: str):
+            return _Query(name)
+
+    async def _fake_user(_request: Request) -> str:
+        return "user-1"
+
+    monkeypatch.setattr("app.routes.audit.get_authenticated_user_id", _fake_user)
+    monkeypatch.setattr("app.routes.audit.create_client", lambda *_args, **_kwargs: _Client())
+    monkeypatch.setattr(
+        "app.routes.audit.get_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.supabase.co", supabase_service_role_key="service-role-key"),
+    )
+
+    response = asyncio.run(
+        export_audit_events(
+            _request(),
+            format="jsonl",
+            limit=10,
+            status="all",
+            tool_name="",
+            api_key_id=None,
+            error_code="",
+            from_="",
+            to="",
+        )
+    )
+    assert response.media_type == "application/x-ndjson"
+    assert "audit-events.jsonl" in response.headers.get("Content-Disposition", "")
+    body = response.body.decode("utf-8")
+    assert "\"tool_name\": \"notion_search\"" in body
+    assert "\"decision\": \"allowed\"" in body
+
+
+def test_export_audit_events_csv(monkeypatch):
+    class _Query:
+        def __init__(self, table_name: str):
+            self.table_name = table_name
+
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def gte(self, *_args, **_kwargs):
+            return self
+
+        def lte(self, *_args, **_kwargs):
+            return self
+
+        def order(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            if self.table_name == "tool_calls":
+                return SimpleNamespace(
+                    data=[
+                        {
+                            "id": 2,
+                            "request_id": "r2",
+                            "api_key_id": 10,
+                            "tool_name": "linear_list_issues",
+                            "status": "fail",
+                            "error_code": "policy_blocked",
+                            "latency_ms": 50,
+                            "created_at": "2026-03-03T00:01:00+00:00",
+                        }
+                    ]
+                )
+            if self.table_name == "api_keys":
+                return SimpleNamespace(data=[{"id": 10, "name": "prod", "key_prefix": "metel_prod"}])
+            return SimpleNamespace(data=[])
+
+    class _Client:
+        def table(self, name: str):
+            return _Query(name)
+
+    async def _fake_user(_request: Request) -> str:
+        return "user-1"
+
+    monkeypatch.setattr("app.routes.audit.get_authenticated_user_id", _fake_user)
+    monkeypatch.setattr("app.routes.audit.create_client", lambda *_args, **_kwargs: _Client())
+    monkeypatch.setattr(
+        "app.routes.audit.get_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.supabase.co", supabase_service_role_key="service-role-key"),
+    )
+
+    response = asyncio.run(
+        export_audit_events(
+            _request(),
+            format="csv",
+            limit=10,
+            status="all",
+            tool_name="",
+            api_key_id=None,
+            error_code="",
+            from_="",
+            to="",
+        )
+    )
+    assert response.media_type == "text/csv"
+    assert "audit-events.csv" in response.headers.get("Content-Disposition", "")
+    body = response.body.decode("utf-8")
+    assert "tool_name,status,decision,error_code" in body
+    assert "linear_list_issues,fail,policy_blocked,policy_blocked" in body
+
+
+def test_export_audit_events_invalid_format_raises(monkeypatch):
+    async def _fake_user(_request: Request) -> str:
+        return "user-1"
+
+    monkeypatch.setattr("app.routes.audit.get_authenticated_user_id", _fake_user)
+    monkeypatch.setattr(
+        "app.routes.audit.get_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.supabase.co", supabase_service_role_key="service-role-key"),
+    )
+    monkeypatch.setattr("app.routes.audit.create_client", lambda *_args, **_kwargs: SimpleNamespace(table=lambda _name: None))
+
+    try:
+        asyncio.run(
+            export_audit_events(
+                _request(),
+                format="xml",
+                limit=10,
+                status="all",
+                tool_name="",
+                api_key_id=None,
+                error_code="",
+                from_="",
+                to="",
+            )
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert exc.detail == "invalid_export_format"
     else:
         assert False, "expected HTTPException"

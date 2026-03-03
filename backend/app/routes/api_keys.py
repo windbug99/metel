@@ -105,6 +105,20 @@ def _normalize_api_key_policy(raw_policy: dict[str, Any] | None) -> dict[str, An
             tools.append(name)
         normalized["deny_tools"] = tools
 
+    allowed_linear_team_ids = raw_policy.get("allowed_linear_team_ids")
+    if allowed_linear_team_ids is not None:
+        if not isinstance(allowed_linear_team_ids, list):
+            raise HTTPException(status_code=400, detail="invalid_policy_json:allowed_linear_team_ids")
+        team_ids: list[str] = []
+        seen_team_ids: set[str] = set()
+        for item in allowed_linear_team_ids:
+            value = str(item or "").strip()
+            if not value or value in seen_team_ids:
+                continue
+            seen_team_ids.add(value)
+            team_ids.append(value)
+        normalized["allowed_linear_team_ids"] = team_ids
+
     return normalized
 
 
@@ -113,7 +127,19 @@ def _validate_policy_conflict(
     allowed_tools: list[str] | None,
     policy_json: dict[str, Any] | None,
 ) -> None:
-    if not allowed_tools or not policy_json:
+    if not policy_json:
+        return
+
+    allowed_services_raw = policy_json.get("allowed_services")
+    if isinstance(allowed_services_raw, list) and allowed_services_raw:
+        allowed_services = {str(item).strip().lower() for item in allowed_services_raw if str(item).strip()}
+        if "allowed_linear_team_ids" in policy_json and "linear" not in allowed_services:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{ERR_POLICY_CONFLICT}:linear_team_policy_without_linear_service",
+            )
+
+    if not allowed_tools:
         return
 
     deny_tools_raw = policy_json.get("deny_tools")
@@ -125,9 +151,7 @@ def _validate_policy_conflict(
             detail=f"{ERR_POLICY_CONFLICT}:allowed_tool_in_deny_tools:{overlap[0]}",
         )
 
-    allowed_services_raw = policy_json.get("allowed_services")
     if isinstance(allowed_services_raw, list) and allowed_services_raw:
-        allowed_services = {str(item).strip().lower() for item in allowed_services_raw if str(item).strip()}
         tool_service_map = _phase1_tool_service_map()
         for tool_name in allowed_tools:
             service = str(tool_service_map.get(tool_name, "")).strip().lower()

@@ -225,6 +225,17 @@ def _policy_deny_tools(api_key: dict[str, Any]) -> set[str]:
     return {str(item).strip() for item in items if str(item).strip()}
 
 
+def _policy_allowed_linear_team_ids(api_key: dict[str, Any]) -> set[str] | None:
+    policy = _api_key_policy(api_key)
+    if not policy:
+        return None
+    items = policy.get("allowed_linear_team_ids")
+    if not isinstance(items, list):
+        return None
+    team_ids = {str(item).strip() for item in items if str(item).strip()}
+    return team_ids or None
+
+
 def _apply_policy_filters(tools: list[ToolDefinition], api_key: dict[str, Any]) -> list[ToolDefinition]:
     allowed_services = _policy_allowed_services(api_key)
     deny_tools = _policy_deny_tools(api_key)
@@ -384,6 +395,16 @@ async def mcp_call_tool(
             payload=arguments,
             execute_tool=execute_tool,
         )
+        allowed_linear_team_ids = _policy_allowed_linear_team_ids(api_key)
+        if tool.service == "linear" and allowed_linear_team_ids is not None:
+            team_id = str(resolved_arguments.get("team_id") or "").strip()
+            if team_id and team_id not in allowed_linear_team_ids:
+                return _jsonrpc_error(
+                    req_id=req_id,
+                    code=CODE_ACCESS_DENIED,
+                    message=ERR_ACCESS_DENIED,
+                    data={"reason": "team_not_allowed", "team_id": team_id},
+                )
         max_retries = max(0, int(getattr(settings, "mcp_retry_max_retries", 1)))
         backoff_ms = max(0, int(getattr(settings, "mcp_retry_backoff_ms", 250)))
         retried = await run_with_retry(

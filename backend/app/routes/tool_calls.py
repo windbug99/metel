@@ -127,6 +127,13 @@ async def list_tool_calls(
     policy_blocked_24h = len([row for row in stats_rows if row.get("error_code") == "policy_blocked"])
     quota_exceeded_24h = len([row for row in stats_rows if row.get("error_code") == "quota_exceeded"])
     policy_override_allowed_24h = len([row for row in stats_rows if row.get("error_code") == "policy_override_allowed"])
+    access_denied_24h = len(
+        [
+            row
+            for row in stats_rows
+            if str(row.get("error_code") or "") in {"access_denied", "service_not_allowed", "tool_not_allowed_for_api_key"}
+        ]
+    )
     resolve_fail_24h = len(
         [
             row
@@ -158,6 +165,7 @@ async def list_tool_calls(
             "retryable_fail_rate_24h": _ratio(upstream_temporary_24h, calls_24h),
             "policy_blocked_24h": policy_blocked_24h,
             "quota_exceeded_24h": quota_exceeded_24h,
+            "access_denied_24h": access_denied_24h,
             "high_risk_allowed_24h": policy_override_allowed_24h,
             "policy_override_usage_24h": _ratio(policy_override_allowed_24h, calls_24h),
             "resolve_fail_24h": resolve_fail_24h,

@@ -68,6 +68,7 @@
 - 1차 구현 완료:
   - `list_tools`에서 `allowed_services`, `deny_tools` 필터 반영
   - `call_tool`에서 `deny_tools`/`allowed_services` 권한 차단 반영
+  - `call_tool`에서 `policy_json.allowed_linear_team_ids` 기반 팀 단위 실행 제한 반영
   - 에러 코드: `access_denied`, `service_not_allowed`
 - 남은 작업:
   - 감사 로그에 `policy_decision`/`policy_source` 세분 필드 추가
@@ -120,11 +121,9 @@
 - 정책 운영 상태를 대시보드에서 수치로 확인 가능
 
 진행 상태(2026-03-03):
-- 부분 완료:
-  - `access_denied_count`는 Audit summary에서 확인 가능
-  - 정책 차단/실패 관련 지표는 MCP Usage + Audit 영역에서 확인 가능
-- 남은 작업:
-  - `high_risk_allowed_count`, `policy_override_usage` 전용 지표 분리
+- 구현 완료:
+  - MCP Usage summary에 `access_denied_24h` 추가
+  - MCP Usage/Audit summary에 `high_risk_allowed_count`, `policy_override_usage` 지표 분리 노출
 
 ## P3-07. Error Code/Policy Code 정리
 
@@ -165,6 +164,36 @@
   - CI 워크플로우 `backend-phase3-regression.yml` 추가
     - backend: policy/audit 회귀 테스트
     - frontend: dashboard typecheck(`pnpm -s tsc --noEmit`)
+
+## P3-09. Event Log Export
+
+작업:
+- `/api/audit/export` 추가
+- 형식 지원: `jsonl`, `csv`
+- 기존 감사 필터(status/tool/api_key/error_code/from/to) 재사용
+
+완료 기준:
+- 운영자가 감사 이벤트를 파일로 내려받아 외부 분석/SIEM 파이프라인에 전달 가능
+
+진행 상태(2026-03-03):
+- 구현 완료:
+  - `/api/audit/export` 구현 (`jsonl`, `csv`)
+  - 단위 테스트 추가: format별 응답 및 에러 케이스 검증
+
+## P3-10. 멀티테넌시 격리 검증
+
+작업:
+- 주요 조회 API에서 `user_id` 스코프 강제 여부 테스트
+  - `api_keys`, `tool_calls`, `audit/events`, `audit/export`
+- Phase 3 회귀 스크립트에 포함
+
+완료 기준:
+- 타 사용자 데이터 조회 경로가 테스트에서 회귀 방지됨
+
+진행 상태(2026-03-03):
+- 구현 완료:
+  - `tests/test_tenant_isolation_route.py` 추가
+  - `run_phase3_regression.sh`에 멀티테넌시 검증 테스트 포함
 
 ## 3) 권장 구현 순서 (1~2주)
 

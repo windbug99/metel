@@ -805,3 +805,42 @@ def test_mcp_call_tool_denied_by_policy_allowed_services(monkeypatch):
     response = asyncio.run(mcp.mcp_call_tool(req, authorization="Bearer metel_xxx"))
     payload = response.body.decode("utf-8")
     assert "service_not_allowed" in payload
+
+
+def test_mcp_call_tool_denied_by_policy_allowed_linear_team_ids(monkeypatch):
+    async def _fake_auth(_authorization: str | None):
+        return {
+            "id": 54,
+            "user_id": "user-1",
+            "is_active": True,
+            "policy_json": {"allowed_linear_team_ids": ["team-a"]},
+        }
+
+    class _Tool:
+        service = "linear"
+
+    class _Registry:
+        def get_tool(self, _name: str):
+            return _Tool()
+
+    monkeypatch.setattr("app.routes.mcp._authenticate_api_key", _fake_auth)
+    monkeypatch.setattr("app.routes.mcp._is_rate_limited", lambda **_kwargs: False)
+    monkeypatch.setattr(
+        "app.routes.mcp.get_settings",
+        lambda: SimpleNamespace(supabase_url="x", supabase_service_role_key="y", mcp_retry_max_retries=0, mcp_retry_backoff_ms=0),
+    )
+    monkeypatch.setattr("app.routes.mcp.create_client", lambda *_args, **_kwargs: _Supabase())
+    monkeypatch.setattr("app.routes.mcp.load_registry", lambda: _Registry())
+
+    req = _Request(
+        {
+            "jsonrpc": "2.0",
+            "id": "11",
+            "method": "call_tool",
+            "params": {"name": "linear_create_issue", "arguments": {"team_id": "team-b", "title": "x"}},
+        }
+    )
+    response = asyncio.run(mcp.mcp_call_tool(req, authorization="Bearer metel_xxx"))
+    payload = response.body.decode("utf-8")
+    assert "access_denied" in payload
+    assert "team_not_allowed" in payload

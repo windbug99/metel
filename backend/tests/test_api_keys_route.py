@@ -339,3 +339,91 @@ def test_update_api_key_rejects_policy_conflict_tool_outside_allowed_services(mo
         assert str(exc.detail).startswith("policy_conflict:")
     else:
         assert False, "expected HTTPException"
+
+
+def test_update_api_key_rejects_invalid_linear_team_policy_type(monkeypatch):
+    class _Query:
+        def __init__(self):
+            self._mode = ""
+
+        def select(self, *_args, **_kwargs):
+            self._mode = "select"
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            if self._mode == "select":
+                return SimpleNamespace(data=[{"id": 1, "allowed_tools": None, "policy_json": None}])
+            return SimpleNamespace(data=[])
+
+    class _Client:
+        def table(self, _name: str):
+            return _Query()
+
+    async def _fake_user(_request: Request) -> str:
+        return "user-1"
+
+    monkeypatch.setattr("app.routes.api_keys.get_authenticated_user_id", _fake_user)
+    monkeypatch.setattr("app.routes.api_keys.create_client", lambda *_args, **_kwargs: _Client())
+    monkeypatch.setattr(
+        "app.routes.api_keys.get_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.supabase.co", supabase_service_role_key="service-role-key"),
+    )
+
+    body = UpdateApiKeyRequest(policy_json={"allowed_linear_team_ids": "team-a"})
+    try:
+        asyncio.run(update_api_key(_request(), "1", body))
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert exc.detail == "invalid_policy_json:allowed_linear_team_ids"
+    else:
+        assert False, "expected HTTPException"
+
+
+def test_update_api_key_rejects_linear_team_policy_without_linear_service(monkeypatch):
+    class _Query:
+        def __init__(self):
+            self._mode = ""
+
+        def select(self, *_args, **_kwargs):
+            self._mode = "select"
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            if self._mode == "select":
+                return SimpleNamespace(data=[{"id": 1, "allowed_tools": None, "policy_json": None}])
+            return SimpleNamespace(data=[])
+
+    class _Client:
+        def table(self, _name: str):
+            return _Query()
+
+    async def _fake_user(_request: Request) -> str:
+        return "user-1"
+
+    monkeypatch.setattr("app.routes.api_keys.get_authenticated_user_id", _fake_user)
+    monkeypatch.setattr("app.routes.api_keys.create_client", lambda *_args, **_kwargs: _Client())
+    monkeypatch.setattr(
+        "app.routes.api_keys.get_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.supabase.co", supabase_service_role_key="service-role-key"),
+    )
+
+    body = UpdateApiKeyRequest(policy_json={"allowed_services": ["notion"], "allowed_linear_team_ids": ["team-a"]})
+    try:
+        asyncio.run(update_api_key(_request(), "1", body))
+    except HTTPException as exc:
+        assert exc.status_code == 409
+        assert str(exc.detail).startswith("policy_conflict:")
+    else:
+        assert False, "expected HTTPException"

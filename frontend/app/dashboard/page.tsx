@@ -59,6 +59,7 @@ type ToolCallSummary = {
   retryable_fail_rate_24h: number;
   policy_blocked_24h: number;
   quota_exceeded_24h: number;
+  access_denied_24h: number;
   high_risk_allowed_24h: number;
   policy_override_usage_24h: number;
   resolve_fail_24h: number;
@@ -797,6 +798,10 @@ export default function DashboardPage() {
           <article className="rounded-lg border border-gray-200 p-3">
             <p className="text-xs text-gray-500">Quota Exceeded</p>
             <p className="mt-1 text-lg font-semibold text-rose-700">{toolCallsSummary?.quota_exceeded_24h ?? 0}</p>
+          </article>
+          <article className="rounded-lg border border-gray-200 p-3">
+            <p className="text-xs text-gray-500">Access Denied</p>
+            <p className="mt-1 text-lg font-semibold text-orange-700">{toolCallsSummary?.access_denied_24h ?? 0}</p>
           </article>
           <article className="rounded-lg border border-gray-200 p-3">
             <p className="text-xs text-gray-500">Resolve Fail</p>

@@ -17,4 +17,5 @@ fi
   tests/test_api_keys_route.py \
   tests/test_mcp_routes.py \
   tests/test_tool_calls_route.py \
-  tests/test_audit_route.py
+  tests/test_audit_route.py \
+  tests/test_tenant_isolation_route.py

@@ -113,6 +113,7 @@ def test_list_tool_calls_applies_filters(monkeypatch):
     assert out["summary"]["retryable_fail_rate_24h"] == 0.3333
     assert out["summary"]["policy_blocked_24h"] == 1
     assert out["summary"]["upstream_temporary_24h"] == 1
+    assert out["summary"]["access_denied_24h"] == 0
     assert out["summary"]["high_risk_allowed_24h"] == 0
     assert out["summary"]["policy_override_usage_24h"] == 0.0
     assert out["summary"]["top_failure_codes"][0]["error_code"] in {"policy_blocked", "upstream_temporary_failure"}
