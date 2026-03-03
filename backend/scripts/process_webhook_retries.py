@@ -3,11 +3,17 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
+from pathlib import Path
 
 from supabase import create_client
 
-from app.core.config import get_settings
+# Ensure `app` package is importable when executed as a script.
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from app.core.dead_letter_alert import send_dead_letter_alert
 from app.core.event_hooks import process_pending_webhook_retries
 
@@ -25,22 +31,30 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _run(limit: int, user_id: str) -> int:
-    settings = get_settings()
-    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    supabase_url = str(os.getenv("SUPABASE_URL", "")).strip()
+    supabase_service_role_key = str(os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")).strip()
+    if not supabase_url or not supabase_service_role_key:
+        raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required")
+
+    webhook_retry_max_retries = max(0, int(os.getenv("WEBHOOK_RETRY_MAX_RETRIES", "5")))
+    webhook_retry_base_backoff_seconds = max(1, int(os.getenv("WEBHOOK_RETRY_BASE_BACKOFF_SECONDS", "30")))
+    webhook_retry_max_backoff_seconds = max(1, int(os.getenv("WEBHOOK_RETRY_MAX_BACKOFF_SECONDS", "900")))
+    dead_letter_alert_webhook_url = str(os.getenv("DEAD_LETTER_ALERT_WEBHOOK_URL", "")).strip()
+    dead_letter_alert_min_count = max(1, int(os.getenv("DEAD_LETTER_ALERT_MIN_COUNT", "1")))
+
+    supabase = create_client(supabase_url, supabase_service_role_key)
     result = await process_pending_webhook_retries(
         supabase=supabase,
         user_id=user_id or None,
         limit=max(1, min(int(limit), 500)),
-        max_retries=max(0, int(getattr(settings, "webhook_retry_max_retries", 5))),
-        base_backoff_seconds=max(1, int(getattr(settings, "webhook_retry_base_backoff_seconds", 30))),
-        max_backoff_seconds=max(1, int(getattr(settings, "webhook_retry_max_backoff_seconds", 900))),
+        max_retries=webhook_retry_max_retries,
+        base_backoff_seconds=webhook_retry_base_backoff_seconds,
+        max_backoff_seconds=webhook_retry_max_backoff_seconds,
     )
     dead_lettered = max(0, int(result.get("dead_lettered") or 0))
-    dead_letter_alert_url = str(getattr(settings, "dead_letter_alert_webhook_url", "") or "").strip()
-    dead_letter_min_count = max(1, int(getattr(settings, "dead_letter_alert_min_count", 1)))
-    if dead_letter_alert_url and dead_lettered >= dead_letter_min_count:
+    if dead_letter_alert_webhook_url and dead_lettered >= dead_letter_alert_min_count:
         await send_dead_letter_alert(
-            webhook_url=dead_letter_alert_url,
+            webhook_url=dead_letter_alert_webhook_url,
             user_id=user_id or "all",
             source="scheduler_process_retries",
             dead_lettered=dead_lettered,
