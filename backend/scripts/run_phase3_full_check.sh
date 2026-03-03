@@ -8,6 +8,7 @@ REPO_DIR="$(cd "${BACKEND_DIR}/.." && pwd)"
 RUN_MCP_SMOKE="${RUN_MCP_SMOKE:-0}"
 RUN_POLICY_SCENARIOS="${RUN_POLICY_SCENARIOS:-0}"
 RUN_DASHBOARD_CONSISTENCY="${RUN_DASHBOARD_CONSISTENCY:-0}"
+RUN_STRICT_HIGH_RISK="${RUN_STRICT_HIGH_RISK:-1}"
 
 echo "[phase3-full] start"
 echo "[phase3-full] backend_dir=${BACKEND_DIR}"
@@ -15,6 +16,7 @@ echo "[phase3-full] repo_dir=${REPO_DIR}"
 echo "[phase3-full] RUN_MCP_SMOKE=${RUN_MCP_SMOKE}"
 echo "[phase3-full] RUN_POLICY_SCENARIOS=${RUN_POLICY_SCENARIOS}"
 echo "[phase3-full] RUN_DASHBOARD_CONSISTENCY=${RUN_DASHBOARD_CONSISTENCY}"
+echo "[phase3-full] RUN_STRICT_HIGH_RISK=${RUN_STRICT_HIGH_RISK}"
 
 echo "[phase3-full] 1/6 backend phase3 regression"
 (

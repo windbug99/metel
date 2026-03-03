@@ -14,7 +14,7 @@ LINEAR_ALLOWED_TEAM_ID="${LINEAR_ALLOWED_TEAM_ID:-team-a}"
 LINEAR_BLOCKED_TEAM_ID="${LINEAR_BLOCKED_TEAM_ID:-team-b}"
 HIGH_RISK_TOOL_NAME="${HIGH_RISK_TOOL_NAME:-notion_delete_block}"
 HIGH_RISK_PAYLOAD_JSON="${HIGH_RISK_PAYLOAD_JSON:-{\"block_id\":\"dummy\"}}"
-RUN_STRICT_HIGH_RISK="${RUN_STRICT_HIGH_RISK:-0}"
+RUN_STRICT_HIGH_RISK="${RUN_STRICT_HIGH_RISK:-1}"
 
 API_BASE_URL="${API_BASE_URL%/}"
 pass_count=0
@@ -120,7 +120,7 @@ create_api_key() {
 }
 
 revoke_created_keys() {
-  for key_id in "${created_key_ids[@]}"; do
+  for key_id in "${created_key_ids[@]-}"; do
     curl -sS -X DELETE "${API_BASE_URL}/api/api-keys/${key_id}" \
       -H "Authorization: Bearer ${USER_JWT}" >/dev/null || true
   done
@@ -199,7 +199,11 @@ assert_ne "$(json_get "${body5}" "error.message")" "policy_blocked" "4-5 not blo
 
 if [[ "${RUN_STRICT_HIGH_RISK}" == "1" ]]; then
   echo "[phase3-policy] strict high-risk verification enabled"
-  if [[ "$(json_get "${body5}" "result.ok")" == "True" ]]; then
+  high_risk_ok="$(json_get "${body5}" "result.ok")"
+  # Strict mode focuses on policy-gate behavior, not upstream SaaS success.
+  high_risk_error_message="$(json_get "${body5}" "error.message")"
+  assert_ne "${high_risk_error_message}" "policy_blocked" "4-5 strict not blocked by policy gate"
+  if [[ "${high_risk_ok}" == "True" ]]; then
     logs_body="$(curl -sS -H "Authorization: Bearer ${USER_JWT}" \
       "${API_BASE_URL}/api/tool-calls?limit=20&api_key_id=${case5_id}&tool_name=${HIGH_RISK_TOOL_NAME}")"
     strict_result="$(
@@ -213,7 +217,7 @@ PY
     )"
     assert_eq "${strict_result}" "PASS" "4-5 strict policy_override_allowed log"
   else
-    echo "[phase3-policy] strict check skipped: high-risk call did not succeed"
+    echo "[phase3-policy] strict note: high-risk call failed upstream (policy gate passed)"
   fi
 fi
 

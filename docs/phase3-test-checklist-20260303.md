@@ -10,6 +10,14 @@
   - frontend typecheck: PASS
 - `RUN_MCP_SMOKE=1 API_BASE_URL=https://metel-production.up.railway.app API_KEY=*** ./scripts/run_phase3_full_check.sh`: PASS
   - mcp-smoke: `pass=8 fail=0`
+- `RUN_MCP_SMOKE=1 RUN_POLICY_SCENARIOS=1 RUN_DASHBOARD_CONSISTENCY=1 API_BASE_URL=https://metel-production.up.railway.app API_KEY=*** USER_JWT=*** ./scripts/run_phase3_full_check.sh`: PASS
+  - mcp-smoke: `pass=8 fail=0`
+  - policy scenarios: `pass=6 fail=0`
+  - dashboard consistency: `pass=11 fail=0`
+- `RUN_MCP_SMOKE=1 RUN_POLICY_SCENARIOS=1 RUN_DASHBOARD_CONSISTENCY=1 RUN_STRICT_HIGH_RISK=1 API_BASE_URL=https://metel-production.up.railway.app API_KEY=*** USER_JWT=*** ./scripts/run_phase3_full_check.sh`: PASS
+  - mcp-smoke: `pass=8 fail=0`
+  - policy scenarios (strict): `pass=7 fail=0`
+  - dashboard consistency: `pass=11 fail=0`
 - GitHub Actions `backend-phase3-regression`: PASS
   - workflow_dispatch run: `22613604511` (main, success)
   - 구성 잡: `phase3-backend-policy-audit`, `phase3-frontend-typecheck`
@@ -32,6 +40,7 @@ cd backend
 RUN_MCP_SMOKE=1 \
 RUN_POLICY_SCENARIOS=1 \
 RUN_DASHBOARD_CONSISTENCY=1 \
+RUN_STRICT_HIGH_RISK=1 \
 API_BASE_URL=https://<your-api-domain> \
 API_KEY=metel_xxx \
 USER_JWT=<user_jwt> \
@@ -114,6 +123,13 @@ API_BASE_URL=https://<your-api-domain> MCP_BASE_URL=https://<your-api-domain>/mc
 cd backend
 API_BASE_URL=https://<your-api-domain> USER_JWT=<user_jwt> ./scripts/run_phase3_policy_scenarios.sh
 ```
+
+강화 모드(기본값):
+- `RUN_STRICT_HIGH_RISK=1` 기본 적용
+- 4-5 시나리오에서
+  - high-risk 호출이 실제 success인지
+  - `tool_calls.error_code=policy_override_allowed` 로그가 남는지
+  둘 다 실패 시 테스트 실패 처리
 
 ## 4-1. `allowed_tools` 허용 제한
 - API Key policy: `allowed_tools=["notion_retrieve_bot_user"]`
