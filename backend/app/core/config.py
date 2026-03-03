@@ -113,6 +113,9 @@ class Settings(BaseSettings):
     mcp_retry_backoff_ms: int = 250
     mcp_quota_per_key_daily: int = 0
     mcp_quota_per_user_daily: int = 0
+    webhook_retry_max_retries: int = 5
+    webhook_retry_base_backoff_seconds: int = 30
+    webhook_retry_max_backoff_seconds: int = 900
 
 
 @lru_cache

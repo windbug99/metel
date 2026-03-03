@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from app.routes.audit import export_audit_events, list_audit_events
+from app.routes.audit import export_audit_events, get_audit_event_detail, list_audit_events
 
 
 def _request() -> Request:
@@ -305,8 +305,8 @@ def test_export_audit_events_csv(monkeypatch):
     assert response.media_type == "text/csv"
     assert "audit-events.csv" in response.headers.get("Content-Disposition", "")
     body = response.body.decode("utf-8")
-    assert "tool_name,status,decision,error_code" in body
-    assert "linear_list_issues,fail,policy_blocked,policy_blocked" in body
+    assert "tool_name,connector,status,decision,error_code" in body
+    assert "linear_list_issues,,fail,policy_blocked,policy_blocked" in body
 
 
 def test_export_audit_events_invalid_format_raises(monkeypatch):
@@ -339,3 +339,67 @@ def test_export_audit_events_invalid_format_raises(monkeypatch):
         assert exc.detail == "invalid_export_format"
     else:
         assert False, "expected HTTPException"
+
+
+def test_get_audit_event_detail(monkeypatch):
+    class _Query:
+        def __init__(self, table_name: str):
+            self.table_name = table_name
+
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def execute(self):
+            if self.table_name == "tool_calls":
+                return SimpleNamespace(
+                    data=[
+                        {
+                            "id": 7,
+                            "request_id": "req-7",
+                            "trace_id": "trace-7",
+                            "api_key_id": 10,
+                            "tool_name": "linear_list_issues",
+                            "connector": "linear",
+                            "status": "fail",
+                            "error_code": "policy_blocked",
+                            "latency_ms": 33,
+                            "request_payload": {"token": "***"},
+                            "resolved_payload": {"team_id": "a"},
+                            "risk_result": {"allowed": False},
+                            "upstream_status": None,
+                            "retry_count": 0,
+                            "backoff_ms": 250,
+                            "masked_fields": ["token"],
+                            "created_at": "2026-03-03T00:01:00+00:00",
+                        }
+                    ]
+                )
+            if self.table_name == "api_keys":
+                return SimpleNamespace(data=[{"id": 10, "name": "prod", "key_prefix": "metel_prod"}])
+            return SimpleNamespace(data=[])
+
+    class _Client:
+        def table(self, name: str):
+            return _Query(name)
+
+    async def _fake_user(_request: Request) -> str:
+        return "user-1"
+
+    monkeypatch.setattr("app.routes.audit.get_authenticated_user_id", _fake_user)
+    monkeypatch.setattr("app.routes.audit.create_client", lambda *_args, **_kwargs: _Client())
+    monkeypatch.setattr(
+        "app.routes.audit.get_settings",
+        lambda: SimpleNamespace(supabase_url="x", supabase_service_role_key="y"),
+    )
+
+    out = asyncio.run(get_audit_event_detail(_request(), event_id=7))
+    assert out["id"] == 7
+    assert out["trace_id"] == "trace-7"
+    assert out["action"]["connector"] == "linear"
+    assert out["execution"]["masked_fields"] == ["token"]

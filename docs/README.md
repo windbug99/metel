@@ -6,6 +6,7 @@
 - `phase2-prep-20260303.md`: Phase 2 kickoff prep (scope freeze, ticket backlog, DoD)
 - `phase2-status-20260303.md`: Phase 2 completion snapshot (structure, features, validation)
 - `phase3-kickoff-backlog-20260303.md`: Phase 3 kickoff minimum backlog (policy, audit, dashboard)
+- `phase3-gap-closing-backlog-20260303.md`: Phase 3 missing scope close plan (team policy, audit detail, integrations, ops)
 - `phase3-test-checklist-20260303.md`: Phase 3 end-to-end test checklist and execution evidence
 - `db-legacy-table-cleanup-20260303.md`: legacy DB table removal plan and cautions
 - `mcp_smoke_test_checklist.md`: deploy smoke test for MCP endpoints and usage logs

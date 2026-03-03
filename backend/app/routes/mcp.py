@@ -29,6 +29,7 @@ from app.core.error_codes import (
     ERR_SERVICE_NOT_ALLOWED,
     ERR_UPSTREAM_TEMPORARY_FAILURE,
 )
+from app.core.event_hooks import emit_webhook_event
 from app.core.quota import evaluate_daily_quota
 from app.core.resolver import ResolverException, resolve_tool_payload
 from app.core.retry_policy import run_with_retry
@@ -81,7 +82,7 @@ async def _authenticate_api_key(authorization: str | None) -> dict[str, Any]:
 
     result = (
         supabase.table("api_keys")
-        .select("id,user_id,is_active,allowed_tools,policy_json")
+        .select("id,user_id,is_active,team_id,allowed_tools,policy_json")
         .eq("key_hash", key_hash)
         .limit(1)
         .execute()
@@ -138,6 +139,15 @@ def _extract_upstream_status(detail: str) -> int | None:
         return None
 
 
+def _connector_from_tool_name(tool_name: str) -> str:
+    value = str(tool_name or "").strip().lower()
+    if value.startswith("notion_"):
+        return "notion"
+    if value.startswith("linear_"):
+        return "linear"
+    return "other"
+
+
 def _log_tool_call(
     *,
     supabase,
@@ -148,19 +158,51 @@ def _log_tool_call(
     status: str,
     error_code: str | None,
     latency_ms: int,
+    trace_id: str | None = None,
+    connector: str | None = None,
+    request_payload: dict[str, Any] | None = None,
+    resolved_payload: dict[str, Any] | None = None,
+    risk_result: dict[str, Any] | None = None,
+    upstream_status: int | None = None,
+    retry_count: int | None = None,
+    backoff_ms: int | None = None,
+    masked_fields: list[str] | None = None,
 ) -> None:
-    supabase.table("tool_calls").insert(
+    query = supabase.table("tool_calls")
+    if not hasattr(query, "insert"):
+        return
+    query.insert(
         {
             "request_id": request_id,
+            "trace_id": trace_id or request_id,
             "user_id": user_id,
             "api_key_id": api_key_id,
             "tool_name": tool_name,
+            "connector": connector,
             "status": status,
             "error_code": error_code,
             "latency_ms": latency_ms,
+            "request_payload": request_payload,
+            "resolved_payload": resolved_payload,
+            "risk_result": risk_result,
+            "upstream_status": upstream_status,
+            "retry_count": retry_count if retry_count is not None else 0,
+            "backoff_ms": backoff_ms if backoff_ms is not None else 0,
+            "masked_fields": masked_fields or [],
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
     ).execute()
+
+
+def _masked_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    masked = dict(payload)
+    masked_fields: list[str] = []
+    for key in list(masked.keys()):
+        lowered = str(key).strip().lower()
+        if lowered in {"token", "access_token", "authorization", "password", "secret"}:
+            masked[key] = "***"
+            masked_fields.append(str(key))
+    return masked, masked_fields
 
 
 def _is_rate_limited(*, supabase, api_key_id: str) -> bool:
@@ -200,8 +242,92 @@ def _apply_allowed_tools(tools: list[ToolDefinition], api_key: dict[str, Any]) -
 
 
 def _api_key_policy(api_key: dict[str, Any]) -> dict[str, Any] | None:
+    effective = api_key.get("effective_policy_json")
+    if isinstance(effective, dict):
+        return effective
     raw = api_key.get("policy_json")
     return raw if isinstance(raw, dict) else None
+
+
+def _normalized_policy(policy: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(policy, dict):
+        return {}
+    out: dict[str, Any] = {}
+    if "allow_high_risk" in policy:
+        out["allow_high_risk"] = bool(policy.get("allow_high_risk"))
+    for key in ("allowed_services", "deny_tools", "allowed_linear_team_ids"):
+        raw = policy.get(key)
+        if not isinstance(raw, list):
+            continue
+        values = [str(item).strip() for item in raw if str(item).strip()]
+        if key == "allowed_services":
+            values = [item.lower() for item in values]
+        out[key] = values
+    return out
+
+
+def _merge_team_and_key_policy(team_policy: dict[str, Any] | None, key_policy: dict[str, Any] | None) -> dict[str, Any]:
+    team = _normalized_policy(team_policy)
+    key = _normalized_policy(key_policy)
+    if not team and not key:
+        return {}
+
+    merged: dict[str, Any] = {}
+    if "allow_high_risk" in key:
+        merged["allow_high_risk"] = bool(key["allow_high_risk"])
+    elif "allow_high_risk" in team:
+        merged["allow_high_risk"] = bool(team["allow_high_risk"])
+
+    def _merge_allowlist(field: str) -> list[str] | None:
+        team_values = set(team.get(field) or []) if isinstance(team.get(field), list) else None
+        key_values = set(key.get(field) or []) if isinstance(key.get(field), list) else None
+        if team_values is not None and key_values is not None:
+            return sorted(team_values.intersection(key_values))
+        if key_values is not None:
+            return sorted(key_values)
+        if team_values is not None:
+            return sorted(team_values)
+        return None
+
+    allowed_services = _merge_allowlist("allowed_services")
+    if allowed_services is not None:
+        merged["allowed_services"] = allowed_services
+
+    allowed_linear_team_ids = _merge_allowlist("allowed_linear_team_ids")
+    if allowed_linear_team_ids is not None:
+        merged["allowed_linear_team_ids"] = allowed_linear_team_ids
+
+    team_deny = set(team.get("deny_tools") or []) if isinstance(team.get("deny_tools"), list) else set()
+    key_deny = set(key.get("deny_tools") or []) if isinstance(key.get("deny_tools"), list) else set()
+    deny_tools = sorted(team_deny.union(key_deny))
+    if deny_tools:
+        merged["deny_tools"] = deny_tools
+    return merged
+
+
+def _load_team_policy(supabase, *, team_id: int | str | None) -> dict[str, Any] | None:
+    if not team_id:
+        return None
+    rows = (
+        supabase.table("team_policies")
+        .select("policy_json")
+        .eq("team_id", team_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        return None
+    raw = rows[0].get("policy_json")
+    return raw if isinstance(raw, dict) else None
+
+
+def _with_effective_policy(supabase, *, api_key: dict[str, Any]) -> dict[str, Any]:
+    next_api_key = dict(api_key)
+    next_api_key["effective_policy_json"] = _merge_team_and_key_policy(
+        _load_team_policy(supabase, team_id=api_key.get("team_id")),
+        api_key.get("policy_json") if isinstance(api_key.get("policy_json"), dict) else None,
+    )
+    return next_api_key
 
 
 def _policy_allowed_services(api_key: dict[str, Any]) -> set[str] | None:
@@ -260,6 +386,7 @@ async def mcp_list_tools(
     api_key = await _authenticate_api_key(authorization)
     settings = get_settings()
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    api_key = _with_effective_policy(supabase, api_key=api_key)
 
     token_rows = (
         supabase.table("oauth_tokens")
@@ -316,12 +443,50 @@ async def mcp_call_tool(
     api_key = await _authenticate_api_key(authorization)
     settings = get_settings()
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
-
-    if _is_rate_limited(supabase=supabase, api_key_id=api_key["id"]):
-        return _jsonrpc_error(req_id=req_id, code=4290, message="rate_limit_exceeded")
-
+    api_key = _with_effective_policy(supabase, api_key=api_key)
     request_id = getattr(request.state, "request_id", "")
     started = time.perf_counter()
+    masked_request_payload, masked_fields = _masked_payload(arguments)
+
+    if _is_rate_limited(supabase=supabase, api_key_id=api_key["id"]):
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        _log_tool_call(
+            supabase=supabase,
+            request_id=request_id,
+            user_id=api_key["user_id"],
+            api_key_id=api_key["id"],
+            tool_name=tool_name,
+            connector=_connector_from_tool_name(tool_name),
+            status="fail",
+            error_code="rate_limit_exceeded",
+            latency_ms=latency_ms,
+            request_payload=masked_request_payload,
+            resolved_payload=None,
+            risk_result=None,
+            retry_count=0,
+            backoff_ms=max(0, int(getattr(settings, "mcp_retry_backoff_ms", 250))),
+            masked_fields=masked_fields,
+        )
+        await emit_webhook_event(
+            supabase=supabase,
+            user_id=api_key["user_id"],
+            event_type="rate_limit_exceeded",
+            payload={"request_id": request_id, "api_key_id": api_key["id"], "tool_name": tool_name},
+        )
+        return _jsonrpc_error(req_id=req_id, code=4290, message="rate_limit_exceeded")
+    await emit_webhook_event(
+        supabase=supabase,
+        user_id=api_key["user_id"],
+        event_type="tool_called",
+        payload={
+            "request_id": request_id,
+            "api_key_id": api_key["id"],
+            "tool_name": tool_name,
+            "connector": _connector_from_tool_name(tool_name),
+        },
+    )
+    resolved_arguments: dict[str, Any] | None = None
+    risk_result: dict[str, Any] | None = None
     quota = evaluate_daily_quota(
         supabase=supabase,
         user_id=api_key["user_id"],
@@ -337,9 +502,22 @@ async def mcp_call_tool(
             user_id=api_key["user_id"],
             api_key_id=api_key["id"],
             tool_name=tool_name,
+            connector="other",
             status="fail",
             error_code=ERR_QUOTA_EXCEEDED,
             latency_ms=latency_ms,
+            request_payload=masked_request_payload,
+            resolved_payload=None,
+            risk_result=None,
+            retry_count=0,
+            backoff_ms=max(0, int(getattr(settings, "mcp_retry_backoff_ms", 250))),
+            masked_fields=masked_fields,
+        )
+        await emit_webhook_event(
+            supabase=supabase,
+            user_id=api_key["user_id"],
+            event_type="quota_exceeded",
+            payload={"request_id": request_id, "api_key_id": api_key["id"], "tool_name": tool_name},
         )
         return _jsonrpc_error(
             req_id=req_id,
@@ -371,6 +549,7 @@ async def mcp_call_tool(
             payload=arguments,
             policy=_api_key_policy(api_key),
         )
+        risk_result = {"allowed": risk.allowed, "reason": risk.reason, "risk_type": risk.risk_type}
         if not risk.allowed:
             latency_ms = int((time.perf_counter() - started) * 1000)
             _log_tool_call(
@@ -379,9 +558,28 @@ async def mcp_call_tool(
                 user_id=api_key["user_id"],
                 api_key_id=api_key["id"],
                 tool_name=tool_name,
+                connector=tool.service,
                 status="fail",
                 error_code=ERR_POLICY_BLOCKED,
                 latency_ms=latency_ms,
+                request_payload=masked_request_payload,
+                resolved_payload=None,
+                risk_result=risk_result,
+                retry_count=0,
+                backoff_ms=max(0, int(getattr(settings, "mcp_retry_backoff_ms", 250))),
+                masked_fields=masked_fields,
+            )
+            await emit_webhook_event(
+                supabase=supabase,
+                user_id=api_key["user_id"],
+                event_type="policy_blocked",
+                payload={
+                    "request_id": request_id,
+                    "api_key_id": api_key["id"],
+                    "tool_name": tool_name,
+                    "reason": risk.reason,
+                    "risk_type": risk.risk_type,
+                },
             )
             return _jsonrpc_error(
                 req_id=req_id,
@@ -395,10 +593,29 @@ async def mcp_call_tool(
             payload=arguments,
             execute_tool=execute_tool,
         )
+        masked_resolved_payload, _ = _masked_payload(resolved_arguments)
         allowed_linear_team_ids = _policy_allowed_linear_team_ids(api_key)
         if tool.service == "linear" and allowed_linear_team_ids is not None:
             team_id = str(resolved_arguments.get("team_id") or "").strip()
             if team_id and team_id not in allowed_linear_team_ids:
+                latency_ms = int((time.perf_counter() - started) * 1000)
+                _log_tool_call(
+                    supabase=supabase,
+                    request_id=request_id,
+                    user_id=api_key["user_id"],
+                    api_key_id=api_key["id"],
+                    tool_name=tool_name,
+                    connector=tool.service,
+                    status="fail",
+                    error_code=ERR_ACCESS_DENIED,
+                    latency_ms=latency_ms,
+                    request_payload=masked_request_payload,
+                    resolved_payload=masked_resolved_payload,
+                    risk_result=risk_result,
+                    retry_count=0,
+                    backoff_ms=max(0, int(getattr(settings, "mcp_retry_backoff_ms", 250))),
+                    masked_fields=masked_fields,
+                )
                 return _jsonrpc_error(
                     req_id=req_id,
                     code=CODE_ACCESS_DENIED,
@@ -423,9 +640,28 @@ async def mcp_call_tool(
             user_id=api_key["user_id"],
             api_key_id=api_key["id"],
             tool_name=tool_name,
+            connector=tool.service,
             status="success",
             error_code=success_error_code,
             latency_ms=latency_ms,
+            request_payload=masked_request_payload,
+            resolved_payload=masked_resolved_payload,
+            risk_result=risk_result,
+            retry_count=int(retried.retry_count),
+            backoff_ms=backoff_ms,
+            masked_fields=masked_fields,
+        )
+        await emit_webhook_event(
+            supabase=supabase,
+            user_id=api_key["user_id"],
+            event_type="tool_succeeded",
+            payload={
+                "request_id": request_id,
+                "api_key_id": api_key["id"],
+                "tool_name": tool_name,
+                "connector": tool.service,
+                "retry_count": int(retried.retry_count),
+            },
         )
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
     except ResolverException as exc:
@@ -436,9 +672,27 @@ async def mcp_call_tool(
             user_id=api_key["user_id"],
             api_key_id=api_key["id"],
             tool_name=tool_name,
+            connector=_connector_from_tool_name(tool_name),
             status="fail",
             error_code=exc.error_code,
             latency_ms=latency_ms,
+            request_payload=masked_request_payload,
+            resolved_payload=None,
+            risk_result=risk_result,
+            retry_count=0,
+            backoff_ms=max(0, int(getattr(settings, "mcp_retry_backoff_ms", 250))),
+            masked_fields=masked_fields,
+        )
+        await emit_webhook_event(
+            supabase=supabase,
+            user_id=api_key["user_id"],
+            event_type="tool_failed",
+            payload={
+                "request_id": request_id,
+                "api_key_id": api_key["id"],
+                "tool_name": tool_name,
+                "error_code": exc.error_code,
+            },
         )
         return _jsonrpc_error(
             req_id=req_id,
@@ -449,14 +703,38 @@ async def mcp_call_tool(
     except HTTPException as exc:
         latency_ms = int((time.perf_counter() - started) * 1000)
         code, message, data = _map_tool_error(exc)
+        upstream_status = _extract_upstream_status(str(exc.detail or ""))
+        masked_resolved_payload: dict[str, Any] | None = None
+        if isinstance(resolved_arguments, dict):
+            masked_resolved_payload, _ = _masked_payload(resolved_arguments)
         _log_tool_call(
             supabase=supabase,
             request_id=request_id,
             user_id=api_key["user_id"],
             api_key_id=api_key["id"],
             tool_name=tool_name,
+            connector=_connector_from_tool_name(tool_name),
             status="fail",
             error_code=message,
             latency_ms=latency_ms,
+            request_payload=masked_request_payload,
+            resolved_payload=masked_resolved_payload,
+            risk_result=risk_result,
+            upstream_status=upstream_status,
+            retry_count=0,
+            backoff_ms=max(0, int(getattr(settings, "mcp_retry_backoff_ms", 250))),
+            masked_fields=masked_fields,
+        )
+        await emit_webhook_event(
+            supabase=supabase,
+            user_id=api_key["user_id"],
+            event_type="tool_failed",
+            payload={
+                "request_id": request_id,
+                "api_key_id": api_key["id"],
+                "tool_name": tool_name,
+                "error_code": message,
+                "upstream_status": upstream_status,
+            },
         )
         return _jsonrpc_error(req_id=req_id, code=code, message=message, data=data)

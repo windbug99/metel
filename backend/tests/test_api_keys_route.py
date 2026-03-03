@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from app.routes.api_keys import UpdateApiKeyRequest, update_api_key
+from app.routes.api_keys import UpdateApiKeyRequest, rotate_api_key, update_api_key
 
 
 def _request() -> Request:
@@ -427,3 +427,87 @@ def test_update_api_key_rejects_linear_team_policy_without_linear_service(monkey
         assert str(exc.detail).startswith("policy_conflict:")
     else:
         assert False, "expected HTTPException"
+
+
+def test_rotate_api_key_creates_new_key_and_revokes_old(monkeypatch):
+    class _Query:
+        def __init__(self, client):
+            self.client = client
+            self._mode = ""
+            self._payload = None
+
+        def select(self, *_args, **_kwargs):
+            self._mode = "select"
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def insert(self, payload: dict):
+            self._mode = "insert"
+            self._payload = payload
+            return self
+
+        def update(self, payload: dict):
+            self._mode = "update"
+            self._payload = payload
+            return self
+
+        def execute(self):
+            if self._mode == "select":
+                return SimpleNamespace(
+                    data=[
+                        {
+                            "id": 1,
+                            "name": "prod",
+                            "allowed_tools": ["notion_search"],
+                            "policy_json": {"deny_tools": ["linear_list_issues"]},
+                            "memo": "memo",
+                            "tags": ["prod"],
+                            "is_active": True,
+                        }
+                    ]
+                )
+            if self._mode == "insert":
+                self.client.insert_payload = dict(self._payload or {})
+                created = dict(self._payload or {})
+                created["id"] = 2
+                return SimpleNamespace(data=[created])
+            if self._mode == "update":
+                self.client.update_payload = dict(self._payload or {})
+                return SimpleNamespace(data=[{"ok": True}])
+            return SimpleNamespace(data=[])
+
+    class _Client:
+        def __init__(self):
+            self.insert_payload = None
+            self.update_payload = None
+
+        def table(self, _name: str):
+            return _Query(self)
+
+    client = _Client()
+
+    async def _fake_user(_request: Request) -> str:
+        return "user-1"
+
+    monkeypatch.setattr("app.routes.api_keys.get_authenticated_user_id", _fake_user)
+    monkeypatch.setattr("app.routes.api_keys.create_client", lambda *_args, **_kwargs: client)
+    monkeypatch.setattr(
+        "app.routes.api_keys.get_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.supabase.co", supabase_service_role_key="service-role-key"),
+    )
+    monkeypatch.setattr("app.routes.api_keys.generate_api_key", lambda: "metel_rotated_abcdefghijklmnopqrstuvwxyz")
+    monkeypatch.setattr("app.routes.api_keys.hash_api_key", lambda _value: "hash-value")
+
+    out = asyncio.run(rotate_api_key(_request(), "1"))
+    assert out["id"] == 2
+    assert out["api_key"].startswith("metel_rotated_")
+    assert client.insert_payload is not None
+    assert client.insert_payload["rotated_from"] == 1
+    assert client.insert_payload["is_active"] is True
+    assert client.update_payload is not None
+    assert client.update_payload["is_active"] is False

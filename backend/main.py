@@ -10,9 +10,13 @@ from agent.registry import ToolSpecValidationError, validate_registry_on_startup
 from app.core.config import get_settings
 from app.routes.api_keys import router as api_keys_router
 from app.routes.audit import router as audit_router
+from app.routes.admin import router as admin_router
 from app.routes.linear import router as linear_router
+from app.routes.integrations import router as integrations_router
 from app.routes.mcp import router as mcp_router
 from app.routes.notion import router as notion_router
+from app.routes.policies import router as policies_router
+from app.routes.teams import router as teams_router
 from app.routes.tool_calls import router as tool_calls_router
 
 settings = get_settings()
@@ -141,3 +145,7 @@ app.include_router(api_keys_router)
 app.include_router(mcp_router)
 app.include_router(tool_calls_router)
 app.include_router(audit_router)
+app.include_router(policies_router)
+app.include_router(teams_router)
+app.include_router(integrations_router)
+app.include_router(admin_router)

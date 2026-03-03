@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import math
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from supabase import create_client
 
@@ -21,12 +22,18 @@ class CreateApiKeyRequest(BaseModel):
     name: str = Field(default="default", min_length=1, max_length=100)
     allowed_tools: list[str] | None = None
     policy_json: dict[str, Any] | None = None
+    memo: str | None = Field(default=None, max_length=500)
+    tags: list[str] | None = None
+    team_id: int | None = None
 
 
 class UpdateApiKeyRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     allowed_tools: list[str] | None = None
     policy_json: dict[str, Any] | None = None
+    memo: str | None = Field(default=None, max_length=500)
+    tags: list[str] | None = None
+    team_id: int | None = None
     is_active: bool | None = None
 
 
@@ -59,6 +66,48 @@ def _normalize_allowed_tools(raw_tools: list[str] | None) -> list[str] | None:
         seen.add(name)
         normalized.append(name)
     return normalized
+
+
+def _normalize_tags(raw_tags: list[str] | None) -> list[str] | None:
+    if raw_tags is None:
+        return None
+    if not isinstance(raw_tags, list):
+        raise HTTPException(status_code=400, detail="invalid_tags")
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for tag in raw_tags:
+        value = str(tag or "").strip()
+        if not value or value in seen:
+            continue
+        if len(value) > 40:
+            raise HTTPException(status_code=400, detail="invalid_tag_too_long")
+        seen.add(value)
+        normalized.append(value)
+    return normalized
+
+
+def _normalize_memo(raw_memo: str | None) -> str | None:
+    if raw_memo is None:
+        return None
+    memo = str(raw_memo).strip()
+    return memo or None
+
+
+def _validate_team_id(*, supabase, user_id: str, team_id: int | None) -> int | None:
+    if team_id is None:
+        return None
+    rows = (
+        supabase.table("teams")
+        .select("id")
+        .eq("id", team_id)
+        .eq("user_id", user_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise HTTPException(status_code=400, detail="invalid_team_id")
+    return team_id
 
 
 def _normalize_api_key_policy(raw_policy: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -162,6 +211,36 @@ def _validate_policy_conflict(
                 )
 
 
+def _ratio(numerator: int, denominator: int) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round(numerator / denominator, 4)
+
+
+def _p95_latency_ms(rows: list[dict[str, Any]]) -> int:
+    latencies = sorted(int(item.get("latency_ms") or 0) for item in rows)
+    if not latencies:
+        return 0
+    index = max(0, math.ceil(0.95 * len(latencies)) - 1)
+    return latencies[index]
+
+
+def _iso_bucket_day(value: str | None) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "unknown"
+    candidate = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        dt = datetime.fromisoformat(candidate)
+    except ValueError:
+        return "unknown"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.strftime("%Y-%m-%d")
+
+
 @router.get("")
 async def list_api_keys(request: Request):
     user_id = await get_authenticated_user_id(request)
@@ -170,7 +249,7 @@ async def list_api_keys(request: Request):
 
     result = (
         supabase.table("api_keys")
-        .select("id,name,key_prefix,allowed_tools,policy_json,is_active,last_used_at,created_at,revoked_at")
+        .select("id,name,key_prefix,team_id,allowed_tools,policy_json,memo,tags,issued_by,rotated_from,is_active,last_used_at,created_at,revoked_at")
         .eq("user_id", user_id)
         .order("created_at", desc=True)
         .execute()
@@ -178,6 +257,98 @@ async def list_api_keys(request: Request):
 
     rows = result.data or []
     return {"items": rows, "count": len(rows)}
+
+
+@router.get("/{key_id}/drilldown")
+async def api_key_drilldown(
+    request: Request,
+    key_id: int,
+    days: int = Query(7, ge=1, le=30),
+):
+    user_id = await get_authenticated_user_id(request)
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+
+    key_rows = (
+        supabase.table("api_keys")
+        .select("id,name,key_prefix")
+        .eq("id", key_id)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not key_rows:
+        raise HTTPException(status_code=404, detail="api_key_not_found")
+    key = key_rows[0]
+
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = (
+        supabase.table("tool_calls")
+        .select("tool_name,status,error_code,latency_ms,created_at")
+        .eq("user_id", user_id)
+        .eq("api_key_id", key_id)
+        .gte("created_at", since)
+        .execute()
+    ).data or []
+
+    total_calls = len(rows)
+    success_count = len([item for item in rows if item.get("status") == "success"])
+    fail_count = len([item for item in rows if item.get("status") == "fail"])
+    avg_latency_ms = round(sum(int(item.get("latency_ms") or 0) for item in rows) / total_calls, 2) if total_calls else 0.0
+
+    error_counts: dict[str, int] = {}
+    tool_counts: dict[str, int] = {}
+    day_counts: dict[str, dict[str, int]] = {}
+    for item in rows:
+        error_code = str(item.get("error_code") or "").strip() or "none"
+        error_counts[error_code] = error_counts.get(error_code, 0) + 1
+        tool_name = str(item.get("tool_name") or "").strip() or "unknown_tool"
+        tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
+        day = _iso_bucket_day(item.get("created_at"))
+        bucket = day_counts.get(day) or {"calls": 0, "success": 0, "fail": 0}
+        bucket["calls"] += 1
+        if item.get("status") == "success":
+            bucket["success"] += 1
+        elif item.get("status") == "fail":
+            bucket["fail"] += 1
+        day_counts[day] = bucket
+
+    trend = []
+    for day in sorted(day_counts.keys()):
+        bucket = day_counts[day]
+        calls = int(bucket.get("calls") or 0)
+        success = int(bucket.get("success") or 0)
+        fail = int(bucket.get("fail") or 0)
+        trend.append(
+            {
+                "day": day,
+                "calls": calls,
+                "success": success,
+                "fail": fail,
+                "success_rate": _ratio(success, calls),
+                "fail_rate": _ratio(fail, calls),
+            }
+        )
+
+    top_error_codes = [{"error_code": code, "count": count} for code, count in sorted(error_counts.items(), key=lambda item: item[1], reverse=True)[:8]]
+    top_tools = [{"tool_name": name, "count": count} for name, count in sorted(tool_counts.items(), key=lambda item: item[1], reverse=True)[:8]]
+
+    return {
+        "api_key": {"id": key.get("id"), "name": key.get("name"), "key_prefix": key.get("key_prefix")},
+        "window_days": days,
+        "summary": {
+            "total_calls": total_calls,
+            "success_count": success_count,
+            "fail_count": fail_count,
+            "success_rate": _ratio(success_count, total_calls),
+            "fail_rate": _ratio(fail_count, total_calls),
+            "avg_latency_ms": avg_latency_ms,
+            "p95_latency_ms": _p95_latency_ms(rows),
+        },
+        "top_error_codes": top_error_codes,
+        "top_tools": top_tools,
+        "trend": trend,
+    }
 
 
 @router.post("")
@@ -192,6 +363,9 @@ async def create_api_key(request: Request, body: CreateApiKeyRequest):
     now = datetime.now(timezone.utc).isoformat()
     allowed_tools = _normalize_allowed_tools(body.allowed_tools)
     policy_json = _normalize_api_key_policy(body.policy_json)
+    memo = _normalize_memo(body.memo)
+    tags = _normalize_tags(body.tags)
+    team_id = _validate_team_id(supabase=supabase, user_id=user_id, team_id=body.team_id)
     _validate_policy_conflict(allowed_tools=allowed_tools, policy_json=policy_json)
 
     created = (
@@ -202,8 +376,13 @@ async def create_api_key(request: Request, body: CreateApiKeyRequest):
                 "name": body.name.strip(),
                 "key_hash": key_hash,
                 "key_prefix": key_prefix,
+                "team_id": team_id,
                 "allowed_tools": allowed_tools,
                 "policy_json": policy_json,
+                "memo": memo,
+                "tags": tags,
+                "issued_by": user_id,
+                "rotated_from": None,
                 "is_active": True,
                 "created_at": now,
             }
@@ -215,8 +394,13 @@ async def create_api_key(request: Request, body: CreateApiKeyRequest):
         "id": row.get("id"),
         "name": row.get("name"),
         "key_prefix": key_prefix,
+        "team_id": row.get("team_id"),
         "allowed_tools": allowed_tools,
         "policy_json": policy_json,
+        "memo": memo,
+        "tags": tags,
+        "issued_by": user_id,
+        "rotated_from": row.get("rotated_from"),
         "api_key": raw_key,
     }
 
@@ -257,7 +441,7 @@ async def update_api_key(request: Request, key_id: str, body: UpdateApiKeyReques
 
     found = (
         supabase.table("api_keys")
-        .select("id,allowed_tools,policy_json")
+        .select("id,team_id,allowed_tools,policy_json")
         .eq("id", key_id)
         .eq("user_id", user_id)
         .limit(1)
@@ -280,6 +464,12 @@ async def update_api_key(request: Request, key_id: str, body: UpdateApiKeyReques
     if "policy_json" in fields_set:
         next_policy_json = _normalize_api_key_policy(body.policy_json)
         payload["policy_json"] = next_policy_json
+    if "memo" in fields_set:
+        payload["memo"] = _normalize_memo(body.memo)
+    if "tags" in fields_set:
+        payload["tags"] = _normalize_tags(body.tags)
+    if "team_id" in fields_set:
+        payload["team_id"] = _validate_team_id(supabase=supabase, user_id=user_id, team_id=body.team_id)
     _validate_policy_conflict(
         allowed_tools=next_allowed_tools if isinstance(next_allowed_tools, list) else None,
         policy_json=next_policy_json if isinstance(next_policy_json, dict) else None,
@@ -302,3 +492,75 @@ async def update_api_key(request: Request, key_id: str, body: UpdateApiKeyReques
         .execute()
     )
     return {"ok": True, "updated": True}
+
+
+@router.post("/{key_id}/rotate")
+async def rotate_api_key(request: Request, key_id: str):
+    user_id = await get_authenticated_user_id(request)
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+
+    found = (
+        supabase.table("api_keys")
+        .select("id,name,team_id,allowed_tools,policy_json,memo,tags,is_active")
+        .eq("id", key_id)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+    rows = found.data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="api_key_not_found")
+    current = rows[0]
+    if not bool(current.get("is_active")):
+        raise HTTPException(status_code=409, detail="api_key_not_active")
+
+    now = datetime.now(timezone.utc).isoformat()
+    raw_key = generate_api_key()
+    key_hash = hash_api_key(raw_key)
+    key_prefix = raw_key[:16]
+
+    created = (
+        supabase.table("api_keys")
+        .insert(
+            {
+                "user_id": user_id,
+                "name": current.get("name") or "default",
+                "key_hash": key_hash,
+                "key_prefix": key_prefix,
+                "team_id": current.get("team_id"),
+                "allowed_tools": current.get("allowed_tools"),
+                "policy_json": current.get("policy_json"),
+                "memo": current.get("memo"),
+                "tags": current.get("tags"),
+                "issued_by": user_id,
+                "rotated_from": current.get("id"),
+                "is_active": True,
+                "created_at": now,
+            }
+        )
+        .execute()
+    )
+    created_row = (created.data or [{}])[0]
+
+    (
+        supabase.table("api_keys")
+        .update({"is_active": False, "revoked_at": now})
+        .eq("id", key_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
+    return {
+        "id": created_row.get("id"),
+        "name": created_row.get("name"),
+        "key_prefix": key_prefix,
+        "team_id": created_row.get("team_id"),
+        "allowed_tools": created_row.get("allowed_tools"),
+        "policy_json": created_row.get("policy_json"),
+        "memo": created_row.get("memo"),
+        "tags": created_row.get("tags"),
+        "issued_by": created_row.get("issued_by"),
+        "rotated_from": created_row.get("rotated_from"),
+        "api_key": raw_key,
+    }
