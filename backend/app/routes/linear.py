@@ -90,7 +90,37 @@ async def linear_oauth_callback(code: str, state: str):
         )
 
     if response.status_code >= 400:
-        raise HTTPException(status_code=400, detail=f"Linear token exchange failed: {response.text}")
+        provider_error = {}
+        try:
+            provider_error = response.json() or {}
+        except Exception:
+            provider_error = {}
+
+        provider_code = str(provider_error.get("error") or "").strip()
+        provider_description = str(provider_error.get("error_description") or "").strip()
+
+        if provider_code == "invalid_grant":
+            # OAuth code can be consumed by a duplicate callback path (prefetch/retry).
+            # If token already exists for this user/provider, treat it as an idempotent success.
+            supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+            existing = (
+                supabase.table("oauth_tokens")
+                .select("provider, updated_at")
+                .eq("user_id", user_id)
+                .eq("provider", "linear")
+                .maybe_single()
+                .execute()
+            )
+            existing_row = getattr(existing, "data", None)
+            if existing_row:
+                logger.warning("linear oauth callback received invalid_grant but token already exists for user_id=%s", user_id)
+                return RedirectResponse(
+                    url=f"{settings.frontend_url}/dashboard?linear=connected&oauth_notice=duplicate_callback",
+                    status_code=302,
+                )
+
+        detail = provider_description or "authorization code is invalid or already consumed"
+        raise HTTPException(status_code=400, detail=f"Linear token exchange failed ({provider_code or response.status_code}): {detail}")
 
     payload = response.json()
     access_token = payload.get("access_token")
