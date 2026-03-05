@@ -93,7 +93,10 @@ async def spotify_oauth_callback(code: str, state: str):
         on_conflict="user_id,provider",
     ).execute()
 
-    return RedirectResponse(url=f"{settings.frontend_url}/dashboard?spotify=connected", status_code=302)
+    frontend_base = (settings.frontend_url or "").strip().strip("'\"").replace("\r", "").replace("\n", "").rstrip("/")
+    if not frontend_base.startswith(("http://", "https://")):
+        raise HTTPException(status_code=500, detail="FRONTEND_URL is invalid. Expected absolute http(s) URL.")
+    return RedirectResponse(url=f"{frontend_base}/dashboard/integrations/oauth?spotify=connected", status_code=302)
 
 
 @router.get("/status")

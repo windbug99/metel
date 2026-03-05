@@ -24,7 +24,7 @@ def _frontend_dashboard_url(raw_frontend_url: str, query: str) -> str:
     base = (raw_frontend_url or "").strip().strip("'\"").replace("\r", "").replace("\n", "")
     if not base.startswith(("http://", "https://")):
         raise HTTPException(status_code=500, detail="FRONTEND_URL is invalid. Expected absolute http(s) URL.")
-    return f"{base.rstrip('/')}/dashboard?{query}"
+    return f"{base.rstrip('/')}/dashboard/integrations/oauth?{query}"
 
 
 def _validate_linear_settings() -> None:
