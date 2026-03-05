@@ -222,8 +222,8 @@ Shell:
 - [x] OAuth 콜백 후 랜딩 테스트(`?notion=connected`, `?linear=connected`)
 - [x] 인증 만료 deep-link 테스트(로그인 리다이렉트 + `next` 복귀)
 - [x] query 파라미터 정리 테스트(전역 유지/페이지 전용 제거)
-- [/] 모바일 반응형 QA (`320/375/768`) 레이아웃/오버플로우 확인
-- [/] 모바일 터치 타겟(최소 44px) 및 sticky Top Bar 겹침 검증
+- [x] 모바일 반응형 QA (`320/375/768`) 레이아웃/오버플로우 확인
+- [x] 모바일 터치 타겟(최소 44px) 및 sticky Top Bar 겹침 검증
 - [x] `pnpm -s tsc --noEmit` 통과
 - [x] RBAC 스모크(`run_phase3_rbac_smoke.sh`) 통과
 - [x] 대시보드 검증(`run_phase3_dashboard_consistency.sh`) 통과
@@ -348,10 +348,10 @@ Shell:
 - 모바일 수동 QA 완료 판정 스크립트 추가:
   - `backend/scripts/check_dashboard_mobile_manual_qa_log.sh`
   - 기준: `docs/dashboard-mobile-manual-qa-log-20260305.md`에 미체크 항목이 없고, `종합 결과`가 `PASS/OK`
-  - 현재 상태: 미체크 항목 존재로 `pending` (transition readiness에 `warn`으로 반영)
+  - 현재 상태: `PASS` (transition readiness `warn=0` 달성)
 - 최종 마감(strict) 실행 기준:
   - `STRICT_WARN_AS_FAIL=1 backend/scripts/run_dashboard_v2_transition_readiness_check.sh`
-  - 현재 결과: 모바일 수동 QA 미완료로 `fail` (의도된 동작)
+  - 현재 결과: `pass=6 fail=0 warn=0` (strict 통과)
 - QA 자동 실행 결과(2026-03-05):
   - `frontend`: `pnpm -s tsc --noEmit` PASS
   - `backend`: `./scripts/run_phase3_rbac_smoke.sh` PASS (`32 passed`)

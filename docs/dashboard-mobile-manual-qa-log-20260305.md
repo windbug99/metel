@@ -28,20 +28,20 @@
 ## 체크리스트
 
 ### 1) 레이아웃/오버플로우
-- [ ] `320`: Top Bar/컨텐츠가 겹치지 않고 가로 스크롤 없이 표시된다.
-- [ ] `375`: Top Bar/컨텐츠가 겹치지 않고 가로 스크롤 없이 표시된다.
-- [ ] `768`: Sidebar/Top Bar/본문 정렬이 깨지지 않는다.
-- [ ] API Keys 테이블이 모바일에서 가로 스크롤로 정상 탐색된다.
-- [ ] Audit Events 테이블이 모바일에서 가로 스크롤로 정상 탐색된다.
+- [x] `320`: Top Bar/컨텐츠가 겹치지 않고 가로 스크롤 없이 표시된다.
+- [x] `375`: Top Bar/컨텐츠가 겹치지 않고 가로 스크롤 없이 표시된다.
+- [x] `768`: Sidebar/Top Bar/본문 정렬이 깨지지 않는다.
+- [x] API Keys 테이블이 모바일에서 가로 스크롤로 정상 탐색된다.
+- [x] Audit Events 테이블이 모바일에서 가로 스크롤로 정상 탐색된다.
 
 ### 2) 터치 타겟/Sticky Header
-- [ ] Drawer 메뉴 항목이 터치하기 충분한 크기(>=44px)로 동작한다.
-- [ ] Top Bar 컨트롤(Org/Team/Range/Refresh/Theme)이 터치 충돌 없이 동작한다.
-- [ ] Sticky Top Bar가 스크롤 시 본문 조작을 방해하지 않는다.
+- [x] Drawer 메뉴 항목이 터치하기 충분한 크기(>=44px)로 동작한다.
+- [x] Top Bar 컨트롤(Org/Team/Range/Refresh/Theme)이 터치 충돌 없이 동작한다.
+- [x] Sticky Top Bar가 스크롤 시 본문 조작을 방해하지 않는다.
 
 ## 결과 기록
 
-- 종합 결과: `PENDING`
+- 종합 결과: `PASS`
 - Blocker:
 - 스크린샷 경로:
 - 비고:
