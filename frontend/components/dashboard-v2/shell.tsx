@@ -24,14 +24,26 @@ type NavItem = {
 const GLOBAL_QUERY_KEYS = ["org", "team", "range"] as const;
 const PAGE_QUERY_KEYS: Record<string, string[]> = {
   overview: ["overview_window"],
+  profile: ["profile_tab"],
   apiKeys: ["keys_status"],
+  organizations: ["orgs_tab"],
+  teamPolicy: ["team_tab"],
   auditEvents: ["audit_status"],
   adminOps: ["ops_tab"],
 };
 
 function currentPageKey(pathname: string): keyof typeof PAGE_QUERY_KEYS {
+  if (pathname.startsWith("/dashboard/profile")) {
+    return "profile";
+  }
   if (pathname.startsWith("/dashboard/access/api-keys")) {
     return "apiKeys";
+  }
+  if (pathname.startsWith("/dashboard/access/organizations")) {
+    return "organizations";
+  }
+  if (pathname.startsWith("/dashboard/access/team-policy")) {
+    return "teamPolicy";
   }
   if (pathname.startsWith("/dashboard/control/audit-events")) {
     return "auditEvents";
@@ -43,8 +55,17 @@ function currentPageKey(pathname: string): keyof typeof PAGE_QUERY_KEYS {
 }
 
 function pageTitle(pathname: string): string {
+  if (pathname.startsWith("/dashboard/profile")) {
+    return "Profile";
+  }
   if (pathname.startsWith("/dashboard/access/api-keys")) {
     return "API Keys";
+  }
+  if (pathname.startsWith("/dashboard/access/organizations")) {
+    return "Organizations";
+  }
+  if (pathname.startsWith("/dashboard/access/team-policy")) {
+    return "Team Policy";
   }
   if (pathname.startsWith("/dashboard/control/audit-events")) {
     return "Audit Events";
@@ -78,7 +99,10 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
     const canReadAdminOps = Boolean(permissionSnapshot?.permissions?.can_read_admin_ops);
     return [
       { href: "/dashboard/overview", label: "Overview", visible: true },
+      { href: "/dashboard/profile", label: "Profile", visible: true },
       { href: "/dashboard/access/api-keys", label: "API Keys", visible: true },
+      { href: "/dashboard/access/organizations", label: "Organizations", visible: true },
+      { href: "/dashboard/access/team-policy", label: "Team Policy", visible: true },
       { href: "/dashboard/control/audit-events", label: "Audit Events", visible: true },
       { href: "/dashboard/admin/ops", label: "Admin / Ops", visible: canReadAdminOps },
     ];

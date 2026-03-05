@@ -234,6 +234,12 @@ Shell:
 - [x] 권한/가드 UX가 owner/admin/member 정책과 일치
 - [x] 핵심 KPI/감사/정책 화면에서 기능 회귀 없음
 
+### I. 액티브 기능 이관 우선순위
+- [x] 1단계: API Keys 생성 액션 이관 (`/dashboard/access/api-keys`)
+- [x] 2단계: Organizations 초대/멤버 관리 이관 (`/dashboard/access/organizations`)
+- [x] 3단계: Team 생성/멤버 관리/정책 저장 이관 (`/dashboard/access/team-policy`)
+- [x] 4단계: Profile 설정 이관 (`/dashboard/profile`)
+
 진행 메모 (2026-03-05):
 - V2 스캐폴딩 추가:
   - `frontend/components/dashboard-v2/shell.tsx`
@@ -311,6 +317,20 @@ Shell:
   - 반영 내용: Top Bar 모바일 wrap, 주요 컨트롤 `h-11`(44px) 터치 타겟, 모바일 테이블 `overflow-x-auto` + `min-w-[640px]`
   - 실행 결과: `pass=12 fail=0`
   - 잔여: 실제 디바이스/브라우저(320/375/768) 수동 시각 QA
+- 액티브 기능 이관 2단계(Organizations) 반영:
+  - 신규 route: `frontend/app/dashboard/(v2)/access/organizations/page.tsx`
+  - 사이드바 메뉴에 `Organizations` 추가 및 페이지 타이틀/쿼리키 매핑(`orgs_tab`) 연결
+  - 이관 기능: 조직 생성, 멤버 조회/추가/역할변경/삭제(owner), 초대 생성/조회/철회/재발급(owner), 초대 토큰 수락
+- 액티브 기능 이관 3단계(Team Policy) 반영:
+  - 신규 route: `frontend/app/dashboard/(v2)/access/team-policy/page.tsx`
+  - 사이드바 메뉴에 `Team Policy` 추가 및 페이지 타이틀/쿼리키 매핑(`team_tab`) 연결
+  - 이관 기능: 팀 생성(admin), 팀 정책 저장(admin), 멤버 조회/추가/삭제(admin), 정책 리비전 조회/롤백(admin)
+- 액티브 기능 이관 4단계(Profile) 반영:
+  - 신규 route: `frontend/app/dashboard/(v2)/profile/page.tsx`
+  - 사이드바 메뉴에 `Profile` 추가 및 페이지 타이틀/쿼리키 매핑(`profile_tab`) 연결
+  - 이관 기능: 사용자 프로필 조회, 타임존 설정 저장
+  - 검증: `frontend pnpm -s tsc --noEmit` PASS
+  - 검증: `backend ./scripts/run_dashboard_v2_qa_stage_gate.sh` PASS (static 3/3, runtime 3 skip)
 - QA 통합 게이트 스크립트 추가:
   - `backend/scripts/run_dashboard_v2_qa_stage_gate.sh`
   - 구성: deeplink/query-scope/mobile 정적 점검 + (환경변수 있을 때) 토큰 role 사전검증 -> 메뉴 RBAC 스모크/대시보드 일관성 점검
@@ -352,6 +372,14 @@ Shell:
 - 최종 마감(strict) 실행 기준:
   - `STRICT_WARN_AS_FAIL=1 backend/scripts/run_dashboard_v2_transition_readiness_check.sh`
   - 현재 결과: `pass=6 fail=0 warn=0` (strict 통과)
+- 액티브 기능 이관 1단계 완료:
+  - V2 API Keys 페이지에 `Create API key` 액션 이관
+  - 필드: `name`, `team_id(optional)`, `memo(optional)`
+  - 생성 성공 시 1회 노출 키(`api_key`) 표시 + 복사 버튼 제공
+  - 관련 파일:
+    - `frontend/app/dashboard/(v2)/access/api-keys/page.tsx`
+    - `frontend/lib/dashboard-v2-client.ts` (`dashboardApiRequest` 추가)
+  - 검증: `frontend pnpm -s tsc --noEmit` PASS
 - QA 자동 실행 결과(2026-03-05):
   - `frontend`: `pnpm -s tsc --noEmit` PASS
   - `backend`: `./scripts/run_phase3_rbac_smoke.sh` PASS (`32 passed`)
