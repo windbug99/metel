@@ -17,6 +17,13 @@ router = APIRouter(prefix="/api/oauth/notion", tags=["notion-oauth"])
 logger = logging.getLogger(__name__)
 
 
+def _frontend_dashboard_url(raw_frontend_url: str, query: str) -> str:
+    base = (raw_frontend_url or "").strip().strip("'\"").replace("\r", "").replace("\n", "")
+    if not base.startswith(("http://", "https://")):
+        raise HTTPException(status_code=500, detail="FRONTEND_URL is invalid. Expected absolute http(s) URL.")
+    return f"{base.rstrip('/')}/dashboard?{query}"
+
+
 def _extract_page_title(page: dict) -> str:
     properties = page.get("properties", {})
     for value in properties.values():
@@ -93,7 +100,7 @@ async def notion_oauth_callback(code: str, state: str):
             if existing_row:
                 logger.warning("notion oauth callback received invalid_grant but token already exists for user_id=%s", user_id)
                 return RedirectResponse(
-                    url=f"{settings.frontend_url}/dashboard?notion=connected&oauth_notice=duplicate_callback",
+                    url=_frontend_dashboard_url(settings.frontend_url, "notion=connected&oauth_notice=duplicate_callback"),
                     status_code=302,
                 )
 
@@ -123,7 +130,7 @@ async def notion_oauth_callback(code: str, state: str):
 
     supabase.table("oauth_tokens").upsert(upsert_payload, on_conflict="user_id,provider").execute()
 
-    return RedirectResponse(url=f"{settings.frontend_url}/dashboard?notion=connected", status_code=302)
+    return RedirectResponse(url=_frontend_dashboard_url(settings.frontend_url, "notion=connected"), status_code=302)
 
 
 @router.get("/status")

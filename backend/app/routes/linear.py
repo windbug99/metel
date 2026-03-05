@@ -20,6 +20,13 @@ logger = logging.getLogger(__name__)
 LINEAR_SCOPE = "read write"
 
 
+def _frontend_dashboard_url(raw_frontend_url: str, query: str) -> str:
+    base = (raw_frontend_url or "").strip().strip("'\"").replace("\r", "").replace("\n", "")
+    if not base.startswith(("http://", "https://")):
+        raise HTTPException(status_code=500, detail="FRONTEND_URL is invalid. Expected absolute http(s) URL.")
+    return f"{base.rstrip('/')}/dashboard?{query}"
+
+
 def _validate_linear_settings() -> None:
     settings = get_settings()
     if not settings.linear_client_id or not settings.linear_client_secret or not settings.linear_redirect_uri:
@@ -115,7 +122,7 @@ async def linear_oauth_callback(code: str, state: str):
             if existing_row:
                 logger.warning("linear oauth callback received invalid_grant but token already exists for user_id=%s", user_id)
                 return RedirectResponse(
-                    url=f"{settings.frontend_url}/dashboard?linear=connected&oauth_notice=duplicate_callback",
+                    url=_frontend_dashboard_url(settings.frontend_url, "linear=connected&oauth_notice=duplicate_callback"),
                     status_code=302,
                 )
 
@@ -162,7 +169,7 @@ async def linear_oauth_callback(code: str, state: str):
         on_conflict="user_id,provider",
     ).execute()
 
-    return RedirectResponse(url=f"{settings.frontend_url}/dashboard?linear=connected", status_code=302)
+    return RedirectResponse(url=_frontend_dashboard_url(settings.frontend_url, "linear=connected"), status_code=302)
 
 
 @router.get("/status")
