@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { buildNextPath, dashboardApiGet } from "../../lib/dashboard-v2-client";
+import { supabase } from "../../lib/supabase";
 import AlertBanner from "./alert-banner";
 
 type PermissionSnapshot = {
@@ -28,7 +29,13 @@ const PAGE_QUERY_KEYS: Record<string, string[]> = {
   apiKeys: ["keys_status"],
   organizations: ["orgs_tab"],
   teamPolicy: ["team_tab"],
+  policySimulator: ["sim_mode"],
+  mcpUsage: ["usage_status"],
+  mcpGuide: ["guide_tab"],
+  integrations: ["integration_status"],
+  oauthConnections: ["oauth_state"],
   auditEvents: ["audit_status"],
+  auditSettings: ["audit_settings_tab"],
   adminOps: ["ops_tab"],
 };
 
@@ -45,8 +52,26 @@ function currentPageKey(pathname: string): keyof typeof PAGE_QUERY_KEYS {
   if (pathname.startsWith("/dashboard/access/team-policy")) {
     return "teamPolicy";
   }
+  if (pathname.startsWith("/dashboard/control/policy-simulator")) {
+    return "policySimulator";
+  }
+  if (pathname.startsWith("/dashboard/control/mcp-usage")) {
+    return "mcpUsage";
+  }
+  if (pathname.startsWith("/dashboard/control/mcp-guide")) {
+    return "mcpGuide";
+  }
+  if (pathname.startsWith("/dashboard/integrations/webhooks")) {
+    return "integrations";
+  }
+  if (pathname.startsWith("/dashboard/integrations/oauth")) {
+    return "oauthConnections";
+  }
   if (pathname.startsWith("/dashboard/control/audit-events")) {
     return "auditEvents";
+  }
+  if (pathname.startsWith("/dashboard/control/audit-settings")) {
+    return "auditSettings";
   }
   if (pathname.startsWith("/dashboard/admin/ops")) {
     return "adminOps";
@@ -67,8 +92,26 @@ function pageTitle(pathname: string): string {
   if (pathname.startsWith("/dashboard/access/team-policy")) {
     return "Team Policy";
   }
+  if (pathname.startsWith("/dashboard/control/policy-simulator")) {
+    return "Policy Simulator";
+  }
+  if (pathname.startsWith("/dashboard/control/mcp-usage")) {
+    return "MCP Usage";
+  }
+  if (pathname.startsWith("/dashboard/control/mcp-guide")) {
+    return "MCP Guide";
+  }
+  if (pathname.startsWith("/dashboard/integrations/webhooks")) {
+    return "Integrations";
+  }
+  if (pathname.startsWith("/dashboard/integrations/oauth")) {
+    return "OAuth Connections";
+  }
   if (pathname.startsWith("/dashboard/control/audit-events")) {
     return "Audit Events";
+  }
+  if (pathname.startsWith("/dashboard/control/audit-settings")) {
+    return "Audit Settings";
   }
   if (pathname.startsWith("/dashboard/admin/ops")) {
     return "Admin / Ops";
@@ -86,6 +129,7 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
   const [permissionLoading, setPermissionLoading] = useState(true);
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [forbiddenBanner, setForbiddenBanner] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
 
   const title = useMemo(() => pageTitle(pathname), [pathname]);
   const globalSearchEnabled = process.env.NEXT_PUBLIC_DASHBOARD_GLOBAL_SEARCH_ENABLED === "true";
@@ -103,7 +147,13 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
       { href: "/dashboard/access/api-keys", label: "API Keys", visible: true },
       { href: "/dashboard/access/organizations", label: "Organizations", visible: true },
       { href: "/dashboard/access/team-policy", label: "Team Policy", visible: true },
+      { href: "/dashboard/control/policy-simulator", label: "Policy Simulator", visible: true },
+      { href: "/dashboard/control/mcp-usage", label: "MCP Usage", visible: true },
+      { href: "/dashboard/control/mcp-guide", label: "MCP Guide", visible: true },
+      { href: "/dashboard/integrations/webhooks", label: "Integrations", visible: true },
+      { href: "/dashboard/integrations/oauth", label: "OAuth", visible: true },
       { href: "/dashboard/control/audit-events", label: "Audit Events", visible: true },
+      { href: "/dashboard/control/audit-settings", label: "Audit Settings", visible: true },
       { href: "/dashboard/admin/ops", label: "Admin / Ops", visible: canReadAdminOps },
     ];
   }, [permissionSnapshot]);
@@ -226,6 +276,12 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
     });
   }, []);
 
+  const handleSignOut = useCallback(async () => {
+    setSigningOut(true);
+    await supabase.auth.signOut();
+    router.replace("/");
+  }, [router]);
+
   return (
     <div className={`${theme === "dark" ? "theme-dark" : "theme-light"} min-h-screen bg-[var(--background)] text-[var(--foreground)]`}>
       <div className="mx-auto flex w-full max-w-[1440px]">
@@ -320,6 +376,14 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
                   className="ds-btn h-11 rounded-md px-3 text-sm md:h-8 md:text-xs"
                 >
                   {theme === "dark" ? "Light" : "Dark"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSignOut()}
+                  disabled={signingOut}
+                  className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-8 md:text-xs"
+                >
+                  {signingOut ? "Signing out..." : "Sign out"}
                 </button>
               </div>
             </div>

@@ -232,7 +232,7 @@ Shell:
 - [x] 앵커 스크롤 기반 단일 페이지 제거 완료
 - [x] 메뉴 클릭 시 URL 라우팅 전환 100% 완료
 - [x] 권한/가드 UX가 owner/admin/member 정책과 일치
-- [x] 핵심 KPI/감사/정책 화면에서 기능 회귀 없음
+- [x] 이관 완료 범위(Overview/Profile/API Keys/Organizations/Team Policy/Audit Events 기본 조회) 내 기능 회귀 없음
 
 ### I. 액티브 기능 이관 우선순위
 - [x] 1단계: API Keys 생성 액션 이관 (`/dashboard/access/api-keys`)
@@ -391,3 +391,149 @@ Shell:
   - `backend`: `REQUIRE_MOBILE_MANUAL_QA=1 API_BASE_URL=... OWNER_JWT=... ADMIN_JWT=... MEMBER_JWT=... ./scripts/run_dashboard_v2_qa_stage_gate.sh` FAIL
     - 결과: `pass=6 fail=1 skip=0`
     - 원인: `mobile manual qa log check` 미완료(`docs/dashboard-mobile-manual-qa-log-20260305.md` 체크박스 미체크)
+
+## 11) 미이관 기능 갭 분석 (기준: legacy 대비)
+
+분류 기준:
+- `완료`: V2에서 동일/동급 기능 제공
+- `부분`: V2에서 일부 기능만 제공
+- `미이관`: V2 미구현 (legacy에만 존재)
+
+### A. 일반 사용자 기능
+- 프로필 관리(타임존 조회/수정): `완료`
+- OAuth 연결/해제(Notion/Linear): `미이관`
+- MCP 사용 시작 가이드(list_tools/call_tool curl 예시): `미이관`
+- 사용량 조회(최근 호출 목록/필터/24h 요약/7일 추세): `미이관`
+- 로그아웃: `미이관` (V2 UI 버튼 기준)
+
+### B. 개발자/통합 담당 기능
+- API Key 생성(팀 스코프, 1회 노출/복사): `부분`
+- API Key 고급 필드(allowed tools, tags, policy JSON): `미이관`
+- API Key 수정/회전/폐기/7일 drill-down: `미이관`
+- Policy Simulator: `미이관`
+- Webhook 구독/Delivery 조회/Retry: `미이관`
+
+### C. 팀/조직 관리자 기능
+- Team 생성/수정/정책 저장/리비전 조회/롤백/멤버 관리: `완료`
+- Organization 생성/멤버 관리/초대 생성·수락·재발급·철회: `완료`
+- Organization 역할 변경 요청 생성/승인/거절: `미이관`
+
+### D. 보안/감사 담당 기능
+- Audit 이벤트 목록 조회(기본): `부분`
+- Audit 요약/팀·조직 필터/상세 조회: `미이관`
+- Audit 설정(retention/export/masking): `미이관`
+- 감사 내보내기(JSONL/CSV): `미이관`
+
+### E. 운영/플랫폼 관리자 기능
+- Execution KPI(기본 KPI 카드): `부분`
+- Top tools/anomalies/추세형 시각화: `미이관`
+- Admin/Ops 실모듈(시스템헬스/진단/외부헬스/rate-limit): `미이관`
+- Incident Banner 저장 + revision 승인 워크플로우: `미이관`
+
+## 12) 구현 착수 체크리스트 (미이관 항목)
+
+원칙:
+- 우선 `legacy` 기능과 API 계약을 1:1 보존해 이관
+- 페이지 단위 PR로 분할하여 회귀 범위 최소화
+
+### Wave 1 (즉시 착수, 사용자 영향 큼)
+- [x] V2 API Keys 고도화: 수정/Rotate/Revoke/Drill-down + allowed tools/tags/policy JSON
+- [x] V2 로그아웃 액션 추가(Shell 상단)
+- [x] V2 Usage 페이지 추가(최근 호출 목록 + 상태/툴명/기간 필터 + 24h 요약 + 7d 추세)
+- [x] V2 Policy Simulator 페이지 추가
+
+### Wave 2 (통합/운영 핵심)
+- [x] V2 Integrations 페이지 추가(Webhook 구독/Delivery 조회/Retry)
+- [x] V2 OAuth Connections 페이지 추가(Notion/Linear 연결/해제 + 상태)
+- [x] V2 MCP Usage 가이드 페이지 추가(curl 예시/복사 UX)
+
+### Wave 3 (감사/운영 고도화)
+- [x] V2 Audit Events 확장(요약/팀·조직 필터/상세)
+- [x] V2 Audit Settings 페이지 추가(retention/export/masking)
+- [x] V2 Audit Export(JSONL/CSV) 이관
+- [x] V2 Admin/Ops 실모듈 이관(health/diagnostics/rate-limit/external health)
+- [x] V2 Incident Banner 운영(저장 + revision 요청/승인/거절)
+
+### Wave 4 (조직 거버넌스 완성)
+- [x] V2 Organization Role Request(생성/승인/거절) 이관
+
+## 13) 착수 전 준비 완료 조건 (Go)
+
+- [ ] 각 Wave별 API endpoint/권한 매트릭스(owner/admin/member) 확정
+- [ ] legacy 대비 기능 동등성 체크리스트(입력/출력/에러코드) 작성
+- [ ] 자동 테스트 스크립트 확장 계획 수립(각 Wave 완료 시 smoke 추가)
+- [ ] 문서 체크포인트: 본 문서 12번 체크리스트에 작업 후 즉시 반영
+
+진행 메모 (2026-03-05, 미이관 Wave 1):
+- V2 API Keys 고도화 완료:
+  - 생성 필드 확장: `allowed_tools`, `tags`, `policy_json`, `memo`, `team_id`
+  - 키 액션 추가: `PATCH(/api/api-keys/{id})`, `POST(/api/api-keys/{id}/rotate)`, `DELETE(/api/api-keys/{id})`
+  - 7일 Drill-down 조회 추가: `GET /api/api-keys/{id}/drilldown?days=7`
+  - 화면 반영 파일: `frontend/app/dashboard/(v2)/access/api-keys/page.tsx`
+  - 검증: `frontend pnpm -s tsc --noEmit` PASS
+  - 검증: `backend ./scripts/run_dashboard_v2_qa_stage_gate.sh` PASS (static 3/3, runtime skip)
+- V2 로그아웃 액션 이관 완료:
+  - Shell Top Bar에 `Sign out` 버튼 추가
+  - 처리: `supabase.auth.signOut()` 후 `/`로 리다이렉트
+  - 화면 반영 파일: `frontend/components/dashboard-v2/shell.tsx`
+  - 검증: `frontend pnpm -s tsc --noEmit` PASS
+  - 검증: `backend ./scripts/run_dashboard_v2_qa_stage_gate.sh` PASS (static 3/3, runtime skip)
+- V2 Usage 페이지 이관 완료:
+  - 신규 route: `frontend/app/dashboard/(v2)/control/mcp-usage/page.tsx`
+  - 메뉴 연결: `frontend/components/dashboard-v2/shell.tsx` (`MCP Usage`)
+  - 이관 기능: 최근 호출 목록, 상태/툴명/기간 필터, 24h 요약, 7d 추세/실패분류/커넥터 헬스
+  - 검증: `frontend pnpm -s tsc --noEmit` PASS
+  - 검증: `backend ./scripts/run_dashboard_v2_qa_stage_gate.sh` PASS (static 3/3, runtime skip)
+- V2 Policy Simulator 이관 완료:
+  - 신규 route: `frontend/app/dashboard/(v2)/control/policy-simulator/page.tsx`
+  - 메뉴 연결: `frontend/components/dashboard-v2/shell.tsx` (`Policy Simulator`)
+  - 이관 기능: API key 선택 + tool_name + arguments JSON 기반 `/api/policies/simulate` 실행 및 결과 시각화
+  - 검증: `frontend pnpm -s tsc --noEmit` PASS
+  - 검증: `backend ./scripts/run_dashboard_v2_qa_stage_gate.sh` PASS (static 3/3, runtime skip)
+- V2 Integrations(Webhook) 이관 완료:
+  - 신규 route: `frontend/app/dashboard/(v2)/integrations/webhooks/page.tsx`
+  - 메뉴 연결: `frontend/components/dashboard-v2/shell.tsx` (`Integrations`)
+  - 이관 기능: webhook 구독 생성, 최근 delivery 조회, 개별 retry, 일괄 `process-retries`
+  - 검증: `frontend pnpm -s tsc --noEmit` PASS
+  - 검증: `backend ./scripts/run_dashboard_v2_qa_stage_gate.sh` PASS (static 3/3, runtime skip)
+- V2 OAuth Connections 이관 완료:
+  - 신규 route: `frontend/app/dashboard/(v2)/integrations/oauth/page.tsx`
+  - 메뉴 연결: `frontend/components/dashboard-v2/shell.tsx` (`OAuth`)
+  - 이관 기능: Notion/Linear 상태 조회, OAuth 시작(connect), 연결 해제(disconnect)
+  - 검증: `frontend pnpm -s tsc --noEmit` PASS
+  - 검증: `backend ./scripts/run_dashboard_v2_qa_stage_gate.sh` PASS (static 3/3, runtime skip)
+- V2 MCP Guide 이관 완료:
+  - 신규 route: `frontend/app/dashboard/(v2)/control/mcp-guide/page.tsx`
+  - 메뉴 연결: `frontend/components/dashboard-v2/shell.tsx` (`MCP Guide`)
+  - 이관 기능: `list_tools`/`call_tool` curl 예시 + 복사 버튼 UX
+  - 검증: `frontend pnpm -s tsc --noEmit` PASS
+  - 검증: `backend ./scripts/run_dashboard_v2_qa_stage_gate.sh` PASS (static 3/3, runtime skip)
+- V2 Audit Events 확장 완료:
+  - 확장 파일: `frontend/app/dashboard/(v2)/control/audit-events/page.tsx`
+  - 이관 기능: 요약 카드, status/decision/tool/from/to 필터, 조직/팀 필터, 이벤트 상세 조회
+  - 검증: `frontend pnpm -s tsc --noEmit` PASS
+  - 검증: `backend ./scripts/run_dashboard_v2_qa_stage_gate.sh` PASS (static 3/3, runtime skip)
+- V2 Audit Settings + Export 이관 완료:
+  - 신규 route: `frontend/app/dashboard/(v2)/control/audit-settings/page.tsx`
+  - 메뉴 연결: `frontend/components/dashboard-v2/shell.tsx` (`Audit Settings`)
+  - 이관 기능: `retention_days`/`export_enabled`/`masking_policy` 조회 및 저장, 조직/팀 스코프 기반 JSONL/CSV export
+  - 검증: `frontend pnpm -s tsc --noEmit` PASS
+  - 검증: `backend ./scripts/run_dashboard_v2_qa_stage_gate.sh` PASS (static 3/3, runtime skip)
+- V2 Admin/Ops 실모듈 이관 완료:
+  - 업데이트 route: `frontend/app/dashboard/(v2)/admin/ops/page.tsx`
+  - 이관 기능: 시스템 헬스(`/api/admin/system-health`), 커넥터 진단(`/api/admin/connectors/diagnostics`), 외부 커넥터 헬스(`/api/admin/external-health`), rate-limit/quota 이벤트(`/api/admin/rate-limit-events`)
+  - 비고: Incident Banner 저장/리비전/리뷰 워크플로우는 아래 항목에서 추가 이관 완료
+  - 검증: `frontend pnpm -s tsc --noEmit` PASS
+  - 검증: `backend ./scripts/run_dashboard_v2_qa_stage_gate.sh` PASS (static 3/3, runtime skip)
+- V2 Incident Banner 운영 이관 완료:
+  - 업데이트 route: `frontend/app/dashboard/(v2)/admin/ops/page.tsx`
+  - 이관 기능: 배너 저장(`/api/admin/incident-banner`), revision 요청(`/api/admin/incident-banner/revisions`), revision 승인/거절(`/api/admin/incident-banner/revisions/{id}/review`)
+  - 워크플로우 규칙: owner-only, self-review blocked, revision history 노출
+  - 검증: `frontend pnpm -s tsc --noEmit` PASS
+  - 검증: `backend ./scripts/run_dashboard_v2_qa_stage_gate.sh` PASS (static 3/3, runtime skip)
+- V2 Organization Role Request 이관 완료:
+  - 업데이트 route: `frontend/app/dashboard/(v2)/access/organizations/page.tsx`
+  - 이관 기능: 요청 조회(`/api/organizations/{id}/role-requests`), 요청 생성(`/api/organizations/{id}/role-requests`), 요청 승인/거절(`/api/organizations/{id}/role-requests/{request_id}/review`)
+  - 워크플로우 규칙: owner-only review, self-review blocked, 요청 목록/상태 노출
+  - 검증: `frontend pnpm -s tsc --noEmit` PASS
+  - 검증: `backend ./scripts/run_dashboard_v2_qa_stage_gate.sh` PASS (static 3/3, runtime skip)

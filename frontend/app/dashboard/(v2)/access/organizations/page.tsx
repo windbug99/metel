@@ -41,6 +41,20 @@ type InviteItem = {
   created_at?: string | null;
 };
 
+type OrganizationRoleRequestItem = {
+  id: number;
+  organization_id: number;
+  target_user_id: string;
+  requested_role: "owner" | "admin" | "member";
+  reason?: string | null;
+  status: string;
+  requested_by: string;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 function formatDate(value?: string | null): string {
   if (!value) {
     return "-";
@@ -61,6 +75,7 @@ export default function DashboardOrganizationsPage() {
   const [selectedOrgId, setSelectedOrgId] = useState("");
   const [members, setMembers] = useState<MemberItem[]>([]);
   const [invites, setInvites] = useState<InviteItem[]>([]);
+  const [roleRequests, setRoleRequests] = useState<OrganizationRoleRequestItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,6 +93,12 @@ export default function DashboardOrganizationsPage() {
 
   const [acceptToken, setAcceptToken] = useState("");
   const [acceptingInvite, setAcceptingInvite] = useState(false);
+  const [roleRequestTargetUserId, setRoleRequestTargetUserId] = useState("");
+  const [roleRequestRequestedRole, setRoleRequestRequestedRole] = useState<"owner" | "admin" | "member">("member");
+  const [roleRequestReason, setRoleRequestReason] = useState("");
+  const [loadingRoleRequests, setLoadingRoleRequests] = useState(false);
+  const [creatingRoleRequest, setCreatingRoleRequest] = useState(false);
+  const [reviewingRoleRequestAction, setReviewingRoleRequestAction] = useState<string | null>(null);
 
   const selectedOrg = useMemo(
     () => organizations.find((item) => String(item.id) === selectedOrgId) ?? null,
@@ -368,6 +389,109 @@ export default function DashboardOrganizationsPage() {
     setAcceptingInvite(false);
   }, [acceptToken, handle401, loadOrganizations]);
 
+  const loadRoleRequests = useCallback(async () => {
+    if (!selectedOrgId) {
+      setRoleRequests([]);
+      return;
+    }
+    setLoadingRoleRequests(true);
+    setError(null);
+    const result = await dashboardApiGet<{ items?: OrganizationRoleRequestItem[] }>(
+      `/api/organizations/${selectedOrgId}/role-requests`
+    );
+    if (result.status === 401) {
+      handle401();
+      setLoadingRoleRequests(false);
+      return;
+    }
+    if (result.status === 403 || result.status === 404) {
+      setError("Cannot load role requests for this organization.");
+      setLoadingRoleRequests(false);
+      return;
+    }
+    if (!result.ok || !result.data) {
+      setError(result.error ?? "Failed to load role requests.");
+      setLoadingRoleRequests(false);
+      return;
+    }
+    setRoleRequests(Array.isArray(result.data.items) ? result.data.items : []);
+    setLoadingRoleRequests(false);
+  }, [handle401, selectedOrgId]);
+
+  const createRoleRequest = useCallback(async () => {
+    if (!selectedOrgId) {
+      setError("Select an organization first.");
+      return;
+    }
+    if (!roleRequestTargetUserId.trim()) {
+      setError("Role request target user_id is required.");
+      return;
+    }
+    setCreatingRoleRequest(true);
+    setError(null);
+    const result = await dashboardApiRequest(`/api/organizations/${selectedOrgId}/role-requests`, {
+      method: "POST",
+      body: {
+        target_user_id: roleRequestTargetUserId.trim(),
+        requested_role: roleRequestRequestedRole,
+        reason: roleRequestReason.trim() || null,
+      },
+    });
+    if (result.status === 401) {
+      handle401();
+      setCreatingRoleRequest(false);
+      return;
+    }
+    if (result.status === 403 || result.status === 404) {
+      setError("Owner role required for role request creation.");
+      setCreatingRoleRequest(false);
+      return;
+    }
+    if (!result.ok) {
+      setError(result.error ?? "Failed to create role request.");
+      setCreatingRoleRequest(false);
+      return;
+    }
+    setRoleRequestTargetUserId("");
+    setRoleRequestRequestedRole("member");
+    setRoleRequestReason("");
+    await loadRoleRequests();
+    setCreatingRoleRequest(false);
+  }, [handle401, loadRoleRequests, roleRequestReason, roleRequestRequestedRole, roleRequestTargetUserId, selectedOrgId]);
+
+  const reviewRoleRequest = useCallback(
+    async (requestId: number, decision: "approve" | "reject") => {
+      if (!selectedOrgId) {
+        return;
+      }
+      const reviewKey = `${requestId}:${decision}`;
+      setReviewingRoleRequestAction(reviewKey);
+      setError(null);
+      const result = await dashboardApiRequest(`/api/organizations/${selectedOrgId}/role-requests/${requestId}/review`, {
+        method: "POST",
+        body: { decision },
+      });
+      if (result.status === 401) {
+        handle401();
+        setReviewingRoleRequestAction(null);
+        return;
+      }
+      if (result.status === 403 || result.status === 404) {
+        setError("Owner role required for role request review.");
+        setReviewingRoleRequestAction(null);
+        return;
+      }
+      if (!result.ok) {
+        setError(result.error ?? "Failed to review role request.");
+        setReviewingRoleRequestAction(null);
+        return;
+      }
+      await Promise.all([loadRoleRequests(), loadMembers()]);
+      setReviewingRoleRequestAction(null);
+    },
+    [handle401, loadMembers, loadRoleRequests, selectedOrgId]
+  );
+
   useEffect(() => {
     void loadOrganizations();
   }, [loadOrganizations]);
@@ -376,11 +500,13 @@ export default function DashboardOrganizationsPage() {
     if (!selectedOrgId) {
       setMembers([]);
       setInvites([]);
+      setRoleRequests([]);
       return;
     }
     void loadMembers();
     void loadInvites();
-  }, [loadInvites, loadMembers, selectedOrgId]);
+    void loadRoleRequests();
+  }, [loadInvites, loadMembers, loadRoleRequests, selectedOrgId]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -465,6 +591,9 @@ export default function DashboardOrganizationsPage() {
           </button>
           <button type="button" onClick={() => void loadInvites()} className="ds-btn h-11 rounded-md px-3 text-sm md:h-9">
             Load Invites
+          </button>
+          <button type="button" onClick={() => void loadRoleRequests()} className="ds-btn h-11 rounded-md px-3 text-sm md:h-9">
+            Load Requests
           </button>
         </div>
         <p className="mt-2 text-xs text-[var(--muted)]">
@@ -632,6 +761,109 @@ export default function DashboardOrganizationsPage() {
               <tr>
                 <td className="px-4 py-4 text-[var(--muted)]" colSpan={7}>
                   No invites loaded.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="ds-card p-4">
+        <p className="mb-2 text-sm font-medium">Role change requests</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={roleRequestTargetUserId}
+            onChange={(event) => setRoleRequestTargetUserId(event.target.value)}
+            placeholder="target user_id"
+            className="ds-input h-11 min-w-[220px] rounded-md px-3 text-sm md:h-9"
+            disabled={!ownerActionsEnabled}
+          />
+          <select
+            value={roleRequestRequestedRole}
+            onChange={(event) => setRoleRequestRequestedRole(event.target.value as "owner" | "admin" | "member")}
+            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+            disabled={!ownerActionsEnabled}
+          >
+            <option value="member">member</option>
+            <option value="admin">admin</option>
+            <option value="owner">owner</option>
+          </select>
+          <input
+            value={roleRequestReason}
+            onChange={(event) => setRoleRequestReason(event.target.value)}
+            placeholder="reason (optional)"
+            className="ds-input h-11 min-w-[180px] rounded-md px-3 text-sm md:h-9"
+            disabled={!ownerActionsEnabled}
+          />
+          <button
+            type="button"
+            onClick={() => void createRoleRequest()}
+            disabled={!ownerActionsEnabled || creatingRoleRequest}
+            className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+            title={ownerActionsEnabled ? "" : "Owner role required"}
+          >
+            {creatingRoleRequest ? "Creating..." : "Create Request"}
+          </button>
+        </div>
+        {!ownerActionsEnabled ? <p className="mt-2 text-xs text-[var(--muted)]">Owner role required.</p> : null}
+      </div>
+
+      <div className="ds-card overflow-x-auto">
+        <table className="min-w-[880px] text-sm">
+          <thead className="bg-[var(--surface-subtle)] text-left text-xs text-[var(--muted)]">
+            <tr>
+              <th className="px-4 py-3">ID</th>
+              <th className="px-4 py-3">Target</th>
+              <th className="px-4 py-3">Requested Role</th>
+              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Requested By</th>
+              <th className="px-4 py-3">Created At</th>
+              <th className="px-4 py-3">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {roleRequests.map((item) => (
+              <tr key={`role-request-${item.id}`} className="border-t border-[var(--border)]">
+                <td className="px-4 py-3">#{item.id}</td>
+                <td className="px-4 py-3 font-mono text-xs">{item.target_user_id}</td>
+                <td className="px-4 py-3">{item.requested_role}</td>
+                <td className="px-4 py-3">{item.status}</td>
+                <td className="px-4 py-3 font-mono text-xs">{item.requested_by}</td>
+                <td className="px-4 py-3">{formatDate(item.created_at)}</td>
+                <td className="px-4 py-3">
+                  {item.status === "pending" && item.requested_by !== me?.user_id && ownerActionsEnabled ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void reviewRoleRequest(item.id, "approve")}
+                        disabled={reviewingRoleRequestAction === `${item.id}:approve`}
+                        className="h-11 rounded-md border border-[var(--success-600)]/40 px-3 text-xs font-medium text-[var(--success-600)] disabled:opacity-60 md:h-9"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void reviewRoleRequest(item.id, "reject")}
+                        disabled={reviewingRoleRequestAction === `${item.id}:reject`}
+                        className="h-11 rounded-md border border-[var(--danger-500)]/40 px-3 text-xs font-medium text-[var(--danger-500)] disabled:opacity-60 md:h-9"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  ) : item.status === "pending" && item.requested_by === me?.user_id ? (
+                    <p className="text-xs text-[var(--muted)]">Self-review blocked</p>
+                  ) : item.status === "pending" ? (
+                    <p className="text-xs text-[var(--muted)]">Review is owner-only.</p>
+                  ) : (
+                    <p className="text-xs text-[var(--muted)]">-</p>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {roleRequests.length === 0 ? (
+              <tr>
+                <td className="px-4 py-4 text-[var(--muted)]" colSpan={7}>
+                  {loadingRoleRequests ? "Loading role requests..." : "No role requests loaded."}
                 </td>
               </tr>
             ) : null}

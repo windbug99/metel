@@ -11,29 +11,117 @@ type AuditEventItem = {
   request_id: string | null;
   timestamp: string;
   action?: { tool_name?: string | null };
-  outcome?: { decision?: string | null; error_code?: string | null };
+  actor?: { api_key?: { name?: string | null; key_prefix?: string | null } };
+  outcome?: {
+    decision?: string | null;
+    error_code?: string | null;
+    latency_ms?: number | null;
+  };
 };
 
-type PermissionSnapshot = {
-  role: string;
+type AuditSummary = {
+  allowed_count: number;
+  high_risk_allowed_count: number;
+  policy_override_usage: number;
+  policy_blocked_count: number;
+  access_denied_count: number;
+  failed_count: number;
+};
+
+type AuditListPayload = {
+  items?: AuditEventItem[];
+  summary?: AuditSummary;
+};
+
+type OrganizationItem = {
+  id: number;
+  name: string;
+};
+
+type TeamItem = {
+  id: number;
+  name: string;
+};
+
+type AuditDetailPayload = {
+  id: number;
+  request_id: string | null;
+  trace_id: string | null;
+  timestamp: string;
+  action: { tool_name?: string | null; connector?: string | null };
+  actor: { user_id?: string | null; api_key?: { id?: number | null; name?: string | null; key_prefix?: string | null } };
+  outcome: {
+    decision?: string | null;
+    status?: string | null;
+    error_code?: string | null;
+    upstream_status?: number | null;
+    latency_ms?: number | null;
+    retry_count?: number | null;
+    backoff_ms?: number | null;
+  };
+  execution?: {
+    request_payload?: unknown;
+    resolved_payload?: unknown;
+    risk_result?: unknown;
+    masked_fields?: unknown;
+  };
 };
 
 export default function DashboardAuditEventsPage() {
   const pathname = usePathname();
   const router = useRouter();
+
   const [items, setItems] = useState<AuditEventItem[]>([]);
+  const [summary, setSummary] = useState<AuditSummary | null>(null);
+  const [organizations, setOrganizations] = useState<OrganizationItem[]>([]);
+  const [teams, setTeams] = useState<TeamItem[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [role, setRole] = useState<string | null>(null);
+
+  const [statusFilter, setStatusFilter] = useState<"all" | "success" | "fail">("all");
+  const [decisionFilter, setDecisionFilter] = useState<"all" | "allowed" | "policy_blocked" | "access_denied" | "failed" | "policy_override_allowed">("all");
+  const [toolNameFilter, setToolNameFilter] = useState("");
+  const [organizationFilter, setOrganizationFilter] = useState("");
+  const [teamFilter, setTeamFilter] = useState("");
+  const [fromFilter, setFromFilter] = useState("");
+  const [toFilter, setToFilter] = useState("");
+
+  const [detail, setDetail] = useState<AuditDetailPayload | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const handle401 = useCallback(() => {
+    const next = encodeURIComponent(buildNextPath(pathname, window.location.search));
+    router.replace(`/?next=${next}`);
+  }, [pathname, router]);
 
   const fetchAuditEvents = useCallback(async () => {
     setLoading(true);
     setError(null);
 
-    const result = await dashboardApiGet<{ items?: AuditEventItem[] }>("/api/audit/events?limit=20&status=all");
+    const query = new URLSearchParams();
+    query.set("limit", "50");
+    query.set("status", statusFilter);
+    query.set("decision", decisionFilter);
+    if (toolNameFilter.trim()) {
+      query.set("tool_name", toolNameFilter.trim());
+    }
+    if (organizationFilter) {
+      query.set("organization_id", organizationFilter);
+    }
+    if (teamFilter) {
+      query.set("team_id", teamFilter);
+    }
+    if (fromFilter) {
+      query.set("from", new Date(fromFilter).toISOString());
+    }
+    if (toFilter) {
+      query.set("to", new Date(toFilter).toISOString());
+    }
+
+    const result = await dashboardApiGet<AuditListPayload>(`/api/audit/events?${query.toString()}`);
     if (result.status === 401) {
-      const next = encodeURIComponent(buildNextPath(pathname, window.location.search));
-      router.replace(`/?next=${next}`);
+      handle401();
       setLoading(false);
       return;
     }
@@ -47,18 +135,64 @@ export default function DashboardAuditEventsPage() {
       setLoading(false);
       return;
     }
-    setItems(Array.isArray(result.data.items) ? result.data.items : []);
 
-    const permissionResult = await dashboardApiGet<PermissionSnapshot>("/api/me/permissions");
-    if (permissionResult.ok && permissionResult.data) {
-      setRole(permissionResult.data.role ?? null);
-    }
+    setItems(Array.isArray(result.data.items) ? result.data.items : []);
+    setSummary(result.data.summary ?? null);
     setLoading(false);
-  }, [pathname, router]);
+  }, [decisionFilter, fromFilter, handle401, organizationFilter, statusFilter, teamFilter, toFilter, toolNameFilter]);
+
+  const fetchScopeOptions = useCallback(async () => {
+    const [orgRes, teamRes] = await Promise.all([
+      dashboardApiGet<{ items?: OrganizationItem[] }>("/api/organizations"),
+      dashboardApiGet<{ items?: TeamItem[] }>("/api/teams"),
+    ]);
+    if (orgRes.status === 401 || teamRes.status === 401) {
+      handle401();
+      return;
+    }
+    if (orgRes.ok && orgRes.data) {
+      setOrganizations(Array.isArray(orgRes.data.items) ? orgRes.data.items : []);
+    }
+    if (teamRes.ok && teamRes.data) {
+      setTeams(Array.isArray(teamRes.data.items) ? teamRes.data.items : []);
+    }
+  }, [handle401]);
+
+  const fetchAuditEventDetail = useCallback(
+    async (eventId: number) => {
+      setDetailLoading(true);
+      setError(null);
+
+      const result = await dashboardApiGet<AuditDetailPayload>(`/api/audit/events/${eventId}`);
+      if (result.status === 401) {
+        handle401();
+        setDetailLoading(false);
+        return;
+      }
+      if (result.status === 403 || result.status === 404) {
+        setError("Cannot load audit event detail.");
+        setDetailLoading(false);
+        return;
+      }
+      if (!result.ok || !result.data) {
+        setError(result.error ?? "Failed to load audit event detail.");
+        setDetailLoading(false);
+        return;
+      }
+
+      setDetail(result.data);
+      setDetailLoading(false);
+    },
+    [handle401]
+  );
 
   useEffect(() => {
     void fetchAuditEvents();
   }, [fetchAuditEvents]);
+
+  useEffect(() => {
+    void fetchScopeOptions();
+  }, [fetchScopeOptions]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -76,27 +210,110 @@ export default function DashboardAuditEventsPage() {
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-semibold">Audit Events</h1>
-      <p className="text-sm text-[var(--text-secondary)]">Audit events are fetched and refreshed in page scope.</p>
+      <p className="text-sm text-[var(--text-secondary)]">Who ran what, and whether it was allowed or blocked.</p>
+
       <div className="ds-card p-4">
-        <button
-          type="button"
-          disabled={role !== "owner"}
-          className="ds-btn h-11 rounded-md px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 md:h-8 md:text-xs"
-        >
-          Update Audit Settings (owner-only)
-        </button>
-        {role !== "owner" ? <p className="mt-2 text-xs text-[var(--muted)]">Owner role required.</p> : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value as "all" | "success" | "fail")}
+            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+          >
+            <option value="all">All status</option>
+            <option value="success">Success</option>
+            <option value="fail">Fail</option>
+          </select>
+          <select
+            value={decisionFilter}
+            onChange={(event) =>
+              setDecisionFilter(
+                event.target.value as "all" | "allowed" | "policy_blocked" | "access_denied" | "failed" | "policy_override_allowed"
+              )
+            }
+            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+          >
+            <option value="all">All decisions</option>
+            <option value="allowed">allowed</option>
+            <option value="policy_blocked">policy_blocked</option>
+            <option value="access_denied">access_denied</option>
+            <option value="failed">failed</option>
+            <option value="policy_override_allowed">policy_override_allowed</option>
+          </select>
+          <input
+            value={toolNameFilter}
+            onChange={(event) => setToolNameFilter(event.target.value)}
+            placeholder="Tool name"
+            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+          />
+          <select
+            value={organizationFilter}
+            onChange={(event) => setOrganizationFilter(event.target.value)}
+            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+          >
+            <option value="">All organizations</option>
+            {organizations.map((org) => (
+              <option key={`audit-org-${org.id}`} value={String(org.id)}>
+                Org #{org.id} - {org.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={teamFilter}
+            onChange={(event) => setTeamFilter(event.target.value)}
+            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+          >
+            <option value="">All teams</option>
+            {teams.map((team) => (
+              <option key={`audit-team-${team.id}`} value={String(team.id)}>
+                Team #{team.id} - {team.name}
+              </option>
+            ))}
+          </select>
+          <input type="datetime-local" value={fromFilter} onChange={(event) => setFromFilter(event.target.value)} className="ds-input h-11 rounded-md px-3 text-sm md:h-9" />
+          <input type="datetime-local" value={toFilter} onChange={(event) => setToFilter(event.target.value)} className="ds-input h-11 rounded-md px-3 text-sm md:h-9" />
+          <button type="button" onClick={() => void fetchAuditEvents()} disabled={loading} className="ds-btn h-11 rounded-md px-3 text-sm disabled:opacity-60 md:h-9">
+            {loading ? "Loading..." : "Apply"}
+          </button>
+        </div>
       </div>
 
-      {loading ? <p className="text-sm text-[var(--muted)]">Loading audit events...</p> : null}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <article className="ds-card p-4">
+          <p className="text-xs text-[var(--muted)]">Allowed</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--success-600)]">{summary?.allowed_count ?? 0}</p>
+        </article>
+        <article className="ds-card p-4">
+          <p className="text-xs text-[var(--muted)]">Policy Blocked</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--warning-500)]">{summary?.policy_blocked_count ?? 0}</p>
+        </article>
+        <article className="ds-card p-4">
+          <p className="text-xs text-[var(--muted)]">Access Denied</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--warning-500)]">{summary?.access_denied_count ?? 0}</p>
+        </article>
+        <article className="ds-card p-4">
+          <p className="text-xs text-[var(--muted)]">Failed</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--danger-500)]">{summary?.failed_count ?? 0}</p>
+        </article>
+        <article className="ds-card p-4">
+          <p className="text-xs text-[var(--muted)]">High Risk Allowed</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--brand-500)]">{summary?.high_risk_allowed_count ?? 0}</p>
+        </article>
+        <article className="ds-card p-4">
+          <p className="text-xs text-[var(--muted)]">Policy Override Usage</p>
+          <p className="mt-1 text-xl font-semibold text-[var(--brand-500)]">{((summary?.policy_override_usage ?? 0) * 100).toFixed(1)}%</p>
+        </article>
+      </div>
+
       {error ? (
         <div className="rounded-md border border-[var(--danger-500)]/40 bg-[color-mix(in_srgb,var(--danger-500)_12%,white)] px-3 py-2 text-sm text-[var(--danger-500)]">
           {error}
         </div>
       ) : null}
 
-      {!loading && !error ? (
-        <div className="ds-card overflow-x-auto">
+      <div className="ds-card overflow-x-auto">
+        {loading ? <p className="px-4 py-3 text-sm text-[var(--muted)]">Loading audit events...</p> : null}
+        {!loading && items.length === 0 ? <p className="px-4 py-3 text-sm text-[var(--muted)]">No audit events found.</p> : null}
+        {items.length > 0 ? (
           <table className="min-w-[640px] text-sm">
             <thead className="bg-[var(--surface-subtle)] text-left text-xs text-[var(--muted)]">
               <tr>
@@ -104,6 +321,7 @@ export default function DashboardAuditEventsPage() {
                 <th className="px-4 py-3">Tool</th>
                 <th className="px-4 py-3">Decision</th>
                 <th className="px-4 py-3">Error</th>
+                <th className="px-4 py-3">Detail</th>
               </tr>
             </thead>
             <tbody>
@@ -115,17 +333,29 @@ export default function DashboardAuditEventsPage() {
                     <StatusBadge kind="decision" value={item.outcome?.decision} />
                   </td>
                   <td className="px-4 py-3">{item.outcome?.error_code ?? "-"}</td>
-                </tr>
-              ))}
-              {items.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-4 text-[var(--muted)]" colSpan={4}>
-                    No audit events found.
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={() => void fetchAuditEventDetail(item.id)}
+                      disabled={detailLoading}
+                      className="ds-btn h-9 rounded-md px-3 text-xs disabled:opacity-60"
+                    >
+                      {detailLoading ? "Loading..." : "Details"}
+                    </button>
                   </td>
                 </tr>
-              ) : null}
+              ))}
             </tbody>
           </table>
+        ) : null}
+      </div>
+
+      {detail ? (
+        <div className="ds-card p-4">
+          <p className="text-sm font-medium">Selected Audit Detail: #{detail.id}</p>
+          <pre className="mt-2 overflow-x-auto rounded bg-[var(--surface-subtle)] p-3 text-[11px] text-[var(--text-secondary)]">
+            {JSON.stringify(detail, null, 2)}
+          </pre>
         </div>
       ) : null}
     </section>
