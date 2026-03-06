@@ -1,5 +1,7 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -37,6 +39,8 @@ export default function DashboardProfilePage() {
   const [timezoneDraft, setTimezoneDraft] = useState("UTC");
   const [timezoneSaving, setTimezoneSaving] = useState(false);
   const [timezoneMessage, setTimezoneMessage] = useState<string | null>(null);
+  const [themeDraft, setThemeDraft] = useState<"light" | "dark">("light");
+  const [themeMessage, setThemeMessage] = useState<string | null>(null);
   const browserTimezone = useMemo(() => detectBrowserTimezone(), []);
 
   const timezoneOptions = useMemo(() => {
@@ -115,6 +119,16 @@ export default function DashboardProfilePage() {
   }, [loadProfile]);
 
   useEffect(() => {
+    const stored = window.localStorage.getItem("dashboard-v2-theme");
+    if (stored === "light" || stored === "dark") {
+      setThemeDraft(stored);
+      return;
+    }
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    setThemeDraft(prefersDark ? "dark" : "light");
+  }, []);
+
+  useEffect(() => {
     const handler = (event: Event) => {
       const custom = event as CustomEvent<{ path?: string }>;
       if (custom.detail?.path === pathname) {
@@ -127,37 +141,47 @@ export default function DashboardProfilePage() {
     };
   }, [loadProfile, pathname]);
 
+  const handleSaveTheme = useCallback(() => {
+    window.localStorage.setItem("dashboard-v2-theme", themeDraft);
+    window.dispatchEvent(
+      new CustomEvent("dashboard:v2:theme", {
+        detail: { theme: themeDraft },
+      })
+    );
+    setThemeMessage("Theme updated.");
+  }, [themeDraft]);
+
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-semibold">Profile</h1>
-      <p className="text-sm text-[var(--text-secondary)]">Manage your profile and timezone preference.</p>
+      <p className="text-sm text-muted-foreground">Manage your profile and timezone preference.</p>
 
       {error ? <AlertBanner message={error} tone="danger" /> : null}
-      {loading ? <p className="text-sm text-[var(--muted)]">Loading profile...</p> : null}
+      {loading ? <p className="text-sm text-muted-foreground">Loading profile...</p> : null}
 
       {!loading && profile ? (
         <div className="ds-card space-y-4 p-4">
           <div className="space-y-1">
-            <p className="text-xs text-[var(--muted)]">User ID</p>
+            <p className="text-xs text-muted-foreground">User ID</p>
             <p className="font-mono text-xs">{profile.id}</p>
           </div>
           <div className="space-y-1">
-            <p className="text-xs text-[var(--muted)]">Email</p>
+            <p className="text-xs text-muted-foreground">Email</p>
             <p className="text-sm">{profile.email ?? "-"}</p>
           </div>
           <div className="space-y-1">
-            <p className="text-xs text-[var(--muted)]">Full name</p>
+            <p className="text-xs text-muted-foreground">Full name</p>
             <p className="text-sm">{profile.full_name ?? "-"}</p>
           </div>
           <div className="space-y-1">
-            <p className="text-xs text-[var(--muted)]">Joined at</p>
+            <p className="text-xs text-muted-foreground">Joined at</p>
             <p className="text-sm">{asDate(profile.created_at)}</p>
           </div>
 
-          <div className="border-t border-[var(--border)] pt-4">
+          <div className="border-t border-border pt-4">
             <p className="mb-2 text-sm font-medium">Timezone</p>
             <div className="flex flex-wrap items-center gap-2">
-              <select
+              <Select
                 value={timezoneDraft}
                 onChange={(event) => setTimezoneDraft(event.target.value)}
                 className="ds-input h-11 min-w-[280px] rounded-md px-3 text-sm md:h-9"
@@ -167,18 +191,40 @@ export default function DashboardProfilePage() {
                     {tz}
                   </option>
                 ))}
-              </select>
-              <button
+              </Select>
+              <Button
                 type="button"
                 onClick={() => void handleSaveTimezone()}
                 disabled={timezoneSaving}
                 className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
               >
                 {timezoneSaving ? "Saving..." : "Save timezone"}
-              </button>
-              <span className="text-xs text-[var(--muted)]">Browser: {browserTimezone}</span>
+              </Button>
+              <span className="text-xs text-muted-foreground">Browser: {browserTimezone}</span>
             </div>
-            {timezoneMessage ? <p className="mt-2 text-sm text-[var(--text-secondary)]">{timezoneMessage}</p> : null}
+            {timezoneMessage ? <p className="mt-2 text-sm text-muted-foreground">{timezoneMessage}</p> : null}
+          </div>
+
+          <div className="border-t border-border pt-4">
+            <p className="mb-2 text-sm font-medium">Theme</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                value={themeDraft}
+                onChange={(event) => setThemeDraft(event.target.value as "light" | "dark")}
+                className="ds-input h-11 min-w-[180px] rounded-md px-3 text-sm md:h-9"
+              >
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </Select>
+              <Button
+                type="button"
+                onClick={() => void handleSaveTheme()}
+                className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+              >
+                Save theme
+              </Button>
+            </div>
+            {themeMessage ? <p className="mt-2 text-sm text-muted-foreground">{themeMessage}</p> : null}
           </div>
         </div>
       ) : null}

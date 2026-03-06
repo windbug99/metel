@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -8,7 +9,7 @@ import { supabase } from "../../lib/supabase";
 import DashboardAppSidebar from "./app-sidebar";
 import AlertBanner from "./alert-banner";
 import { SiteHeader } from "./sidebar07/site-header";
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
   GLOBAL_QUERY_KEYS,
   PAGE_QUERY_KEYS,
@@ -28,6 +29,11 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [forbiddenBanner, setForbiddenBanner] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+  const [viewerUsername, setViewerUsername] = useState("user");
+  const [viewerEmail, setViewerEmail] = useState("");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const isMobile = useIsMobile();
 
   const title = useMemo(() => pageTitle(pathname), [pathname]);
   const globalSearchEnabled = process.env.NEXT_PUBLIC_DASHBOARD_GLOBAL_SEARCH_ENABLED === "true";
@@ -121,6 +127,37 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
   }, []);
 
   useEffect(() => {
+    let active = true;
+
+    const hydrateViewer = async () => {
+      const { data } = await supabase.auth.getUser();
+      if (!active) {
+        return;
+      }
+      const user = data.user;
+      if (!user) {
+        return;
+      }
+
+      const username =
+        String(user.user_metadata?.username ?? "").trim() ||
+        String(user.user_metadata?.name ?? "").trim() ||
+        String(user.user_metadata?.full_name ?? "").trim() ||
+        (user.email ? user.email.split("@")[0] : "") ||
+        "user";
+
+      setViewerUsername(username);
+      setViewerEmail(user.email ?? "");
+    };
+
+    void hydrateViewer();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
     const allowed = new Set<string>([...GLOBAL_QUERY_KEYS, ...PAGE_QUERY_KEYS[pageKey]]);
     const params = new URLSearchParams(searchParams.toString());
     let changed = false;
@@ -182,13 +219,49 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
     }
   }, [fetchPermissions, pathname]);
 
-  const toggleTheme = useCallback(() => {
-    setTheme((prev) => {
-      const next = prev === "light" ? "dark" : "light";
-      window.localStorage.setItem("dashboard-v2-theme", next);
-      return next;
-    });
+  useEffect(() => {
+    const applyThemeFromStorage = () => {
+      const stored = window.localStorage.getItem("dashboard-v2-theme");
+      if (stored === "light" || stored === "dark") {
+        setTheme(stored);
+      }
+    };
+
+    const onThemeEvent = (event: Event) => {
+      const custom = event as CustomEvent<{ theme?: "light" | "dark" }>;
+      const next = custom.detail?.theme;
+      if (next === "light" || next === "dark") {
+        setTheme(next);
+      } else {
+        applyThemeFromStorage();
+      }
+    };
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === "dashboard-v2-theme") {
+        applyThemeFromStorage();
+      }
+    };
+
+    window.addEventListener("dashboard:v2:theme", onThemeEvent as EventListener);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("dashboard:v2:theme", onThemeEvent as EventListener);
+      window.removeEventListener("storage", onStorage);
+    };
   }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const body = document.body;
+    const darkMode = theme === "dark";
+    root.classList.toggle("dark", darkMode);
+    body.classList.toggle("theme-dark", darkMode);
+    return () => {
+      root.classList.remove("dark");
+      body.classList.remove("theme-dark");
+    };
+  }, [theme]);
 
   const handleSignOut = useCallback(async () => {
     setSigningOut(true);
@@ -196,9 +269,29 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
     router.replace("/");
   }, [router]);
 
+  const toggleSidebar = useCallback(() => {
+    if (isMobile) {
+      setMobileSidebarOpen((prev) => !prev);
+      return;
+    }
+    setSidebarCollapsed((prev) => !prev);
+  }, [isMobile]);
+
+  const openCreateOrganizationModal = useCallback(() => {
+    if (pathname.startsWith("/dashboard/access/organizations")) {
+      window.dispatchEvent(new Event("dashboard:v2:open-create-organization"));
+      return;
+    }
+    window.sessionStorage.setItem("dashboard:v2:open-create-organization", "1");
+    router.push(buildNavHref("/dashboard/access/organizations"));
+    if (isMobile) {
+      setMobileSidebarOpen(false);
+    }
+  }, [buildNavHref, isMobile, pathname, router]);
+
   return (
-    <div className={`${theme === "dark" ? "theme-dark" : "theme-light"} min-h-screen bg-background text-foreground`}>
-      <SidebarProvider>
+    <div className="h-svh overflow-hidden bg-background text-foreground">
+      <div className="flex h-svh w-full overflow-hidden">
         <DashboardAppSidebar
           pathname={pathname}
           navItems={navItems}
@@ -208,10 +301,24 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
           orgIds={orgIds}
           isMemberRole={isMemberRole}
           setGlobalQuery={setGlobalQuery}
+          onAddOrganization={openCreateOrganizationModal}
           signingOut={signingOut}
           onSignOut={() => void handleSignOut()}
+          username={viewerUsername}
+          email={viewerEmail}
+          collapsed={sidebarCollapsed}
+          mobileOpen={mobileSidebarOpen}
+          onCloseMobile={() => setMobileSidebarOpen(false)}
         />
-        <SidebarInset className="min-w-0">
+        {mobileSidebarOpen ? (
+          <Button
+            type="button"
+            className="fixed inset-0 z-30 bg-black/50 md:hidden"
+            onClick={() => setMobileSidebarOpen(false)}
+            aria-label="Close Sidebar Overlay"
+          />
+        ) : null}
+        <main className="flex h-svh min-w-0 flex-1 flex-col overflow-hidden">
           <SiteHeader
             title={title}
             globalSearchEnabled={globalSearchEnabled}
@@ -220,31 +327,26 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
             teamIds={teamIds}
             setGlobalQuery={setGlobalQuery}
             triggerRefresh={triggerRefresh}
-            toggleTheme={toggleTheme}
-            theme={theme}
+            onToggleSidebar={toggleSidebar}
           />
 
-          {!globalSearchEnabled ? (
-            <p className="border-b border-border px-4 py-2 text-[11px] text-muted-foreground md:px-6">
-              Global Search is disabled until backend search API scope is finalized.
-            </p>
-          ) : null}
-
-          <div className="flex flex-1 flex-col gap-4 p-4 pt-0 md:p-6 md:pt-0">
-            {forbiddenBanner ? (
-              <AlertBanner
-                message={forbiddenBanner}
-                tone="warning"
-                dismissible
-                onDismiss={() => setForbiddenBanner(null)}
-              />
-            ) : null}
-            {permissionError ? <AlertBanner message={permissionError} tone="danger" /> : null}
-            {permissionLoading ? <p className="mb-3 text-sm text-muted-foreground">Loading permissions...</p> : null}
-            {children}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="flex flex-col gap-4 p-4 pt-6 md:p-6">
+              {forbiddenBanner ? (
+                <AlertBanner
+                  message={forbiddenBanner}
+                  tone="warning"
+                  dismissible
+                  onDismiss={() => setForbiddenBanner(null)}
+                />
+              ) : null}
+              {permissionError ? <AlertBanner message={permissionError} tone="danger" /> : null}
+              {permissionLoading ? <p className="mb-3 text-sm text-muted-foreground">Loading permissions...</p> : null}
+              {children}
+            </div>
           </div>
-        </SidebarInset>
-      </SidebarProvider>
+        </main>
+      </div>
     </div>
   );
 }

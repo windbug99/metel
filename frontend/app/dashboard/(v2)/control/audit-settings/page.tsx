@@ -1,5 +1,8 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -293,16 +296,16 @@ export default function DashboardAuditSettingsPage() {
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-semibold">Audit Settings</h1>
-      <p className="text-sm text-[var(--text-secondary)]">Manage retention, export policy, masking JSON, and audit export downloads.</p>
+      <p className="text-sm text-muted-foreground">Manage retention, export policy, masking JSON, and audit export downloads.</p>
 
       {error ? <AlertBanner message={error} tone="danger" /> : null}
-      {message ? <p className="text-sm text-[var(--success-600)]">{message}</p> : null}
+      {message ? <p className="text-sm text-chart-2">{message}</p> : null}
 
-      {loading ? <p className="text-sm text-[var(--muted)]">Loading audit settings...</p> : null}
+      {loading ? <p className="text-sm text-muted-foreground">Loading audit settings...</p> : null}
 
       {!loading && !canReadSettings ? (
         <div className="ds-card p-4">
-          <p className="text-sm text-[var(--muted)]">Your role does not have permission to read audit settings.</p>
+          <p className="text-sm text-muted-foreground">Your role does not have permission to read audit settings.</p>
         </div>
       ) : null}
 
@@ -311,8 +314,8 @@ export default function DashboardAuditSettingsPage() {
           <div className="ds-card p-4">
             <p className="mb-3 text-sm font-medium">Settings</p>
             <div className="flex flex-wrap items-center gap-2">
-              <label className="text-sm text-[var(--text-secondary)]">Retention days</label>
-              <input
+              <label className="text-sm text-muted-foreground">Retention days</label>
+              <Input
                 type="number"
                 min={1}
                 value={retentionDraft}
@@ -320,8 +323,8 @@ export default function DashboardAuditSettingsPage() {
                 disabled={!canUpdateSettings}
                 className="ds-input h-11 w-28 rounded-md px-3 text-sm md:h-9"
               />
-              <label className="inline-flex items-center gap-2 text-sm text-[var(--text-secondary)]">
-                <input
+              <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                <Input
                   type="checkbox"
                   checked={exportEnabledDraft}
                   onChange={(event) => setExportEnabledDraft(event.target.checked)}
@@ -329,14 +332,14 @@ export default function DashboardAuditSettingsPage() {
                 />
                 Export enabled
               </label>
-              <button
+              <Button
                 type="button"
                 onClick={() => void handleSave()}
                 disabled={!canUpdateSettings || saving}
                 className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
               >
                 {saving ? "Saving..." : "Save Settings"}
-              </button>
+              </Button>
             </div>
 
             <textarea
@@ -347,14 +350,14 @@ export default function DashboardAuditSettingsPage() {
               placeholder='Masking policy JSON, e.g. {"mask_keys":["token","secret"]}'
             />
 
-            {!canUpdateSettings ? <p className="mt-2 text-xs text-[var(--muted)]">Audit settings update is owner-only.</p> : null}
-            <p className="mt-2 text-xs text-[var(--muted)]">updated_at: {asDate(settings?.updated_at)}</p>
+            {!canUpdateSettings ? <p className="mt-2 text-xs text-muted-foreground">Audit settings update is owner-only.</p> : null}
+            <p className="mt-2 text-xs text-muted-foreground">updated_at: {asDate(settings?.updated_at)}</p>
           </div>
 
           <div className="ds-card p-4">
             <p className="mb-3 text-sm font-medium">Audit Export (JSONL/CSV)</p>
             <div className="flex flex-wrap items-center gap-2">
-              <select
+              <Select
                 value={organizationFilter}
                 onChange={(event) => setOrganizationFilter(event.target.value)}
                 className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
@@ -365,8 +368,8 @@ export default function DashboardAuditSettingsPage() {
                     Org #{org.id} - {org.name}
                   </option>
                 ))}
-              </select>
-              <select
+              </Select>
+              <Select
                 value={teamFilter}
                 onChange={(event) => setTeamFilter(event.target.value)}
                 className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
@@ -377,24 +380,24 @@ export default function DashboardAuditSettingsPage() {
                     Team #{team.id} - {team.name}
                   </option>
                 ))}
-              </select>
+              </Select>
 
-              <button
+              <Button
                 type="button"
                 onClick={() => void handleExport("jsonl")}
                 disabled={exporting !== null}
                 className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
               >
                 {exporting === "jsonl" ? "Exporting..." : "Export JSONL"}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onClick={() => void handleExport("csv")}
                 disabled={exporting !== null}
                 className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
               >
                 {exporting === "csv" ? "Exporting..." : "Export CSV"}
-              </button>
+              </Button>
             </div>
           </div>
         </>

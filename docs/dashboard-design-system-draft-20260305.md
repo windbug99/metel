@@ -1,210 +1,190 @@
-# Dashboard Design System Draft (2026-03-05)
+# Dashboard Design System (2026-03-06)
 
-기준:
-- IA/내비게이션: `docs/dashboard-ia-navigation-proposal-20260305.md`
-- shadcn create preset(기준):
-  - base: `radix`
-  - style: `nova`
-  - baseColor: `zinc`
-  - theme: `teal`
-  - iconLibrary: `hugeicons`
-  - font: `geist`
-  - menuAccent: `subtle`
-  - menuColor: `default`
-  - radius: `small`
-  - ref:
-    - light: `https://ui.shadcn.com/create?base=radix&style=nova&baseColor=zinc&theme=teal&iconLibrary=hugeicons&font=geist&menuAccent=subtle&menuColor=default&radius=small&item=preview`
-    - dark: `https://ui.shadcn.com/create?base=radix&style=nova&baseColor=zinc&theme=teal&iconLibrary=hugeicons&font=geist&menuAccent=subtle&menuColor=default&radius=small&item=preview`
+기준 프리셋:
+- create URL: `https://ui.shadcn.com/create?base=radix&style=nova&baseColor=zinc&theme=teal&iconLibrary=lucide&font=geist&menuAccent=subtle&menuColor=default&radius=small&item=preview`
+- Base: `radix`
+- Style: `nova`
+- Base Color: `zinc`
+- Theme Accent: `teal`
+- Icon Library: `lucide`
+- Font: `geist`
+- Menu Accent: `subtle`
+- Menu Color: `default`
+- Radius: `small`
 
-## 1) Brand Direction
+## 1. Scope
 
-키워드:
-- Trustworthy
-- Operational
-- Fast to scan
-- Low-noise, high-signal
+이 문서는 Dashboard V2의 UI 토큰, 컴포넌트 스타일, 레이아웃 기준을 정의한다.
+다른 문서/과거 초안 기준은 폐기하고 본 문서를 단일 기준(Source of Truth)으로 사용한다.
 
-제품 톤:
-- “멋”보다 “결정 가능성” 우선
-- 위험/권한/감사 상태가 즉시 읽혀야 함
+적용 범위:
+- `frontend/app/globals.css`
+- `frontend/components/dashboard-v2/**`
+- `frontend/app/dashboard/(v2)/**`
+- dashboard shell/sidebar/topbar/cards/forms/tables
 
-## 2) Typography
+## 2. Typography
 
-권장 폰트:
-- UI: `Geist`
-- Data/Code: `Geist Mono`
+폰트:
+- Primary UI Font: `Geist Sans`
+- Mono/Data Font: `Geist Mono`
 
-타입 스케일:
-- `display`: 28/36, 700
-- `h1`: 24/32, 700
-- `h2`: 20/28, 700
-- `h3`: 16/24, 600
-- `body`: 14/22, 500
-- `body-sm`: 13/20, 500
-- `caption`: 12/16, 500
+기본 타입:
+- body: `14px / 22px / 500`
+- body-sm: `13px / 20px / 500`
+- caption: `12px / 16px / 500`
+- h1: `24px / 32px / 700`
+- h2: `20px / 28px / 700`
+- h3: `16px / 24px / 600`
+- display: `28px / 36px / 700`
 
-원칙:
-- 숫자/지표는 tabular-nums 사용
-- 대시보드 표는 `body-sm` 기본
+사이드바 메뉴:
+- depth0 menu item: `text-sm font-medium`
+- depth1 submenu item: `text-sm font-medium`
+- section label: `text-xs font-medium`
 
-## 3) Color System (Light + Dark)
-
-원칙:
-- shadcn가 생성한 `globals.css`의 semantic token(`--background`, `--foreground`, `--card`, `--muted`, `--border`, `--primary` 등)을 단일 기준으로 사용
-- 커스텀 hex 하드코딩은 신규 추가 금지(기존 잔존 코드는 점진 제거)
-- 상태색(success/warning/danger/info)은 shadcn token에 alias로 연결
-
-### 3-1) Theme Baseline
-
-- Neutral Base: `zinc`
-- Brand Accent: `teal`
-- Menu Accent Mode: `subtle`
-
-### 3-2) Token Alias Draft (Semantic Layer)
-
-- `color.bg.canvas` -> `--background`
-- `color.bg.surface` -> `--card`
-- `color.bg.subtle` -> `--muted`
-- `color.border.default` -> `--border`
-- `color.text.primary` -> `--foreground`
-- `color.text.secondary` -> `--muted-foreground`
-- `color.brand.primary` -> `--primary`
-- `color.brand.onPrimary` -> `--primary-foreground`
-- `color.focus.ring` -> `--ring`
-- `color.status.success` -> `--chart-2` (또는 별도 `--success`)
-- `color.status.warning` -> `--chart-4` (또는 별도 `--warning`)
-- `color.status.danger` -> `--destructive`
-- `color.status.info` -> `--chart-1` (또는 별도 `--info`)
-
-## 4) Spacing / Radius / Elevation
-
-Spacing scale:
-- `4, 8, 12, 16, 20, 24, 32, 40`
+## 3. Radius, Border, Elevation
 
 Radius:
-- `card`: small (`--radius`)
-- `input/button`: small (`--radius`)
-- `pill`: 999
+- global radius token: `--radius: 0.375rem` (small)
+- card/input/button: `--radius`
+
+Border:
+- 기본 border 두께: `1px`
+- 사용 클래스: `border` (필요 시 `border-2` 명시)
 
 Shadow:
-- `sm`: `0 1px 2px rgba(16,24,40,.06)`
-- `md`: `0 6px 18px rgba(16,24,40,.08)`
+- light `--shadow-sm`: `0 1px 2px rgba(16, 24, 40, 0.06)`
+- light `--shadow-md`: `0 6px 18px rgba(16, 24, 40, 0.08)`
+- dark `--shadow-sm`: `0 1px 2px rgba(2, 6, 23, 0.5)`
+- dark `--shadow-md`: `0 10px 24px rgba(2, 6, 23, 0.55)`
 
-## 5) Motion
+## 4. Color Tokens
 
 원칙:
-- 빠르고 짧게, 상태 전달용만 사용
+- 모든 대시보드 UI 색상은 semantic token으로만 사용
+- 신규 하드코딩 색상(hex/rgb/hsl) 금지
+- 상태색은 semantic alias로만 사용
 
-토큰:
-- `duration.fast`: `120ms`
-- `duration.base`: `180ms`
-- `easing.standard`: `cubic-bezier(0.2, 0, 0, 1)`
+### 4.1 Light Tokens (`:root`)
 
-사용:
-- hover/focus, panel expand/collapse, page transition fade
+- `--background: oklch(1 0 0)`
+- `--foreground: oklch(0.141 0.005 285.823)`
+- `--card: oklch(1 0 0)`
+- `--card-foreground: oklch(0.141 0.005 285.823)`
+- `--popover: oklch(1 0 0)`
+- `--popover-foreground: oklch(0.141 0.005 285.823)`
+- `--primary: oklch(0.21 0.006 285.885)`
+- `--primary-foreground: oklch(0.985 0 0)`
+- `--secondary: oklch(0.967 0.001 286.375)`
+- `--secondary-foreground: oklch(0.21 0.006 285.885)`
+- `--muted: oklch(0.967 0.001 286.375)`
+- `--muted-foreground: oklch(0.552 0.016 285.938)`
+- `--accent: oklch(0.967 0.001 286.375)`
+- `--accent-foreground: oklch(0.21 0.006 285.885)`
+- `--destructive: oklch(0.577 0.245 27.325)`
+- `--border: oklch(0.92 0.004 286.32)`
+- `--input: oklch(0.92 0.004 286.32)`
+- `--ring: oklch(0.705 0.015 286.067)`
+- `--chart-1: oklch(0.646 0.222 41.116)`
+- `--chart-2: oklch(0.6 0.118 184.704)`
+- `--chart-3: oklch(0.398 0.07 227.392)`
+- `--chart-4: oklch(0.828 0.189 84.429)`
+- `--chart-5: oklch(0.769 0.188 70.08)`
 
-## 6) Component Rules
+Sidebar tokens (light):
+- `--sidebar: oklch(0.985 0 0)`
+- `--sidebar-foreground: oklch(0.141 0.005 285.823)`
+- `--sidebar-primary: oklch(0.21 0.006 285.885)`
+- `--sidebar-primary-foreground: oklch(0.985 0 0)`
+- `--sidebar-accent: oklch(0.967 0.001 286.375)`
+- `--sidebar-accent-foreground: oklch(0.21 0.006 285.885)`
+- `--sidebar-border: oklch(0.92 0.004 286.32)`
+- `--sidebar-ring: oklch(0.705 0.015 286.067)`
 
-### Sidebar
-- 상단: org switcher(`DropdownMenu`)
-- 중앙: role 기반 nav tree
-- 하단: profile/user menu
-- 메뉴 스타일: `menuAccent=subtle`, `menuColor=default`
-- 비활성(권한 없음): lock 아이콘 + 이유 툴팁
+### 4.2 Dark Tokens (`.dark`)
 
-### Top Bar
-- 좌: breadcrumb + title
-- 중: 검색(요청ID/API Key/User/Tool)
-- 우: org/team switcher, time range, refresh, user menu
+- `--background: oklch(0.141 0.005 285.823)`
+- `--foreground: oklch(0.985 0 0)`
+- `--card: oklch(0.21 0.006 285.885)`
+- `--card-foreground: oklch(0.985 0 0)`
+- `--popover: oklch(0.21 0.006 285.885)`
+- `--popover-foreground: oklch(0.985 0 0)`
+- `--primary: oklch(0.92 0.004 286.32)`
+- `--primary-foreground: oklch(0.21 0.006 285.885)`
+- `--secondary: oklch(0.274 0.006 286.033)`
+- `--secondary-foreground: oklch(0.985 0 0)`
+- `--muted: oklch(0.274 0.006 286.033)`
+- `--muted-foreground: oklch(0.705 0.015 286.067)`
+- `--accent: oklch(0.274 0.006 286.033)`
+- `--accent-foreground: oklch(0.985 0 0)`
+- `--destructive: oklch(0.704 0.191 22.216)`
+- `--border: oklch(1 0 0 / 10%)`
+- `--input: oklch(1 0 0 / 15%)`
+- `--ring: oklch(0.552 0.016 285.938)`
+- `--chart-1: oklch(0.488 0.243 264.376)`
+- `--chart-2: oklch(0.696 0.17 162.48)`
+- `--chart-3: oklch(0.769 0.188 70.08)`
+- `--chart-4: oklch(0.627 0.265 303.9)`
+- `--chart-5: oklch(0.645 0.246 16.439)`
 
-### KPI Card
-- 라벨(12), 값(30~34), 보조 delta 배지
-- 상태색은 값 자체가 아닌 아이콘/배지에 제한적으로 사용
+Sidebar tokens (dark):
+- `--sidebar: oklch(0.21 0.006 285.885)`
+- `--sidebar-foreground: oklch(0.985 0 0)`
+- `--sidebar-primary: oklch(0.488 0.243 264.376)`
+- `--sidebar-primary-foreground: oklch(0.985 0 0)`
+- `--sidebar-accent: oklch(0.274 0.006 286.033)`
+- `--sidebar-accent-foreground: oklch(0.985 0 0)`
+- `--sidebar-border: oklch(1 0 0 / 10%)`
+- `--sidebar-ring: oklch(0.552 0.016 285.938)`
 
-### Table
-- 헤더 고정(sticky)
-- 첫 열은 식별자/이름
-- 오른쪽 정렬: 숫자/지표/시간
-- 에러코드는 code 스타일 태그로 표시
+### 4.3 Semantic Aliases
 
-### Button
-- shadcn variant 우선:
-  - `default`(primary)
-  - `secondary`
-  - `destructive`
-  - `ghost`
-  - `outline`
+- `--success: var(--chart-2)`
+- `--warning: var(--chart-4)`
+- `--info: var(--chart-1)`
+- `--danger: var(--destructive)`
 
-### Badge / Tag
-- `role`: owner/admin/member
-- `decision`: allowed/policy_blocked/access_denied/failed
-- `severity`: info/warning/critical
+Compatibility aliases:
+- `--surface: var(--card)`
+- `--surface-subtle: var(--muted)`
+- `--text-secondary: var(--muted-foreground)`
+- `--brand-500: var(--primary)`
+- `--brand-600: var(--primary)`
 
-## 7) RBAC UX Guidelines
+## 5. Sidebar / Topbar Layout Rules
 
-메뉴 정책:
-- `member`: Admin/Ops 숨김(또는 잠금형)
-- `admin`: 조회 가능, owner-only 액션 비활성
-- `owner`: 전체 허용
+- Sidebar: 화면 높이 100% 고정 (`h-svh`) + 독립 스크롤
+- Content: 본문 영역만 스크롤 (`overflow-y-auto`)
+- Topbar: 고정 높이 (`h-16`)
+- Sidebar header(조직 선택 영역): Topbar와 동일 높이 (`h-16`)
+- 메뉴 시각 톤: `menuAccent=subtle`, `menuColor=default`
 
-행동 정책:
-- 비활성 버튼 아래 사유 한 줄:
-  - `Owner role required`
-  - `Admin role required`
-  - `Insufficient scope`
+## 6. Profile Menu Rules
 
-에러 정책:
-- 403은 상단 고정 경고 배너로 통일
-- 배너에 “권한/역할 확인” 액션 링크 포함
+- sidebar footer profile 버튼:
+  - 아바타 이미지는 사용하지 않음
+  - 로그인 사용자 `username`, `email` 출력
+- profile dropdown action:
+  - `Settings`
+  - `Sign out`
 
-## 8) Accessibility
+동작:
+- `Settings` -> `/dashboard/profile`
+- `Sign out` -> auth sign out
 
-- 텍스트 대비 WCAG AA 이상
-- 키보드 탭 순서: sidebar -> topbar -> content
-- 포커스 링: `2px solid var(--ring)`
-- 아이콘만 있는 버튼은 `aria-label` 필수
+## 7. Validation Checklist
 
-## 9) CSS Token Draft
+- [ ] Light/Dark 토큰이 `globals.css`와 문서 값이 일치한다.
+- [ ] `:root`와 `.dark`에 `--muted`, `--border`가 모두 존재한다.
+- [ ] Sidebar 메뉴가 `text-sm font-medium`을 사용한다.
+- [ ] 본문 상단 padding `24px`(`pt-6`) 적용.
+- [ ] 대시보드 컴포넌트에서 하드코딩 색상 신규 사용 없음.
 
-```css
-/* source of truth: shadcn generated globals.css */
-/* keep semantic tokens (--background/--foreground/--card/--primary/...) from generator output */
-:root {
-  --radius: 0.375rem; /* small */
+## 8. Implementation Order
 
-  /* optional semantic aliases for dashboard status */
-  --success: var(--chart-2);
-  --warning: var(--chart-4);
-  --info: var(--chart-1);
-  --danger: var(--destructive);
+1. `globals.css` 토큰 정합성 반영 (`--muted`, `--border` 포함)
+2. dashboard shell/sidebar/topbar 타이포/border/radius 점검
+3. 컴포넌트별 semantic token 사용 점검
+4. 타입체크/빌드 검증
 
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
-  --shadow-md: 0 6px 18px rgba(16, 24, 40, 0.08);
-}
-
-.theme-dark {
-  --shadow-sm: 0 1px 2px rgba(2, 6, 23, 0.5);
-  --shadow-md: 0 10px 24px rgba(2, 6, 23, 0.55);
-}
-```
-
-## 10) Screen Blueprint (with current wireframe)
-
-참고 파일:
-- `docs/assets/dashboard-ia-wireframe-20260305.svg`
-
-적용 우선순위:
-1. Shell(사이드바/탑바) 스타일 고정
-2. Overview / API Keys / Audit 화면에 토큰 우선 적용
-3. RBAC 배지/잠금/403 배너 컴포넌트 공통화
-
-## 11) shadcn Migration Notes
-
-- 현재 목표는 "새 디자인 시스템 정의"가 아니라 "shadcn preset을 source of truth로 통일"하는 것이다.
-- 단계:
-  1. shell/sidebar/topbar를 shadcn 컴포넌트로 치환
-  2. 기존 커스텀 CSS 변수(`--brand-*`, `--bg-*`)를 shadcn semantic 변수로 매핑/축소
-  3. 페이지별 컴포넌트를 variant 기반(`Button`, `Badge`, `Input`)으로 정렬
-- 주의:
-  - 권한/RBAC 로직은 UI 라이브러리 변경과 무관하게 동일하게 유지
-  - Global Search는 API 계약 확정 전까지 disabled 유지

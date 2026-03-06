@@ -1,5 +1,8 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -411,21 +414,21 @@ export default function DashboardTeamPolicyPage() {
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-semibold">Team Policy</h1>
-      <p className="text-sm text-[var(--text-secondary)]">Create teams, manage memberships, and control team policy revisions.</p>
+      <p className="text-sm text-muted-foreground">Create teams, manage memberships, and control team policy revisions.</p>
 
       {error ? <AlertBanner message={error} tone="danger" /> : null}
-      {loading ? <p className="text-sm text-[var(--muted)]">Loading teams...</p> : null}
+      {loading ? <p className="text-sm text-muted-foreground">Loading teams...</p> : null}
 
       <div className="ds-card p-4">
         <p className="mb-2 text-sm font-medium">Create team</p>
         <div className="space-y-2">
-          <input
+          <Input
             value={createName}
             onChange={(event) => setCreateName(event.target.value)}
             placeholder="Team name"
             className="ds-input h-11 w-full rounded-md px-3 text-sm md:h-9"
           />
-          <input
+          <Input
             value={createDescription}
             onChange={(event) => setCreateDescription(event.target.value)}
             placeholder="Description (optional)"
@@ -436,7 +439,7 @@ export default function DashboardTeamPolicyPage() {
             onChange={(event) => setCreatePolicy(event.target.value)}
             className="ds-input min-h-[120px] w-full rounded-md px-3 py-2 text-xs font-mono"
           />
-          <button
+          <Button
             type="button"
             onClick={() => void createTeam()}
             disabled={!canManageTeams || creating}
@@ -444,8 +447,8 @@ export default function DashboardTeamPolicyPage() {
             title={canManageTeams ? "" : "Admin role required"}
           >
             {creating ? "Creating..." : "Create Team"}
-          </button>
-          {!canManageTeams ? <p className="text-xs text-[var(--muted)]">Admin role required.</p> : null}
+          </Button>
+          {!canManageTeams ? <p className="text-xs text-muted-foreground">Admin role required.</p> : null}
         </div>
       </div>
 
@@ -454,10 +457,10 @@ export default function DashboardTeamPolicyPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="text-base font-semibold">Team #{team.id}</p>
-              <p className="text-xs text-[var(--muted)]">policy updated {asDate(team.policy_updated_at)}</p>
+              <p className="text-xs text-muted-foreground">policy updated {asDate(team.policy_updated_at)}</p>
             </div>
             <label className="flex items-center gap-2 text-xs">
-              <input
+              <Input
                 type="checkbox"
                 checked={Boolean(teamActiveDraft[team.id])}
                 onChange={(event) =>
@@ -471,12 +474,12 @@ export default function DashboardTeamPolicyPage() {
             </label>
           </div>
 
-          <input
+          <Input
             value={teamNameDraft[team.id] ?? ""}
             onChange={(event) => setTeamNameDraft((prev) => ({ ...prev, [team.id]: event.target.value }))}
             className="ds-input h-11 w-full rounded-md px-3 text-sm md:h-9"
           />
-          <input
+          <Input
             value={teamDescriptionDraft[team.id] ?? ""}
             onChange={(event) => setTeamDescriptionDraft((prev) => ({ ...prev, [team.id]: event.target.value }))}
             className="ds-input h-11 w-full rounded-md px-3 text-sm md:h-9"
@@ -487,7 +490,7 @@ export default function DashboardTeamPolicyPage() {
             className="ds-input min-h-[120px] w-full rounded-md px-3 py-2 text-xs font-mono"
           />
           <div className="flex flex-wrap items-center gap-2">
-            <button
+            <Button
               type="button"
               onClick={() => void updateTeam(team.id)}
               disabled={!canManageTeams || savingTeamId === team.id}
@@ -495,38 +498,38 @@ export default function DashboardTeamPolicyPage() {
               title={canManageTeams ? "" : "Admin role required"}
             >
               {savingTeamId === team.id ? "Saving..." : "Save Team Policy"}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={() => void loadPolicyRevisions(team.id)}
               disabled={revisionLoadingTeamId === team.id}
               className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
             >
               {revisionLoadingTeamId === team.id ? "Loading..." : "Load Revisions"}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={() => void loadTeamMembers(team.id)}
               disabled={membersLoadingTeamId === team.id}
               className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
             >
               {membersLoadingTeamId === team.id ? "Loading..." : "Load Members"}
-            </button>
+            </Button>
           </div>
 
           {(teamRevisions[team.id] ?? []).length > 0 ? (
-            <div className="rounded-md border border-[var(--border)] p-3">
+            <div className="rounded-md border border-border p-3">
               <p className="mb-2 text-sm font-medium">Policy revisions</p>
               <div className="space-y-2">
                 {(teamRevisions[team.id] ?? []).slice(0, 10).map((revision) => (
-                  <div key={`team-revision-${revision.id}`} className="rounded-md border border-[var(--border)] p-2">
+                  <div key={`team-revision-${revision.id}`} className="rounded-md border border-border p-2">
                     <p className="text-xs">
                       #{revision.id} · {revision.source} · {asDate(revision.created_at)}
                     </p>
-                    <pre className="mt-1 overflow-x-auto rounded bg-[var(--surface-subtle)] p-2 text-[11px]">
+                    <pre className="mt-1 overflow-x-auto rounded bg-muted/60 p-2 text-[11px]">
                       {jsonText(revision.policy_json ?? {})}
                     </pre>
-                    <button
+                    <Button
                       type="button"
                       onClick={() => void rollbackRevision(team.id, revision.id)}
                       disabled={!canManageTeams || rollbackRevisionId === revision.id}
@@ -534,23 +537,23 @@ export default function DashboardTeamPolicyPage() {
                       title={canManageTeams ? "" : "Admin role required"}
                     >
                       {rollbackRevisionId === revision.id ? "Rolling back..." : "Rollback"}
-                    </button>
+                    </Button>
                   </div>
                 ))}
               </div>
             </div>
           ) : null}
 
-          <div className="rounded-md border border-[var(--border)] p-3">
+          <div className="rounded-md border border-border p-3">
             <p className="mb-2 text-sm font-medium">Members</p>
             <div className="mb-2 flex flex-wrap items-center gap-2">
-              <input
+              <Input
                 value={teamMemberUserDraft[team.id] ?? ""}
                 onChange={(event) => setTeamMemberUserDraft((prev) => ({ ...prev, [team.id]: event.target.value }))}
                 placeholder="User ID"
                 className="ds-input h-11 min-w-[300px] rounded-md px-3 text-sm md:h-9"
               />
-              <select
+              <Select
                 value={teamMemberRoleDraft[team.id] ?? "member"}
                 onChange={(event) => setTeamMemberRoleDraft((prev) => ({ ...prev, [team.id]: event.target.value }))}
                 className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
@@ -558,8 +561,8 @@ export default function DashboardTeamPolicyPage() {
                 <option value="owner">owner</option>
                 <option value="admin">admin</option>
                 <option value="member">member</option>
-              </select>
-              <button
+              </Select>
+              <Button
                 type="button"
                 onClick={() => void upsertTeamMember(team.id)}
                 disabled={!canManageTeams || memberSavingTeamId === team.id}
@@ -567,16 +570,16 @@ export default function DashboardTeamPolicyPage() {
                 title={canManageTeams ? "" : "Admin role required"}
               >
                 {memberSavingTeamId === team.id ? "Saving..." : "Add / Update Member"}
-              </button>
+              </Button>
             </div>
 
             <div className="space-y-2">
               {(teamMembers[team.id] ?? []).map((member) => (
-                <div key={`team-${team.id}-member-${member.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[var(--border)] px-3 py-2">
+                <div key={`team-${team.id}-member-${member.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
                   <p className="text-xs">
                     #{member.id} · {member.user_id} · {member.role} · {asDate(member.created_at)}
                   </p>
-                  <button
+                  <Button
                     type="button"
                     onClick={() => void deleteTeamMember(team.id, member.id)}
                     disabled={!canManageTeams || memberDeletingId === member.id}
@@ -584,16 +587,16 @@ export default function DashboardTeamPolicyPage() {
                     title={canManageTeams ? "" : "Admin role required"}
                   >
                     {memberDeletingId === member.id ? "Deleting..." : "Delete"}
-                  </button>
+                  </Button>
                 </div>
               ))}
-              {(teamMembers[team.id] ?? []).length === 0 ? <p className="text-xs text-[var(--muted)]">No members loaded.</p> : null}
+              {(teamMembers[team.id] ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No members loaded.</p> : null}
             </div>
           </div>
         </article>
       ))}
 
-      {!loading && teams.length === 0 ? <p className="text-sm text-[var(--muted)]">No teams found.</p> : null}
+      {!loading && teams.length === 0 ? <p className="text-sm text-muted-foreground">No teams found.</p> : null}
     </section>
   );
 }

@@ -5,22 +5,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --surface: #ffffff;
-  --surface-subtle: #eef2f7;
-  --border: oklch(0.92 0.004 286.32);
-  --muted: oklch(0.967 0.001 286.375);
-  --text-secondary: #475467;
-  --brand-500: #1f6feb;
-  --brand-600: #1558c0;
-  --brand-100: #dcebff;
-  --success-500: #1f9d63;
-  --warning-500: #d97706;
-  --danger-500: #d92d20;
-  --status-ok: #1f9d63;
-  --status-warn: #d97706;
-  --status-critical: #d92d20;
-  --status-unknown: #98a2b3;
-  --radius: 0.625rem;
+  --radius: 0.375rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -31,10 +16,12 @@
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.967 0.001 286.375);
   --secondary-foreground: oklch(0.21 0.006 285.885);
+  --muted: oklch(0.967 0.001 286.375);
   --muted-foreground: oklch(0.552 0.016 285.938);
   --accent: oklch(0.967 0.001 286.375);
   --accent-foreground: oklch(0.21 0.006 285.885);
   --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.92 0.004 286.32);
   --input: oklch(0.92 0.004 286.32);
   --ring: oklch(0.705 0.015 286.067);
   --chart-1: oklch(0.646 0.222 41.116);
@@ -50,30 +37,45 @@
   --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
   --sidebar-border: oklch(0.92 0.004 286.32);
   --sidebar-ring: oklch(0.705 0.015 286.067);
+
+  /* semantic aliases */
+  --success: var(--chart-2);
+  --warning: var(--chart-4);
+  --info: var(--chart-1);
+  --danger: var(--destructive);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 6px 18px rgba(16, 24, 40, 0.08);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --easing-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* backward-compatible aliases for existing dashboard v2 pages */
+  --surface: var(--card);
+  --surface-subtle: var(--muted);
+  --text-secondary: var(--muted-foreground);
+  --brand-500: var(--primary);
+  --brand-600: var(--primary);
+  --brand-100: color-mix(in oklab, var(--primary) 14%, transparent);
+  --success-500: var(--success);
+  --success-600: var(--success);
+  --warning-500: var(--warning);
+  --danger-500: var(--danger);
+  --status-ok: var(--success);
+  --status-warn: var(--warning);
+  --status-critical: var(--danger);
+  --status-unknown: var(--muted-foreground);
 }
 
 .theme-dark {
-  --background: #0b1117;
-  --foreground: #e6edf3;
-  --surface: #111927;
-  --surface-subtle: #162131;
-  --border: #2a3444;
-  --muted: #96a2b2;
-  --text-secondary: #c3cdd8;
-  --brand-500: #5ea4ff;
-  --brand-600: #7cb7ff;
-  --brand-100: #1a2c44;
-  --success-500: #3ccb86;
-  --warning-500: #f3a73d;
-  --danger-500: #ff6b5f;
-  --status-ok: #3ccb86;
-  --status-warn: #f3a73d;
-  --status-critical: #ff6b5f;
-  --status-unknown: #8b9bb0;
+  --shadow-sm: 0 1px 2px rgba(2, 6, 23, 0.5);
+  --shadow-md: 0 10px 24px rgba(2, 6, 23, 0.55);
 }
 
 body {
   font-family: var(--font-geist-sans), "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
 }
 
 code,
@@ -83,30 +85,35 @@ pre,
 }
 
 .ds-surface {
-  background: var(--surface);
+  background: var(--card);
   border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
 }
 
 .ds-card {
-  background: var(--surface);
+  background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
 }
 
 .ds-input {
-  background: var(--surface);
+  background: var(--card);
   border: 1px solid var(--border);
   color: var(--foreground);
+  border-radius: var(--radius);
 }
 
 .ds-input::placeholder {
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .ds-btn {
-  background: var(--surface);
+  background: var(--card);
   border: 1px solid var(--border);
   color: var(--foreground);
+  border-radius: var(--radius);
 }
 
 .ds-badge {
@@ -118,6 +125,42 @@ pre,
   font-size: 11px;
   line-height: 1.35;
   font-weight: 600;
+}
+
+.ds-display {
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 700;
+}
+
+.ds-h1 {
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: 700;
+}
+
+.ds-h2 {
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 700;
+}
+
+.ds-h3 {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+
+.ds-body-sm {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.ds-caption {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
 }
 
 @theme inline {
@@ -193,4 +236,23 @@ pre,
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.552 0.016 285.938);
+
+  --success: var(--chart-2);
+  --warning: var(--chart-4);
+  --info: var(--chart-1);
+  --danger: var(--destructive);
+  --surface: var(--card);
+  --surface-subtle: var(--muted);
+  --text-secondary: var(--muted-foreground);
+  --brand-500: var(--primary);
+  --brand-600: var(--primary);
+  --brand-100: color-mix(in oklab, var(--primary) 20%, transparent);
+  --success-500: var(--success);
+  --success-600: var(--success);
+  --warning-500: var(--warning);
+  --danger-500: var(--danger);
+  --status-ok: var(--success);
+  --status-warn: var(--warning);
+  --status-critical: var(--danger);
+  --status-unknown: var(--muted-foreground);
 }

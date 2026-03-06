@@ -1,5 +1,8 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -196,11 +199,11 @@ export default function DashboardMcpUsagePage() {
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-semibold">MCP Usage</h1>
-      <p className="text-sm text-[var(--text-secondary)]">Recent tool calls, 24h execution summary, and 7d usage trends.</p>
+      <p className="text-sm text-muted-foreground">Recent tool calls, 24h execution summary, and 7d usage trends.</p>
 
       <div className="ds-card p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <select
+          <Select
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value as "all" | "success" | "fail")}
             className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
@@ -208,70 +211,70 @@ export default function DashboardMcpUsagePage() {
             <option value="all">All status</option>
             <option value="success">Success</option>
             <option value="fail">Fail</option>
-          </select>
-          <input
+          </Select>
+          <Input
             value={toolNameFilter}
             onChange={(event) => setToolNameFilter(event.target.value)}
             placeholder="Filter by tool name (exact)"
             className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
           />
-          <input
+          <Input
             type="datetime-local"
             value={fromFilter}
             onChange={(event) => setFromFilter(event.target.value)}
             className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
           />
-          <input
+          <Input
             type="datetime-local"
             value={toFilter}
             onChange={(event) => setToFilter(event.target.value)}
             className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
           />
-          <button type="button" onClick={() => void fetchToolCalls()} disabled={toolCallsLoading} className="ds-btn h-11 rounded-md px-3 text-sm disabled:opacity-60 md:h-9">
+          <Button type="button" onClick={() => void fetchToolCalls()} disabled={toolCallsLoading} className="ds-btn h-11 rounded-md px-3 text-sm disabled:opacity-60 md:h-9">
             {toolCallsLoading ? "Loading..." : "Apply"}
-          </button>
+          </Button>
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <article className="ds-card p-4">
-          <p className="text-xs text-[var(--muted)]">Calls (24h)</p>
+          <p className="text-xs text-muted-foreground">Calls (24h)</p>
           <p className="mt-1 text-2xl font-semibold">{toolCallsSummary?.calls_24h ?? 0}</p>
         </article>
         <article className="ds-card p-4">
-          <p className="text-xs text-[var(--muted)]">Success (24h)</p>
-          <p className="mt-1 text-2xl font-semibold text-[var(--success-600)]">{toolCallsSummary?.success_24h ?? 0}</p>
+          <p className="text-xs text-muted-foreground">Success (24h)</p>
+          <p className="mt-1 text-2xl font-semibold text-chart-2">{toolCallsSummary?.success_24h ?? 0}</p>
         </article>
         <article className="ds-card p-4">
-          <p className="text-xs text-[var(--muted)]">Fail (24h)</p>
-          <p className="mt-1 text-2xl font-semibold text-[var(--danger-500)]">{toolCallsSummary?.fail_24h ?? 0}</p>
+          <p className="text-xs text-muted-foreground">Fail (24h)</p>
+          <p className="mt-1 text-2xl font-semibold text-destructive">{toolCallsSummary?.fail_24h ?? 0}</p>
         </article>
         <article className="ds-card p-4">
-          <p className="text-xs text-[var(--muted)]">Fail Rate</p>
-          <p className="mt-1 text-xl font-semibold text-[var(--danger-500)]">{((toolCallsSummary?.fail_rate_24h ?? 0) * 100).toFixed(1)}%</p>
+          <p className="text-xs text-muted-foreground">Fail Rate</p>
+          <p className="mt-1 text-xl font-semibold text-destructive">{((toolCallsSummary?.fail_rate_24h ?? 0) * 100).toFixed(1)}%</p>
         </article>
         <article className="ds-card p-4">
-          <p className="text-xs text-[var(--muted)]">Blocked Rate</p>
-          <p className="mt-1 text-xl font-semibold text-[var(--warning-500)]">{((toolCallsSummary?.blocked_rate_24h ?? 0) * 100).toFixed(1)}%</p>
+          <p className="text-xs text-muted-foreground">Blocked Rate</p>
+          <p className="mt-1 text-xl font-semibold text-chart-4">{((toolCallsSummary?.blocked_rate_24h ?? 0) * 100).toFixed(1)}%</p>
         </article>
         <article className="ds-card p-4">
-          <p className="text-xs text-[var(--muted)]">Retryable Fail Rate</p>
-          <p className="mt-1 text-xl font-semibold text-[var(--brand-500)]">{((toolCallsSummary?.retryable_fail_rate_24h ?? 0) * 100).toFixed(1)}%</p>
+          <p className="text-xs text-muted-foreground">Retryable Fail Rate</p>
+          <p className="mt-1 text-xl font-semibold text-primary">{((toolCallsSummary?.retryable_fail_rate_24h ?? 0) * 100).toFixed(1)}%</p>
         </article>
       </div>
 
       {toolCallsError ? (
-        <div className="rounded-md border border-[var(--danger-500)]/40 bg-[color-mix(in_srgb,var(--danger-500)_12%,white)] px-3 py-2 text-sm text-[var(--danger-500)]">
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {toolCallsError}
         </div>
       ) : null}
 
       <div className="ds-card space-y-2 p-4">
         <p className="text-sm font-medium">Top Failure Codes (24h)</p>
-        {(toolCallsSummary?.top_failure_codes ?? []).length === 0 ? <p className="text-xs text-[var(--muted)]">No failure codes.</p> : null}
+        {(toolCallsSummary?.top_failure_codes ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No failure codes.</p> : null}
         <div className="flex flex-wrap gap-2">
           {(toolCallsSummary?.top_failure_codes ?? []).map((entry) => (
-            <span key={`top-fail-${entry.error_code}`} className="rounded-full border border-[var(--border)] px-2 py-1 text-xs">
+            <span key={`top-fail-${entry.error_code}`} className="rounded-full border border-border px-2 py-1 text-xs">
               {entry.error_code}: {entry.count}
             </span>
           ))}
@@ -280,27 +283,27 @@ export default function DashboardMcpUsagePage() {
 
       <div className="ds-card space-y-2 p-4">
         <p className="text-sm font-medium">Recent Tool Calls</p>
-        {toolCallsLoading ? <p className="text-xs text-[var(--muted)]">Loading usage...</p> : null}
-        {!toolCallsLoading && toolCalls.length === 0 ? <p className="text-xs text-[var(--muted)]">No tool call logs yet.</p> : null}
+        {toolCallsLoading ? <p className="text-xs text-muted-foreground">Loading usage...</p> : null}
+        {!toolCallsLoading && toolCalls.length === 0 ? <p className="text-xs text-muted-foreground">No tool call logs yet.</p> : null}
         <div className="space-y-2">
           {toolCalls.map((call) => (
-            <article key={call.id} className="rounded-md border border-[var(--border)] p-3">
+            <article key={call.id} className="rounded-md border border-border p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="text-sm font-medium">{call.tool_name}</p>
-                  <p className="text-xs text-[var(--muted)]">
+                  <p className="text-xs text-muted-foreground">
                     {call.api_key?.name ?? "unknown key"} ({call.api_key?.key_prefix ?? "n/a"}...)
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className={`text-xs font-medium ${call.status === "success" ? "text-[var(--success-600)]" : "text-[var(--danger-500)]"}`}>
+                  <p className={`text-xs font-medium ${call.status === "success" ? "text-chart-2" : "text-destructive"}`}>
                     {call.status}
                   </p>
-                  <p className="text-xs text-[var(--muted)]">{call.latency_ms} ms</p>
+                  <p className="text-xs text-muted-foreground">{call.latency_ms} ms</p>
                 </div>
               </div>
-              <p className="mt-1 text-xs text-[var(--muted)]">{new Date(call.created_at).toLocaleString()}</p>
-              {call.error_code ? <p className="mt-1 text-xs text-[var(--danger-500)]">error: {call.error_code}</p> : null}
+              <p className="mt-1 text-xs text-muted-foreground">{new Date(call.created_at).toLocaleString()}</p>
+              {call.error_code ? <p className="mt-1 text-xs text-destructive">error: {call.error_code}</p> : null}
             </article>
           ))}
         </div>
@@ -309,19 +312,19 @@ export default function DashboardMcpUsagePage() {
       <div className="ds-card p-4">
         <div className="mb-3 flex items-center justify-between gap-2">
           <p className="text-sm font-medium">Usage Trends (7d)</p>
-          <button type="button" onClick={() => void fetchTrendAndBreakdown()} disabled={trendLoading} className="ds-btn h-10 rounded-md px-3 text-xs disabled:opacity-60">
+          <Button type="button" onClick={() => void fetchTrendAndBreakdown()} disabled={trendLoading} className="ds-btn h-10 rounded-md px-3 text-xs disabled:opacity-60">
             {trendLoading ? "Loading..." : "Refresh"}
-          </button>
+          </Button>
         </div>
 
         {trendError ? (
-          <div className="rounded-md border border-[var(--danger-500)]/40 bg-[color-mix(in_srgb,var(--danger-500)_12%,white)] px-3 py-2 text-sm text-[var(--danger-500)]">
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {trendError}
           </div>
         ) : null}
 
         <div className="grid gap-2 sm:grid-cols-2">
-          <article className="rounded-md border border-[var(--border)] p-3">
+          <article className="rounded-md border border-border p-3">
             <p className="text-xs font-medium">Daily Calls Trend</p>
             <div className="mt-2 space-y-1">
               {trendPoints.slice(-7).map((point) => (
@@ -331,7 +334,7 @@ export default function DashboardMcpUsagePage() {
               ))}
             </div>
           </article>
-          <article className="rounded-md border border-[var(--border)] p-3">
+          <article className="rounded-md border border-border p-3">
             <p className="text-xs font-medium">Failure Categories</p>
             <div className="mt-2 space-y-1">
               {(failureBreakdown?.categories ?? []).slice(0, 6).map((item) => (
@@ -341,7 +344,7 @@ export default function DashboardMcpUsagePage() {
               ))}
             </div>
           </article>
-          <article className="rounded-md border border-[var(--border)] p-3">
+          <article className="rounded-md border border-border p-3">
             <p className="text-xs font-medium">Top Failure Codes</p>
             <div className="mt-2 space-y-1">
               {(failureBreakdown?.error_codes ?? []).slice(0, 6).map((item) => (
@@ -351,7 +354,7 @@ export default function DashboardMcpUsagePage() {
               ))}
             </div>
           </article>
-          <article className="rounded-md border border-[var(--border)] p-3">
+          <article className="rounded-md border border-border p-3">
             <p className="text-xs font-medium">Connector Health</p>
             <div className="mt-2 space-y-1">
               {connectorSummary.map((item) => (
@@ -359,7 +362,7 @@ export default function DashboardMcpUsagePage() {
                   {item.connector}: calls {item.calls}, fail {(item.fail_rate * 100).toFixed(1)}%, avg {Math.round(item.avg_latency_ms)}ms
                 </p>
               ))}
-              {connectorSummary.length === 0 ? <p className="text-xs text-[var(--muted)]">No connector data.</p> : null}
+              {connectorSummary.length === 0 ? <p className="text-xs text-muted-foreground">No connector data.</p> : null}
             </div>
           </article>
         </div>

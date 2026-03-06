@@ -1,5 +1,8 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -342,25 +345,25 @@ export default function DashboardAdminOpsPage() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-semibold">Admin / Ops</h1>
-          <p className="text-sm text-[var(--text-secondary)]">Connector diagnostics, rate-limit events, system health, and incident workflow.</p>
+          <p className="text-sm text-muted-foreground">Connector diagnostics, rate-limit events, system health, and incident workflow.</p>
         </div>
-        <button
+        <Button
           type="button"
           onClick={() => void fetchAdminOps()}
           disabled={loading}
           className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
         >
           {loading ? "Loading..." : "Refresh"}
-        </button>
+        </Button>
       </div>
 
       {error ? <AlertBanner message={error} tone="danger" /> : null}
 
-      <div className="ds-card p-4 text-sm text-[var(--text-secondary)]">role: {role ?? "unknown"}</div>
+      <div className="ds-card p-4 text-sm text-muted-foreground">role: {role ?? "unknown"}</div>
 
       {!loading && !canReadAdminOps ? (
         <div className="ds-card p-4">
-          <p className="text-sm text-[var(--muted)]">Your role does not have permission to access Admin / Ops modules.</p>
+          <p className="text-sm text-muted-foreground">Your role does not have permission to access Admin / Ops modules.</p>
         </div>
       ) : null}
 
@@ -368,20 +371,20 @@ export default function DashboardAdminOpsPage() {
         <>
           <div className="grid gap-2 sm:grid-cols-2">
             <article className="ds-card p-4">
-              <p className="text-xs font-medium text-[var(--text-secondary)]">System Health</p>
+              <p className="text-xs font-medium text-muted-foreground">System Health</p>
               <p className="mt-1 text-sm font-semibold text-[var(--text-primary)]">{systemHealth?.status ?? "unknown"}</p>
-              <p className="mt-1 text-xs text-[var(--muted)]">
+              <p className="mt-1 text-xs text-muted-foreground">
                 DB: {systemHealth?.services?.database?.ok ? "ok" : "degraded"}
                 {systemHealth?.services?.database?.error ? ` (${systemHealth.services.database.error})` : ""}
               </p>
-              <p className="mt-1 text-xs text-[var(--muted)]">time_utc: {asDate(systemHealth?.time_utc)}</p>
+              <p className="mt-1 text-xs text-muted-foreground">time_utc: {asDate(systemHealth?.time_utc)}</p>
             </article>
 
             <article className="ds-card p-4">
-              <p className="text-xs font-medium text-[var(--text-secondary)]">Incident Banner</p>
+              <p className="text-xs font-medium text-muted-foreground">Incident Banner</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <label className="inline-flex items-center gap-1 text-xs text-[var(--text-secondary)]">
-                  <input
+                <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                  <Input
                     type="checkbox"
                     checked={incidentEnabledDraft}
                     onChange={(event) => setIncidentEnabledDraft(event.target.checked)}
@@ -389,7 +392,7 @@ export default function DashboardAdminOpsPage() {
                   />
                   enabled
                 </label>
-                <select
+                <Select
                   value={incidentSeverityDraft}
                   onChange={(event) => setIncidentSeverityDraft(event.target.value as "info" | "warning" | "critical")}
                   disabled={!canManageIncidentBanner}
@@ -398,26 +401,26 @@ export default function DashboardAdminOpsPage() {
                   <option value="info">info</option>
                   <option value="warning">warning</option>
                   <option value="critical">critical</option>
-                </select>
-                <button
+                </Select>
+                <Button
                   type="button"
                   onClick={() => void handleSaveIncidentBanner()}
                   disabled={incidentSaving || !canManageIncidentBanner}
                   className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
                 >
                   {incidentSaving ? "Saving..." : "Save Banner"}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
                   onClick={() => void handleCreateIncidentBannerRevision()}
                   disabled={incidentRevisionSaving || !canManageIncidentBanner}
                   className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
                 >
                   {incidentRevisionSaving ? "Requesting..." : "Request Revision"}
-                </button>
+                </Button>
               </div>
 
-              <input
+              <Input
                 value={incidentMessageDraft}
                 onChange={(event) => setIncidentMessageDraft(event.target.value)}
                 disabled={!canManageIncidentBanner}
@@ -425,14 +428,14 @@ export default function DashboardAdminOpsPage() {
                 className="ds-input mt-2 h-11 w-full rounded-md px-3 text-sm md:h-9"
               />
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <input
+                <Input
                   type="datetime-local"
                   value={incidentStartsAtDraft}
                   onChange={(event) => setIncidentStartsAtDraft(event.target.value)}
                   disabled={!canManageIncidentBanner}
                   className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
                 />
-                <input
+                <Input
                   type="datetime-local"
                   value={incidentEndsAtDraft}
                   onChange={(event) => setIncidentEndsAtDraft(event.target.value)}
@@ -442,45 +445,45 @@ export default function DashboardAdminOpsPage() {
               </div>
 
               {!canManageIncidentBanner ? (
-                <p className="mt-1 text-xs text-[var(--muted)]">Incident banner update/review is owner-only.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Incident banner update/review is owner-only.</p>
               ) : null}
-              <p className="mt-1 text-xs text-[var(--muted)]">updated: {asDate(incidentBanner?.updated_at)}</p>
+              <p className="mt-1 text-xs text-muted-foreground">updated: {asDate(incidentBanner?.updated_at)}</p>
 
-              <div className="mt-2 rounded-md border border-[var(--border)] bg-[var(--surface)] p-2">
-                <p className="text-xs font-medium text-[var(--text-secondary)]">Revision History</p>
+              <div className="mt-2 rounded-md border border-border bg-card p-2">
+                <p className="text-xs font-medium text-muted-foreground">Revision History</p>
                 {incidentRevisions.length === 0 ? (
-                  <p className="mt-1 text-xs text-[var(--muted)]">No revisions yet.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">No revisions yet.</p>
                 ) : (
                   <div className="mt-1 space-y-1">
                     {incidentRevisions.slice(0, 6).map((rev) => (
                       <div key={`incident-revision-${rev.id}`} className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-xs text-[var(--text-secondary)]">
+                        <p className="text-xs text-muted-foreground">
                           #{rev.id} · {rev.severity} · {rev.status} · {asDate(rev.created_at)}
                         </p>
 
                         {rev.status === "pending" && rev.requested_by !== userId && canManageIncidentBanner ? (
                           <div className="flex items-center gap-1">
-                            <button
+                            <Button
                               type="button"
                               onClick={() => void handleReviewIncidentBannerRevision(rev.id, "approve")}
                               disabled={incidentRevisionReviewLoadingId === rev.id}
-                              className="h-11 rounded-md border border-[var(--success-600)]/40 px-3 text-xs font-medium text-[var(--success-600)] disabled:opacity-60 md:h-9"
+                              className="h-11 rounded-md border border-chart-2/40 px-3 text-xs font-medium text-chart-2 disabled:opacity-60 md:h-9"
                             >
                               Approve
-                            </button>
-                            <button
+                            </Button>
+                            <Button
                               type="button"
                               onClick={() => void handleReviewIncidentBannerRevision(rev.id, "reject")}
                               disabled={incidentRevisionReviewLoadingId === rev.id}
-                              className="h-11 rounded-md border border-[var(--danger-500)]/40 px-3 text-xs font-medium text-[var(--danger-500)] disabled:opacity-60 md:h-9"
+                              className="h-11 rounded-md border border-destructive/40 px-3 text-xs font-medium text-destructive disabled:opacity-60 md:h-9"
                             >
                               Reject
-                            </button>
+                            </Button>
                           </div>
                         ) : rev.status === "pending" && rev.requested_by === userId ? (
-                          <p className="text-xs text-[var(--muted)]">Self-review blocked</p>
+                          <p className="text-xs text-muted-foreground">Self-review blocked</p>
                         ) : rev.status === "pending" ? (
-                          <p className="text-xs text-[var(--muted)]">Review is owner-only.</p>
+                          <p className="text-xs text-muted-foreground">Review is owner-only.</p>
                         ) : null}
                       </div>
                     ))}
@@ -492,13 +495,13 @@ export default function DashboardAdminOpsPage() {
 
           <div className="grid gap-2 sm:grid-cols-3">
             <article className="ds-card p-4">
-              <p className="text-xs font-medium text-[var(--text-secondary)]">Connector Diagnostics</p>
+              <p className="text-xs font-medium text-muted-foreground">Connector Diagnostics</p>
               <div className="mt-2 space-y-1">
                 {connectorDiagnostics.length === 0 ? (
-                  <p className="text-xs text-[var(--muted)]">No diagnostics.</p>
+                  <p className="text-xs text-muted-foreground">No diagnostics.</p>
                 ) : (
                   connectorDiagnostics.slice(0, 8).map((item, idx) => (
-                    <p key={`${item.provider}-${idx}`} className="text-xs text-[var(--text-secondary)]">
+                    <p key={`${item.provider}-${idx}`} className="text-xs text-muted-foreground">
                       {item.provider}: {item.workspace_name ?? item.workspace_id ?? "n/a"} ({item.status})
                     </p>
                   ))
@@ -507,13 +510,13 @@ export default function DashboardAdminOpsPage() {
             </article>
 
             <article className="ds-card p-4">
-              <p className="text-xs font-medium text-[var(--text-secondary)]">External Connector Health (24h)</p>
+              <p className="text-xs font-medium text-muted-foreground">External Connector Health (24h)</p>
               <div className="mt-2 space-y-1">
                 {externalHealth.length === 0 ? (
-                  <p className="text-xs text-[var(--muted)]">No health samples.</p>
+                  <p className="text-xs text-muted-foreground">No health samples.</p>
                 ) : (
                   externalHealth.slice(0, 8).map((item) => (
-                    <p key={item.connector} className="text-xs text-[var(--text-secondary)]">
+                    <p key={item.connector} className="text-xs text-muted-foreground">
                       {item.connector}: {item.status} · fail {(item.fail_rate * 100).toFixed(1)}% · calls {item.calls}
                     </p>
                   ))
@@ -522,13 +525,13 @@ export default function DashboardAdminOpsPage() {
             </article>
 
             <article className="ds-card p-4">
-              <p className="text-xs font-medium text-[var(--text-secondary)]">Rate-limit / Quota Hits</p>
+              <p className="text-xs font-medium text-muted-foreground">Rate-limit / Quota Hits</p>
               <div className="mt-2 space-y-1">
                 {rateLimitEvents.length === 0 ? (
-                  <p className="text-xs text-[var(--muted)]">No events.</p>
+                  <p className="text-xs text-muted-foreground">No events.</p>
                 ) : (
                   rateLimitEvents.slice(0, 8).map((item) => (
-                    <p key={item.id} className="text-xs text-[var(--text-secondary)]">
+                    <p key={item.id} className="text-xs text-muted-foreground">
                       {item.error_code ?? "unknown"}: {item.tool_name}
                     </p>
                   ))

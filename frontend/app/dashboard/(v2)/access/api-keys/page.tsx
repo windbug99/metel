@@ -1,5 +1,9 @@
 "use client";
 
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -400,18 +404,18 @@ export default function DashboardApiKeysPage() {
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-semibold">API Keys</h1>
-      <p className="text-sm text-[var(--text-secondary)]">Create, update, rotate, revoke, and drill down API key activity.</p>
+      <p className="text-sm text-muted-foreground">Create, update, rotate, revoke, and drill down API key activity.</p>
 
       <div className="ds-card p-4">
         <p className="mb-3 text-sm font-medium">Create API key</p>
         <div className="grid gap-2 lg:grid-cols-2">
-          <input
+          <Input
             value={createName}
             onChange={(event) => setCreateName(event.target.value)}
             placeholder="Key name"
             className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
           />
-          <select
+          <Select
             value={createTeamId}
             onChange={(event) => setCreateTeamId(event.target.value)}
             className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
@@ -422,20 +426,20 @@ export default function DashboardApiKeysPage() {
                 Team #{team.id} - {team.name}
               </option>
             ))}
-          </select>
-          <input
+          </Select>
+          <Input
             value={createMemo}
             onChange={(event) => setCreateMemo(event.target.value)}
             placeholder="Memo (optional)"
             className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
           />
-          <input
+          <Input
             value={createTags}
             onChange={(event) => setCreateTags(event.target.value)}
             placeholder="Tags CSV (optional)"
             className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
           />
-          <input
+          <Input
             value={createAllowedTools}
             onChange={(event) => setCreateAllowedTools(event.target.value)}
             placeholder="Allowed tools CSV (optional)"
@@ -447,32 +451,32 @@ export default function DashboardApiKeysPage() {
             placeholder='Policy JSON, e.g. {"allowed_services":["notion"]}'
             className="ds-input min-h-[120px] rounded-md px-3 py-2 text-xs font-mono lg:col-span-2"
           />
-          <button
+          <Button
             type="button"
             onClick={() => void handleCreateApiKey()}
             disabled={creating}
             className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9 lg:col-span-2"
           >
             {creating ? "Creating..." : "Create API key"}
-          </button>
+          </Button>
         </div>
 
         {createdApiKey ? (
-          <div className="mt-3 rounded-md border border-[var(--warning-500)]/40 bg-[color-mix(in_srgb,var(--warning-500)_12%,white)] p-3">
-            <p className="text-xs font-medium text-[var(--warning-500)]">Copy now. This key is shown only once.</p>
+          <div className="mt-3 rounded-md border border-chart-4/40 bg-chart-4/10 p-3">
+            <p className="text-xs font-medium text-chart-4">Copy now. This key is shown only once.</p>
             <div className="mt-2 flex items-center gap-2">
-              <code className="block flex-1 overflow-x-auto rounded bg-[var(--surface)] px-2 py-1 text-xs">{createdApiKey}</code>
-              <button type="button" onClick={() => void copyApiKey()} className="ds-btn h-9 rounded-md px-3 text-xs">
+              <code className="block flex-1 overflow-x-auto rounded bg-card px-2 py-1 text-xs">{createdApiKey}</code>
+              <Button type="button" onClick={() => void copyApiKey()} className="ds-btn h-9 rounded-md px-3 text-xs">
                 Copy
-              </button>
+              </Button>
             </div>
           </div>
         ) : null}
       </div>
 
-      {loading ? <p className="text-sm text-[var(--muted)]">Loading API keys...</p> : null}
+      {loading ? <p className="text-sm text-muted-foreground">Loading API keys...</p> : null}
       {error ? (
-        <div className="rounded-md border border-[var(--danger-500)]/40 bg-[color-mix(in_srgb,var(--danger-500)_12%,white)] px-3 py-2 text-sm text-[var(--danger-500)]">
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
         </div>
       ) : null}
@@ -486,18 +490,18 @@ export default function DashboardApiKeysPage() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <p className="text-sm font-semibold">{item.name}</p>
-                    <p className="font-mono text-xs text-[var(--muted)]">{item.key_prefix}</p>
+                    <p className="font-mono text-xs text-muted-foreground">{item.key_prefix}</p>
                   </div>
                   <StatusBadge kind="key" value={item.is_active ? "active" : "revoked"} />
                 </div>
 
                 <div className="grid gap-2 lg:grid-cols-2">
-                  <input
+                  <Input
                     value={nameDraft[item.id] ?? ""}
                     onChange={(event) => setNameDraft((prev) => ({ ...prev, [item.id]: event.target.value }))}
                     className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
                   />
-                  <select
+                  <Select
                     value={teamDraft[item.id] ?? ""}
                     onChange={(event) => setTeamDraft((prev) => ({ ...prev, [item.id]: event.target.value }))}
                     className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
@@ -508,20 +512,20 @@ export default function DashboardApiKeysPage() {
                         Team #{team.id} - {team.name}
                       </option>
                     ))}
-                  </select>
-                  <input
+                  </Select>
+                  <Input
                     value={memoDraft[item.id] ?? ""}
                     onChange={(event) => setMemoDraft((prev) => ({ ...prev, [item.id]: event.target.value }))}
                     placeholder="Memo"
                     className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
                   />
-                  <input
+                  <Input
                     value={tagsDraft[item.id] ?? ""}
                     onChange={(event) => setTagsDraft((prev) => ({ ...prev, [item.id]: event.target.value }))}
                     placeholder="Tags CSV"
                     className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
                   />
-                  <input
+                  <Input
                     value={allowedToolsDraft[item.id] ?? ""}
                     onChange={(event) => setAllowedToolsDraft((prev) => ({ ...prev, [item.id]: event.target.value }))}
                     placeholder="Allowed tools CSV"
@@ -535,67 +539,67 @@ export default function DashboardApiKeysPage() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
+                  <Button
                     type="button"
                     onClick={() => void handleUpdateApiKey(item.id)}
                     disabled={updatingId === item.id}
                     className="ds-btn h-11 rounded-md px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
                   >
                     {updatingId === item.id ? "Saving..." : "Save"}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
                     onClick={() => void handleRotateApiKey(item.id)}
                     disabled={rotatingId === item.id || !item.is_active}
                     className="ds-btn h-11 rounded-md px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
                   >
                     {rotatingId === item.id ? "Rotating..." : "Rotate"}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
                     onClick={() => void handleRevokeApiKey(item.id)}
                     disabled={revokingId === item.id || !item.is_active}
                     className="ds-btn h-11 rounded-md px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
                   >
                     {revokingId === item.id ? "Revoking..." : "Revoke"}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
                     onClick={() => void handleLoadDrilldown(item.id)}
                     disabled={drilldownLoadingId === item.id}
                     className="ds-btn h-11 rounded-md px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
                   >
                     {drilldownLoadingId === item.id ? "Loading..." : "Load 7d Drill-down"}
-                  </button>
+                  </Button>
                 </div>
 
-                <p className="text-xs text-[var(--muted)]">
+                <p className="text-xs text-muted-foreground">
                   created: {item.created_at ? new Date(item.created_at).toLocaleString() : "-"} · last used: {item.last_used_at ? new Date(item.last_used_at).toLocaleString() : "-"} · revoked: {item.revoked_at ? new Date(item.revoked_at).toLocaleString() : "-"}
                 </p>
 
                 {drilldown ? (
-                  <div className="rounded-md border border-[var(--border)] p-3">
+                  <div className="rounded-md border border-border p-3">
                     <p className="mb-2 text-sm font-medium">7-day Drill-down</p>
                     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                      <div className="rounded border border-[var(--border)] p-2 text-xs">Calls: {drilldown.summary.total_calls}</div>
-                      <div className="rounded border border-[var(--border)] p-2 text-xs">Success: {drilldown.summary.success_count}</div>
-                      <div className="rounded border border-[var(--border)] p-2 text-xs">Fail: {drilldown.summary.fail_count}</div>
-                      <div className="rounded border border-[var(--border)] p-2 text-xs">P95: {drilldown.summary.p95_latency_ms} ms</div>
+                      <div className="rounded border border-border p-2 text-xs">Calls: {drilldown.summary.total_calls}</div>
+                      <div className="rounded border border-border p-2 text-xs">Success: {drilldown.summary.success_count}</div>
+                      <div className="rounded border border-border p-2 text-xs">Fail: {drilldown.summary.fail_count}</div>
+                      <div className="rounded border border-border p-2 text-xs">P95: {drilldown.summary.p95_latency_ms} ms</div>
                     </div>
 
                     <div className="mt-3 grid gap-2 lg:grid-cols-2">
-                      <div className="rounded border border-[var(--border)] p-2">
+                      <div className="rounded border border-border p-2">
                         <p className="mb-1 text-xs font-medium">Top error codes</p>
-                        {(drilldown.top_error_codes ?? []).length === 0 ? <p className="text-xs text-[var(--muted)]">No errors.</p> : null}
+                        {(drilldown.top_error_codes ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No errors.</p> : null}
                         {(drilldown.top_error_codes ?? []).map((entry) => (
                           <p key={`err-${item.id}-${entry.error_code}`} className="text-xs">
                             {entry.error_code}: {entry.count}
                           </p>
                         ))}
                       </div>
-                      <div className="rounded border border-[var(--border)] p-2">
+                      <div className="rounded border border-border p-2">
                         <p className="mb-1 text-xs font-medium">Top tools</p>
-                        {(drilldown.top_tools ?? []).length === 0 ? <p className="text-xs text-[var(--muted)]">No calls.</p> : null}
+                        {(drilldown.top_tools ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No calls.</p> : null}
                         {(drilldown.top_tools ?? []).map((entry) => (
                           <p key={`tool-${item.id}-${entry.tool_name}`} className="text-xs">
                             {entry.tool_name}: {entry.count}
@@ -604,36 +608,36 @@ export default function DashboardApiKeysPage() {
                       </div>
                     </div>
 
-                    <div className="mt-3 overflow-x-auto rounded border border-[var(--border)]">
-                      <table className="min-w-[640px] text-xs">
-                        <thead className="bg-[var(--surface-subtle)] text-left text-[11px] text-[var(--muted)]">
-                          <tr>
-                            <th className="px-2 py-2">Day</th>
-                            <th className="px-2 py-2">Calls</th>
-                            <th className="px-2 py-2">Success</th>
-                            <th className="px-2 py-2">Fail</th>
-                            <th className="px-2 py-2">Success Rate</th>
-                          </tr>
-                        </thead>
-                        <tbody>
+                    <div className="mt-3 overflow-x-auto rounded border border-border">
+                      <Table className="min-w-[640px] text-xs">
+                        <TableHeader className="bg-muted/60 text-left text-[11px] text-muted-foreground">
+                          <TableRow>
+                            <TableHead className="px-2 py-2">Day</TableHead>
+                            <TableHead className="px-2 py-2">Calls</TableHead>
+                            <TableHead className="px-2 py-2">Success</TableHead>
+                            <TableHead className="px-2 py-2">Fail</TableHead>
+                            <TableHead className="px-2 py-2">Success Rate</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
                           {(drilldown.trend ?? []).map((row) => (
-                            <tr key={`trend-${item.id}-${row.day}`} className="border-t border-[var(--border)]">
-                              <td className="px-2 py-2">{row.day}</td>
-                              <td className="px-2 py-2">{row.calls}</td>
-                              <td className="px-2 py-2">{row.success}</td>
-                              <td className="px-2 py-2">{row.fail}</td>
-                              <td className="px-2 py-2">{(row.success_rate * 100).toFixed(1)}%</td>
-                            </tr>
+                            <TableRow key={`trend-${item.id}-${row.day}`} className="border-t border-border">
+                              <TableCell className="px-2 py-2">{row.day}</TableCell>
+                              <TableCell className="px-2 py-2">{row.calls}</TableCell>
+                              <TableCell className="px-2 py-2">{row.success}</TableCell>
+                              <TableCell className="px-2 py-2">{row.fail}</TableCell>
+                              <TableCell className="px-2 py-2">{(row.success_rate * 100).toFixed(1)}%</TableCell>
+                            </TableRow>
                           ))}
                           {(drilldown.trend ?? []).length === 0 ? (
-                            <tr>
-                              <td className="px-2 py-3 text-[var(--muted)]" colSpan={5}>
+                            <TableRow>
+                              <TableCell className="px-2 py-3 text-muted-foreground" colSpan={5}>
                                 No trend rows.
-                              </td>
-                            </tr>
+                              </TableCell>
+                            </TableRow>
                           ) : null}
-                        </tbody>
-                      </table>
+                        </TableBody>
+                      </Table>
                     </div>
                   </div>
                 ) : null}
@@ -641,7 +645,7 @@ export default function DashboardApiKeysPage() {
             );
           })}
 
-          {items.length === 0 ? <p className="text-sm text-[var(--muted)]">No API keys found.</p> : null}
+          {items.length === 0 ? <p className="text-sm text-muted-foreground">No API keys found.</p> : null}
         </div>
       ) : null}
     </section>

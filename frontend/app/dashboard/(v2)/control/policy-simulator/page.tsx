@@ -1,5 +1,8 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -122,32 +125,32 @@ export default function DashboardPolicySimulatorPage() {
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-semibold">Policy Simulator</h1>
-      <p className="text-sm text-[var(--text-secondary)]">Preview whether a request is allowed or blocked before execution.</p>
+      <p className="text-sm text-muted-foreground">Preview whether a request is allowed or blocked before execution.</p>
 
       <div className="ds-card space-y-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <select value={apiKeyId} onChange={(event) => setApiKeyId(event.target.value)} className="ds-input h-11 rounded-md px-3 text-sm md:h-9">
+          <Select value={apiKeyId} onChange={(event) => setApiKeyId(event.target.value)} className="ds-input h-11 rounded-md px-3 text-sm md:h-9">
             <option value="">No API key scope</option>
             {apiKeys.map((key) => (
               <option key={`sim-key-${key.id}`} value={String(key.id)}>
                 {key.name} ({key.key_prefix}...)
               </option>
             ))}
-          </select>
-          <input
+          </Select>
+          <Input
             value={toolName}
             onChange={(event) => setToolName(event.target.value)}
             placeholder="Tool name"
             className="ds-input h-11 min-w-[260px] rounded-md px-3 text-sm md:h-9"
           />
-          <button
+          <Button
             type="button"
             onClick={() => void runSimulation()}
             disabled={loading}
             className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
           >
             {loading ? "Simulating..." : "Simulate"}
-          </button>
+          </Button>
         </div>
         <textarea
           value={argumentsJson}
@@ -158,7 +161,7 @@ export default function DashboardPolicySimulatorPage() {
       </div>
 
       {error ? (
-        <div className="rounded-md border border-[var(--danger-500)]/40 bg-[color-mix(in_srgb,var(--danger-500)_12%,white)] px-3 py-2 text-sm text-[var(--danger-500)]">
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
         </div>
       ) : null}
@@ -167,9 +170,9 @@ export default function DashboardPolicySimulatorPage() {
         <div className="ds-card p-4">
           <p className="text-sm font-medium">
             Decision:{" "}
-            <span className={result.decision === "allowed" ? "text-[var(--success-600)]" : "text-[var(--danger-500)]"}>{result.decision}</span>
+            <span className={result.decision === "allowed" ? "text-chart-2" : "text-destructive"}>{result.decision}</span>
           </p>
-          <pre className="mt-2 overflow-x-auto rounded bg-[var(--surface-subtle)] p-3 text-[11px] text-[var(--text-secondary)]">
+          <pre className="mt-2 overflow-x-auto rounded bg-muted/60 p-3 text-[11px] text-muted-foreground">
             {JSON.stringify(result, null, 2)}
           </pre>
         </div>

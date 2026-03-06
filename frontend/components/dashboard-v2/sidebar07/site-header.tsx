@@ -1,5 +1,8 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+import { PanelLeft } from "lucide-react";
+
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -10,7 +13,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { SidebarTrigger } from "@/components/ui/sidebar";
 
 type SiteHeaderProps = {
   title: string;
@@ -20,8 +22,7 @@ type SiteHeaderProps = {
   teamIds: number[];
   setGlobalQuery: (next: Partial<Record<"org" | "team" | "range", string>>) => void;
   triggerRefresh: () => void;
-  toggleTheme: () => void;
-  theme: "light" | "dark";
+  onToggleSidebar: () => void;
 };
 
 export function SiteHeader({
@@ -32,13 +33,15 @@ export function SiteHeader({
   teamIds,
   setGlobalQuery,
   triggerRefresh,
-  toggleTheme,
-  theme,
+  onToggleSidebar,
 }: SiteHeaderProps) {
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-border bg-background px-4 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12 md:px-6">
+    <header className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-border bg-background px-4 md:px-6">
       <div className="flex min-w-0 items-center gap-2">
-        <SidebarTrigger className="-ml-1" />
+        <Button type="button" variant="ghost" size="icon" className="-ml-1 h-8 w-8" onClick={onToggleSidebar}>
+          <PanelLeft className="h-4 w-4" />
+          <span className="sr-only">Toggle Sidebar</span>
+        </Button>
         <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
         <Breadcrumb>
           <BreadcrumbList>
@@ -51,7 +54,7 @@ export function SiteHeader({
         </Breadcrumb>
       </div>
 
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <div className="flex items-center justify-end gap-2 md:flex-nowrap">
         <Input
           type="search"
           disabled={!globalSearchEnabled}
@@ -60,10 +63,10 @@ export function SiteHeader({
           }
           className="hidden h-8 w-64 text-xs md:block"
         />
-        <select
+        <Select
           value={currentTeam}
           onChange={(event) => setGlobalQuery({ team: event.target.value })}
-          className="h-8 min-w-[84px] rounded-md border border-input bg-background px-2 text-xs"
+          className="h-8 w-auto min-w-[84px] shrink-0 rounded-md border border-input bg-background px-2 text-xs"
         >
           <option value="all">{teamIds.length === 0 ? "Team: None" : "Team: All"}</option>
           {teamIds.map((id) => (
@@ -71,20 +74,17 @@ export function SiteHeader({
               Team: #{id}
             </option>
           ))}
-        </select>
-        <select
+        </Select>
+        <Select
           value={currentRange}
           onChange={(event) => setGlobalQuery({ range: event.target.value })}
-          className="h-8 min-w-[72px] rounded-md border border-input bg-background px-2 text-xs"
+          className="h-8 w-auto min-w-[72px] shrink-0 rounded-md border border-input bg-background px-2 text-xs"
         >
           <option value="24h">24h</option>
           <option value="7d">7d</option>
-        </select>
+        </Select>
         <Button type="button" variant="outline" onClick={triggerRefresh} className="h-8 px-3 text-xs">
           Refresh
-        </Button>
-        <Button type="button" variant="outline" onClick={toggleTheme} className="h-8 px-3 text-xs">
-          {theme === "dark" ? "Light" : "Dark"}
         </Button>
       </div>
     </header>

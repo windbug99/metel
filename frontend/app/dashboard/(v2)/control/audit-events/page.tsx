@@ -1,5 +1,9 @@
 "use client";
 
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -228,11 +232,11 @@ export default function DashboardAuditEventsPage() {
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-semibold">Audit Events</h1>
-      <p className="text-sm text-[var(--text-secondary)]">Who ran what, and whether it was allowed or blocked.</p>
+      <p className="text-sm text-muted-foreground">Who ran what, and whether it was allowed or blocked.</p>
 
       <div className="ds-card p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <select
+          <Select
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value as "all" | "success" | "fail")}
             className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
@@ -240,8 +244,8 @@ export default function DashboardAuditEventsPage() {
             <option value="all">All status</option>
             <option value="success">Success</option>
             <option value="fail">Fail</option>
-          </select>
-          <select
+          </Select>
+          <Select
             value={decisionFilter}
             onChange={(event) =>
               setDecisionFilter(
@@ -256,14 +260,14 @@ export default function DashboardAuditEventsPage() {
             <option value="access_denied">access_denied</option>
             <option value="failed">failed</option>
             <option value="policy_override_allowed">policy_override_allowed</option>
-          </select>
-          <input
+          </Select>
+          <Input
             value={toolNameFilter}
             onChange={(event) => setToolNameFilter(event.target.value)}
             placeholder="Tool name"
             className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
           />
-          <select
+          <Select
             value={organizationFilter}
             onChange={(event) => setOrganizationFilter(event.target.value)}
             className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
@@ -274,8 +278,8 @@ export default function DashboardAuditEventsPage() {
                 Org #{org.id} - {org.name}
               </option>
             ))}
-          </select>
-          <select
+          </Select>
+          <Select
             value={teamFilter}
             onChange={(event) => setTeamFilter(event.target.value)}
             className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
@@ -286,100 +290,100 @@ export default function DashboardAuditEventsPage() {
                 Team #{team.id} - {team.name}
               </option>
             ))}
-          </select>
-          <select value={agentFilter} onChange={(event) => setAgentFilter(event.target.value)} className="ds-input h-11 rounded-md px-3 text-sm md:h-9">
+          </Select>
+          <Select value={agentFilter} onChange={(event) => setAgentFilter(event.target.value)} className="ds-input h-11 rounded-md px-3 text-sm md:h-9">
             <option value="">All agents</option>
             {agents.map((agent) => (
               <option key={`audit-agent-${String(agent.agent_id ?? "none")}`} value={agent.agent_id === null ? "" : String(agent.agent_id)}>
                 {agent.agent_id === null ? "Unassigned (no filter)" : `Agent #${agent.agent_id} - ${agent.agent_name ?? "Unnamed"}`}
               </option>
             ))}
-          </select>
-          <input type="datetime-local" value={fromFilter} onChange={(event) => setFromFilter(event.target.value)} className="ds-input h-11 rounded-md px-3 text-sm md:h-9" />
-          <input type="datetime-local" value={toFilter} onChange={(event) => setToFilter(event.target.value)} className="ds-input h-11 rounded-md px-3 text-sm md:h-9" />
-          <button type="button" onClick={() => void fetchAuditEvents()} disabled={loading} className="ds-btn h-11 rounded-md px-3 text-sm disabled:opacity-60 md:h-9">
+          </Select>
+          <Input type="datetime-local" value={fromFilter} onChange={(event) => setFromFilter(event.target.value)} className="ds-input h-11 rounded-md px-3 text-sm md:h-9" />
+          <Input type="datetime-local" value={toFilter} onChange={(event) => setToFilter(event.target.value)} className="ds-input h-11 rounded-md px-3 text-sm md:h-9" />
+          <Button type="button" onClick={() => void fetchAuditEvents()} disabled={loading} className="ds-btn h-11 rounded-md px-3 text-sm disabled:opacity-60 md:h-9">
             {loading ? "Loading..." : "Apply"}
-          </button>
+          </Button>
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <article className="ds-card p-4">
-          <p className="text-xs text-[var(--muted)]">Allowed</p>
-          <p className="mt-1 text-xl font-semibold text-[var(--success-600)]">{summary?.allowed_count ?? 0}</p>
+          <p className="text-xs text-muted-foreground">Allowed</p>
+          <p className="mt-1 text-xl font-semibold text-chart-2">{summary?.allowed_count ?? 0}</p>
         </article>
         <article className="ds-card p-4">
-          <p className="text-xs text-[var(--muted)]">Policy Blocked</p>
-          <p className="mt-1 text-xl font-semibold text-[var(--warning-500)]">{summary?.policy_blocked_count ?? 0}</p>
+          <p className="text-xs text-muted-foreground">Policy Blocked</p>
+          <p className="mt-1 text-xl font-semibold text-chart-4">{summary?.policy_blocked_count ?? 0}</p>
         </article>
         <article className="ds-card p-4">
-          <p className="text-xs text-[var(--muted)]">Access Denied</p>
-          <p className="mt-1 text-xl font-semibold text-[var(--warning-500)]">{summary?.access_denied_count ?? 0}</p>
+          <p className="text-xs text-muted-foreground">Access Denied</p>
+          <p className="mt-1 text-xl font-semibold text-chart-4">{summary?.access_denied_count ?? 0}</p>
         </article>
         <article className="ds-card p-4">
-          <p className="text-xs text-[var(--muted)]">Failed</p>
-          <p className="mt-1 text-xl font-semibold text-[var(--danger-500)]">{summary?.failed_count ?? 0}</p>
+          <p className="text-xs text-muted-foreground">Failed</p>
+          <p className="mt-1 text-xl font-semibold text-destructive">{summary?.failed_count ?? 0}</p>
         </article>
         <article className="ds-card p-4">
-          <p className="text-xs text-[var(--muted)]">High Risk Allowed</p>
-          <p className="mt-1 text-xl font-semibold text-[var(--brand-500)]">{summary?.high_risk_allowed_count ?? 0}</p>
+          <p className="text-xs text-muted-foreground">High Risk Allowed</p>
+          <p className="mt-1 text-xl font-semibold text-primary">{summary?.high_risk_allowed_count ?? 0}</p>
         </article>
         <article className="ds-card p-4">
-          <p className="text-xs text-[var(--muted)]">Policy Override Usage</p>
-          <p className="mt-1 text-xl font-semibold text-[var(--brand-500)]">{((summary?.policy_override_usage ?? 0) * 100).toFixed(1)}%</p>
+          <p className="text-xs text-muted-foreground">Policy Override Usage</p>
+          <p className="mt-1 text-xl font-semibold text-primary">{((summary?.policy_override_usage ?? 0) * 100).toFixed(1)}%</p>
         </article>
       </div>
 
       {error ? (
-        <div className="rounded-md border border-[var(--danger-500)]/40 bg-[color-mix(in_srgb,var(--danger-500)_12%,white)] px-3 py-2 text-sm text-[var(--danger-500)]">
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
         </div>
       ) : null}
 
       <div className="ds-card overflow-x-auto">
-        {loading ? <p className="px-4 py-3 text-sm text-[var(--muted)]">Loading audit events...</p> : null}
-        {!loading && items.length === 0 ? <p className="px-4 py-3 text-sm text-[var(--muted)]">No audit events found.</p> : null}
+        {loading ? <p className="px-4 py-3 text-sm text-muted-foreground">Loading audit events...</p> : null}
+        {!loading && items.length === 0 ? <p className="px-4 py-3 text-sm text-muted-foreground">No audit events found.</p> : null}
         {items.length > 0 ? (
-          <table className="min-w-[640px] text-sm">
-            <thead className="bg-[var(--surface-subtle)] text-left text-xs text-[var(--muted)]">
-              <tr>
-                <th className="px-4 py-3">Time</th>
-                <th className="px-4 py-3">Tool</th>
-                <th className="px-4 py-3">Decision</th>
-                <th className="px-4 py-3">Error</th>
-                <th className="px-4 py-3">Detail</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table className="min-w-[640px] text-sm">
+            <TableHeader className="bg-muted/60 text-left text-xs text-muted-foreground">
+              <TableRow>
+                <TableHead className="px-4 py-3">Time</TableHead>
+                <TableHead className="px-4 py-3">Tool</TableHead>
+                <TableHead className="px-4 py-3">Decision</TableHead>
+                <TableHead className="px-4 py-3">Error</TableHead>
+                <TableHead className="px-4 py-3">Detail</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {items.map((item) => (
-                <tr key={item.id} className="border-t border-[var(--border)]">
-                  <td className="px-4 py-3">{new Date(item.timestamp).toLocaleString()}</td>
-                  <td className="px-4 py-3">{item.action?.tool_name ?? "-"}</td>
-                  <td className="px-4 py-3">
+                <TableRow key={item.id} className="border-t border-border">
+                  <TableCell className="px-4 py-3">{new Date(item.timestamp).toLocaleString()}</TableCell>
+                  <TableCell className="px-4 py-3">{item.action?.tool_name ?? "-"}</TableCell>
+                  <TableCell className="px-4 py-3">
                     <StatusBadge kind="decision" value={item.outcome?.decision} />
-                  </td>
-                  <td className="px-4 py-3">{item.outcome?.error_code ?? "-"}</td>
-                  <td className="px-4 py-3">
-                    <button
+                  </TableCell>
+                  <TableCell className="px-4 py-3">{item.outcome?.error_code ?? "-"}</TableCell>
+                  <TableCell className="px-4 py-3">
+                    <Button
                       type="button"
                       onClick={() => void fetchAuditEventDetail(item.id)}
                       disabled={detailLoading}
                       className="ds-btn h-9 rounded-md px-3 text-xs disabled:opacity-60"
                     >
                       {detailLoading ? "Loading..." : "Details"}
-                    </button>
-                  </td>
-                </tr>
+                    </Button>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         ) : null}
       </div>
 
       {detail ? (
         <div className="ds-card p-4">
           <p className="text-sm font-medium">Selected Audit Detail: #{detail.id}</p>
-          <pre className="mt-2 overflow-x-auto rounded bg-[var(--surface-subtle)] p-3 text-[11px] text-[var(--text-secondary)]">
+          <pre className="mt-2 overflow-x-auto rounded bg-muted/60 p-3 text-[11px] text-muted-foreground">
             {JSON.stringify(detail, null, 2)}
           </pre>
         </div>

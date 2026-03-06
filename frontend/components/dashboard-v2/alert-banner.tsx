@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 type AlertBannerProps = {
   message: string;
   tone?: "warning" | "danger";
@@ -18,13 +19,13 @@ export default function AlertBanner({ message, tone = "warning", dismissible = f
       <div className="flex items-center justify-between gap-2">
         <p>{message}</p>
         {dismissible ? (
-          <button
+          <Button
             type="button"
             onClick={onDismiss}
             className="rounded border border-current px-2 py-1 text-xs"
           >
             Dismiss
-          </button>
+          </Button>
         ) : null}
       </div>
     </div>

@@ -122,3 +122,16 @@
 
 Result:
 - Rebuild baseline is fully switched to shadcn sidebar-07 shell contract.
+
+## 8) Design-System Rollout Status (2026-03-06, follow-up)
+
+- Global token system updated in `frontend/app/globals.css`
+  - radius small (`--radius: 0.375rem`)
+  - semantic status aliases (`--success`, `--warning`, `--info`, `--danger`)
+  - motion/elevation tokens (`--duration-fast`, `--duration-base`, `--easing-standard`, `--shadow-sm`, `--shadow-md`)
+  - Geist typography baseline and dashboard utility classes (`.ds-h1`, `.ds-h2`, `.ds-body-sm`, `.ds-caption`)
+- Dashboard V2 pages moved off legacy custom var class usage
+  - replaced `text-[var(--...)]` / `bg-[var(--...)]` / `border-[var(--...)]` with semantic utility classes
+  - verified no remaining `var(--brand|--muted|--text-secondary|--danger|--warning|--success|--surface|--status)` usage in `dashboard/(v2)` and `components/dashboard-v2`
+- Validation
+  - `cd frontend && pnpm tsc --noEmit` passed

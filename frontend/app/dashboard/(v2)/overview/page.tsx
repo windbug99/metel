@@ -95,11 +95,11 @@ export default function DashboardOverviewPage() {
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-semibold">Overview</h1>
-      <p className="text-sm text-[var(--text-secondary)]">KPI summary is loaded per page route and refreshed in page scope.</p>
+      <p className="text-sm text-muted-foreground">KPI summary is loaded per page route and refreshed in page scope.</p>
 
-      {loading ? <p className="text-sm text-[var(--muted)]">Loading overview...</p> : null}
+      {loading ? <p className="text-sm text-muted-foreground">Loading overview...</p> : null}
       {error ? (
-        <div className="rounded-md border border-[var(--danger-500)]/40 bg-[color-mix(in_srgb,var(--danger-500)_12%,white)] px-3 py-2 text-sm text-[var(--danger-500)]">
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
         </div>
       ) : null}
@@ -108,27 +108,27 @@ export default function DashboardOverviewPage() {
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <article className="ds-card p-4">
-              <p className="text-xs text-[var(--muted)]">Total Calls</p>
+              <p className="text-xs text-muted-foreground">Total Calls</p>
               <p className="mt-2 text-2xl font-semibold">{data.kpis.total_calls}</p>
             </article>
             <article className="ds-card p-4">
-              <p className="text-xs text-[var(--muted)]">Success Rate</p>
-              <p className="mt-2 text-2xl font-semibold text-[var(--success-500)]">{(data.kpis.success_rate * 100).toFixed(1)}%</p>
+              <p className="text-xs text-muted-foreground">Success Rate</p>
+              <p className="mt-2 text-2xl font-semibold text-chart-2">{(data.kpis.success_rate * 100).toFixed(1)}%</p>
             </article>
             <article className="ds-card p-4">
-              <p className="text-xs text-[var(--muted)]">Fail Rate</p>
-              <p className="mt-2 text-2xl font-semibold text-[var(--danger-500)]">{(data.kpis.fail_rate * 100).toFixed(1)}%</p>
+              <p className="text-xs text-muted-foreground">Fail Rate</p>
+              <p className="mt-2 text-2xl font-semibold text-destructive">{(data.kpis.fail_rate * 100).toFixed(1)}%</p>
             </article>
             <article className="ds-card p-4">
-              <p className="text-xs text-[var(--muted)]">Avg Latency</p>
+              <p className="text-xs text-muted-foreground">Avg Latency</p>
               <p className="mt-2 text-2xl font-semibold">{Math.round(data.kpis.avg_latency_ms)} ms</p>
             </article>
             <article className="ds-card p-4">
-              <p className="text-xs text-[var(--muted)]">P95 Latency</p>
+              <p className="text-xs text-muted-foreground">P95 Latency</p>
               <p className="mt-2 text-2xl font-semibold">{Math.round(data.kpis.p95_latency_ms)} ms</p>
             </article>
             <article className="ds-card p-4">
-              <p className="text-xs text-[var(--muted)]">Retry / Policy Block</p>
+              <p className="text-xs text-muted-foreground">Retry / Policy Block</p>
               <p className="mt-2 text-lg font-semibold">
                 {((data.kpis.retry_rate ?? 0) * 100).toFixed(1)}% / {((data.kpis.policy_block_rate ?? 0) * 100).toFixed(1)}%
               </p>
@@ -140,43 +140,43 @@ export default function DashboardOverviewPage() {
               <p className="text-sm font-medium">Top Called Tools</p>
               <div className="mt-2 space-y-1">
                 {(data.top?.called_tools ?? []).slice(0, 5).map((item) => (
-                  <p key={`called-${item.tool_name}`} className="text-xs text-[var(--text-secondary)]">
+                  <p key={`called-${item.tool_name}`} className="text-xs text-muted-foreground">
                     {item.tool_name}: {item.count}
                   </p>
                 ))}
-                {(data.top?.called_tools ?? []).length === 0 ? <p className="text-xs text-[var(--muted)]">No data.</p> : null}
+                {(data.top?.called_tools ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No data.</p> : null}
               </div>
             </article>
             <article className="ds-card p-4">
               <p className="text-sm font-medium">Top Failed Tools</p>
               <div className="mt-2 space-y-1">
                 {(data.top?.failed_tools ?? []).slice(0, 5).map((item) => (
-                  <p key={`failed-${item.tool_name}`} className="text-xs text-[var(--text-secondary)]">
+                  <p key={`failed-${item.tool_name}`} className="text-xs text-muted-foreground">
                     {item.tool_name}: {item.count}
                   </p>
                 ))}
-                {(data.top?.failed_tools ?? []).length === 0 ? <p className="text-xs text-[var(--muted)]">No data.</p> : null}
+                {(data.top?.failed_tools ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No data.</p> : null}
               </div>
             </article>
             <article className="ds-card p-4">
               <p className="text-sm font-medium">Top Blocked Tools</p>
               <div className="mt-2 space-y-1">
                 {(data.top?.blocked_tools ?? []).slice(0, 5).map((item) => (
-                  <p key={`blocked-${item.tool_name}`} className="text-xs text-[var(--text-secondary)]">
+                  <p key={`blocked-${item.tool_name}`} className="text-xs text-muted-foreground">
                     {item.tool_name}: {item.count}
                   </p>
                 ))}
-                {(data.top?.blocked_tools ?? []).length === 0 ? <p className="text-xs text-[var(--muted)]">No data.</p> : null}
+                {(data.top?.blocked_tools ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No data.</p> : null}
               </div>
             </article>
           </div>
 
           {(data.anomalies ?? []).length > 0 ? (
-            <div className="rounded-md border border-[var(--warning-500)]/40 bg-[color-mix(in_srgb,var(--warning-500)_12%,white)] p-3">
-              <p className="text-xs font-medium text-[var(--warning-500)]">Recent anomalies</p>
+            <div className="rounded-md border border-chart-4/40 bg-chart-4/10 p-3">
+              <p className="text-xs font-medium text-chart-4">Recent anomalies</p>
               <div className="mt-2 space-y-1">
                 {(data.anomalies ?? []).slice(0, 8).map((anomaly, idx) => (
-                  <p key={`${anomaly.type}-${idx}`} className="text-xs text-[var(--text-secondary)]">
+                  <p key={`${anomaly.type}-${idx}`} className="text-xs text-muted-foreground">
                     [{anomaly.severity}] {anomaly.message}
                   </p>
                 ))}

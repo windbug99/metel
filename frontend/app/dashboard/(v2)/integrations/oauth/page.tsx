@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -46,41 +47,41 @@ function ServiceRow({
   onDisconnect: () => void;
 }) {
   return (
-    <article className="rounded-md border border-[var(--border)] p-3">
+    <article className="rounded-md border border-border p-3">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-sm font-medium">{name}</p>
-          <p className="text-xs text-[var(--muted)]">{status?.connected ? "Connected" : "Not connected"}</p>
+          <p className="text-xs text-muted-foreground">{status?.connected ? "Connected" : "Not connected"}</p>
         </div>
 
         {status?.connected ? (
-          <button
+          <Button
             type="button"
             onClick={onDisconnect}
             disabled={busy}
             className="ds-btn h-10 rounded-md px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
           >
             Disconnect
-          </button>
+          </Button>
         ) : (
-          <button
+          <Button
             type="button"
             onClick={onConnect}
             disabled={busy}
             className="ds-btn h-10 rounded-md px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
           >
             Connect
-          </button>
+          </Button>
         )}
       </div>
 
       {status?.integration?.workspace_name ? (
-        <p className="mt-2 text-xs text-[var(--muted)]">Workspace: {status.integration.workspace_name}</p>
+        <p className="mt-2 text-xs text-muted-foreground">Workspace: {status.integration.workspace_name}</p>
       ) : null}
       {status?.integration?.updated_at ? (
-        <p className="mt-1 text-xs text-[var(--muted)]">Updated: {formatDate(status.integration.updated_at)}</p>
+        <p className="mt-1 text-xs text-muted-foreground">Updated: {formatDate(status.integration.updated_at)}</p>
       ) : null}
-      {error ? <p className="mt-2 text-xs text-[var(--danger-500)]">{error}</p> : null}
+      {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
     </article>
   );
 }
@@ -202,7 +203,7 @@ export default function DashboardOAuthConnectionsPage() {
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-semibold">OAuth Connections</h1>
-      <p className="text-sm text-[var(--text-secondary)]">Connect Notion and Linear to expose MCP tools.</p>
+      <p className="text-sm text-muted-foreground">Connect Notion and Linear to expose MCP tools.</p>
 
       <div className="ds-card space-y-3 p-4">
         <ServiceRow
