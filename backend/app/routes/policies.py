@@ -124,7 +124,19 @@ async def simulate_policy(request: Request, body: SimulatePolicyRequest):
     tool_name = body.tool_name.strip()
     arguments = body.arguments if isinstance(body.arguments, dict) else {}
     _enforce_member_simulation_scope(role=authz_ctx.role, team_ids=authz_ctx.team_ids, arguments=arguments)
-    tool = load_registry().get_tool(tool_name)
+    registry = load_registry()
+    try:
+        tool = registry.get_tool(tool_name)
+    except KeyError:
+        examples = [item.tool_name for item in registry.list_tools() if item.service in _PHASE1_SERVICES][:20]
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "unknown_tool",
+                "message": "Unknown tool_name. Use exact tool identifier (e.g. notion_search, linear_list_issues).",
+                "examples": examples,
+            },
+        )
     if tool.service not in _PHASE1_SERVICES:
         raise HTTPException(status_code=400, detail="tool_not_available_in_phase1")
 
