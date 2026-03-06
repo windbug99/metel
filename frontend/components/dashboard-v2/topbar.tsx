@@ -30,7 +30,7 @@ export default function DashboardTopbar({
   theme,
 }: TopbarProps) {
   return (
-    <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+    <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70">
       <div className="flex h-16 flex-col justify-center gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:px-6 md:py-0">
         <div className="flex items-center gap-2">
           <SidebarTrigger />

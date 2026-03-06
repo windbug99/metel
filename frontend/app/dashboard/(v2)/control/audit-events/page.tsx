@@ -341,7 +341,7 @@ export default function DashboardAuditEventsPage() {
         {!loading && items.length === 0 ? <p className="px-4 py-3 text-sm text-muted-foreground">No audit events found.</p> : null}
         {items.length > 0 ? (
           <table className="min-w-[640px] text-sm tabular-nums">
-            <thead className="sticky top-16 z-10 bg-muted/80 text-left text-xs text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/85">
+            <thead className="sticky top-16 z-0 bg-muted/80 text-left text-xs text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/85">
               <tr>
                 <th className="px-4 py-3 text-right">Time</th>
                 <th className="px-4 py-3">Tool</th>

@@ -606,7 +606,7 @@ export default function DashboardApiKeysPage() {
 
                     <div className="mt-3 overflow-x-auto rounded border border-border">
                       <table className="min-w-[640px] text-xs tabular-nums">
-                        <thead className="sticky top-16 z-10 bg-muted/80 text-left text-[11px] text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/85">
+                        <thead className="sticky top-16 z-0 bg-muted/80 text-left text-[11px] text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/85">
                           <tr>
                             <th className="px-2 py-2">Day</th>
                             <th className="px-2 py-2 text-right">Calls</th>

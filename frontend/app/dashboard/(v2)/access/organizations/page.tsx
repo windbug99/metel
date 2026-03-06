@@ -634,7 +634,7 @@ export default function DashboardOrganizationsPage() {
 
       <div className="ds-card overflow-x-auto">
         <table className="min-w-[640px] text-sm tabular-nums">
-          <thead className="sticky top-16 z-10 bg-muted/80 text-left text-xs text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/85">
+          <thead className="sticky top-16 z-0 bg-muted/80 text-left text-xs text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/85">
             <tr>
               <th className="px-4 py-3">User ID</th>
               <th className="px-4 py-3">Role</th>
@@ -710,7 +710,7 @@ export default function DashboardOrganizationsPage() {
 
       <div className="ds-card overflow-x-auto">
         <table className="min-w-[880px] text-sm tabular-nums">
-          <thead className="sticky top-16 z-10 bg-muted/80 text-left text-xs text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/85">
+          <thead className="sticky top-16 z-0 bg-muted/80 text-left text-xs text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/85">
             <tr>
               <th className="px-4 py-3 text-right">ID</th>
               <th className="px-4 py-3">Role</th>
@@ -810,7 +810,7 @@ export default function DashboardOrganizationsPage() {
 
       <div className="ds-card overflow-x-auto">
         <table className="min-w-[880px] text-sm tabular-nums">
-          <thead className="sticky top-16 z-10 bg-muted/80 text-left text-xs text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/85">
+          <thead className="sticky top-16 z-0 bg-muted/80 text-left text-xs text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-background/85">
             <tr>
               <th className="px-4 py-3 text-right">ID</th>
               <th className="px-4 py-3">Target</th>
