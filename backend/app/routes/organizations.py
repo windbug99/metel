@@ -94,6 +94,13 @@ def _is_org_admin_or_owner(*, supabase, user_id: str, organization_id: str | int
     return role in {"owner", "admin"}
 
 
+def _require_org_admin_or_owner(*, supabase, user_id: str, organization_id: str | int) -> str:
+    role = _org_member_role(supabase=supabase, user_id=user_id, organization_id=organization_id)
+    if role not in {"owner", "admin"}:
+        raise HTTPException(status_code=404, detail="organization_not_found")
+    return role
+
+
 def _user_email(*, supabase, user_id: str) -> str | None:
     rows = (
         supabase.table("users")
@@ -212,18 +219,36 @@ async def list_organization_members(request: Request, organization_id: str):
 
 @router.post("/{organization_id}/members")
 async def upsert_organization_member(request: Request, organization_id: str, body: OrganizationMemberRequest):
-    owner_id = await get_authenticated_user_id(request)
+    actor_id = await get_authenticated_user_id(request)
     settings = get_settings()
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
-    authz_ctx = await get_authz_context(request, user_id=owner_id, supabase=supabase)
+    authz_ctx = await get_authz_context(request, user_id=actor_id, supabase=supabase)
     require_min_role(authz_ctx, Role.ADMIN, method=request.method)
-    if not _is_org_owner(supabase=supabase, user_id=owner_id, organization_id=organization_id):
-        raise HTTPException(status_code=404, detail="organization_not_found")
+    actor_role = _require_org_admin_or_owner(supabase=supabase, user_id=actor_id, organization_id=organization_id)
 
     role = str(body.role or "").strip().lower()
     if role not in _ALLOWED_MEMBER_ROLES:
         raise HTTPException(status_code=400, detail="invalid_member_role")
     target_user_id = body.user_id.strip()
+    if target_user_id == actor_id and role != actor_role:
+        raise HTTPException(status_code=403, detail="self_role_change_forbidden")
+
+    existing_rows = (
+        supabase.table("org_memberships")
+        .select("role")
+        .eq("organization_id", organization_id)
+        .eq("user_id", target_user_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    existing_role = str(existing_rows[0].get("role") or "").strip().lower() if existing_rows else None
+
+    if actor_role == "admin":
+        if role != "member":
+            raise HTTPException(status_code=403, detail="admin_can_assign_member_only")
+        if existing_role in {"owner", "admin"}:
+            raise HTTPException(status_code=403, detail="admin_cannot_modify_privileged_member")
+
     now = datetime.now(timezone.utc).isoformat()
     row = (
         supabase.table("org_memberships")
@@ -248,19 +273,18 @@ async def upsert_organization_member(request: Request, organization_id: str, bod
 
 @router.delete("/{organization_id}/members/{member_user_id}")
 async def delete_organization_member(request: Request, organization_id: str, member_user_id: str):
-    owner_id = await get_authenticated_user_id(request)
+    actor_id = await get_authenticated_user_id(request)
     settings = get_settings()
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
-    authz_ctx = await get_authz_context(request, user_id=owner_id, supabase=supabase)
+    authz_ctx = await get_authz_context(request, user_id=actor_id, supabase=supabase)
     require_min_role(authz_ctx, Role.ADMIN, method=request.method)
-    if not _is_org_owner(supabase=supabase, user_id=owner_id, organization_id=organization_id):
-        raise HTTPException(status_code=404, detail="organization_not_found")
+    actor_role = _require_org_admin_or_owner(supabase=supabase, user_id=actor_id, organization_id=organization_id)
     target_user_id = member_user_id.strip()
-    if target_user_id == owner_id:
+    if target_user_id == actor_id:
         raise HTTPException(status_code=400, detail="cannot_remove_owner_self")
     row = (
         supabase.table("org_memberships")
-        .select("id")
+        .select("id,role")
         .eq("organization_id", organization_id)
         .eq("user_id", target_user_id)
         .limit(1)
@@ -268,6 +292,9 @@ async def delete_organization_member(request: Request, organization_id: str, mem
     ).data or []
     if not row:
         raise HTTPException(status_code=404, detail="organization_member_not_found")
+    target_role = str(row[0].get("role") or "").strip().lower()
+    if actor_role == "admin" and target_role in {"owner", "admin"}:
+        raise HTTPException(status_code=403, detail="admin_cannot_remove_privileged_member")
     supabase.table("org_memberships").delete().eq("organization_id", organization_id).eq("user_id", target_user_id).execute()
     return {"ok": True}
 
@@ -298,11 +325,12 @@ async def create_organization_invite(request: Request, organization_id: str, bod
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
     authz_ctx = await get_authz_context(request, user_id=invited_by, supabase=supabase)
     require_min_role(authz_ctx, Role.ADMIN, method=request.method)
-    if not _is_org_owner(supabase=supabase, user_id=invited_by, organization_id=organization_id):
-        raise HTTPException(status_code=404, detail="organization_not_found")
+    actor_role = _require_org_admin_or_owner(supabase=supabase, user_id=invited_by, organization_id=organization_id)
     role = str(body.role or "").strip().lower()
     if role not in _ALLOWED_MEMBER_ROLES:
         raise HTTPException(status_code=400, detail="invalid_member_role")
+    if actor_role == "admin" and role != "member":
+        raise HTTPException(status_code=403, detail="admin_can_invite_member_only")
     token = uuid4().hex
     now = datetime.now(timezone.utc)
     payload = {
@@ -325,8 +353,7 @@ async def revoke_organization_invite(request: Request, organization_id: str, inv
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
     authz_ctx = await get_authz_context(request, user_id=user_id, supabase=supabase)
     require_min_role(authz_ctx, Role.ADMIN, method=request.method)
-    if not _is_org_owner(supabase=supabase, user_id=user_id, organization_id=organization_id):
-        raise HTTPException(status_code=404, detail="organization_not_found")
+    _require_org_admin_or_owner(supabase=supabase, user_id=user_id, organization_id=organization_id)
     rows = (
         supabase.table("org_invites")
         .select("id,organization_id,accepted_at,revoked_at")
@@ -354,8 +381,7 @@ async def reissue_organization_invite(request: Request, organization_id: str, in
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
     authz_ctx = await get_authz_context(request, user_id=user_id, supabase=supabase)
     require_min_role(authz_ctx, Role.ADMIN, method=request.method)
-    if not _is_org_owner(supabase=supabase, user_id=user_id, organization_id=organization_id):
-        raise HTTPException(status_code=404, detail="organization_not_found")
+    _require_org_admin_or_owner(supabase=supabase, user_id=user_id, organization_id=organization_id)
     rows = (
         supabase.table("org_invites")
         .select("id,organization_id,invited_email,role,accepted_at,revoked_at")
@@ -465,19 +491,22 @@ async def create_organization_role_request(request: Request, organization_id: st
     settings = get_settings()
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
     authz_ctx = await get_authz_context(request, user_id=requested_by, supabase=supabase)
-    require_min_role(authz_ctx, Role.ADMIN, method=request.method)
+    require_min_role(authz_ctx, Role.MEMBER, method=request.method)
     requester_role = _org_member_role(supabase=supabase, user_id=requested_by, organization_id=organization_id)
-    if requester_role not in {"owner", "admin"}:
+    if requester_role not in {"owner", "admin", "member"}:
         raise HTTPException(status_code=404, detail="organization_not_found")
     requested_role = str(body.requested_role or "").strip().lower()
     if requested_role not in _ALLOWED_MEMBER_ROLES:
         raise HTTPException(status_code=400, detail="invalid_member_role")
     if requested_role == "owner" and requester_role != "owner":
         raise HTTPException(status_code=403, detail="owner_role_request_forbidden")
+    target_user_id = body.target_user_id.strip()
+    if requester_role == "member" and target_user_id != requested_by:
+        raise HTTPException(status_code=403, detail="member_can_request_self_only")
     now = datetime.now(timezone.utc).isoformat()
     payload = {
         "organization_id": organization_id,
-        "target_user_id": body.target_user_id.strip(),
+        "target_user_id": target_user_id,
         "requested_role": requested_role,
         "reason": (body.reason or "").strip() or None,
         "status": "pending",

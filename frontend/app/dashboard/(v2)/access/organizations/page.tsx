@@ -4,6 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -13,7 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { buildNextPath, dashboardApiGet, dashboardApiRequest } from "../../../../../lib/dashboard-v2-client";
 import AlertBanner from "../../../../../components/dashboard-v2/alert-banner";
@@ -81,6 +82,7 @@ function formatDate(value?: string | null): string {
 export default function DashboardOrganizationsPage() {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [me, setMe] = useState<PermissionSnapshot | null>(null);
   const [organizations, setOrganizations] = useState<OrganizationItem[]>([]);
@@ -104,20 +106,23 @@ export default function DashboardOrganizationsPage() {
   const [inviteHours, setInviteHours] = useState("72");
   const [creatingInvite, setCreatingInvite] = useState(false);
 
-  const [acceptToken, setAcceptToken] = useState("");
-  const [acceptingInvite, setAcceptingInvite] = useState(false);
   const [roleRequestTargetUserId, setRoleRequestTargetUserId] = useState("");
   const [roleRequestRequestedRole, setRoleRequestRequestedRole] = useState<"owner" | "admin" | "member">("member");
   const [roleRequestReason, setRoleRequestReason] = useState("");
   const [loadingRoleRequests, setLoadingRoleRequests] = useState(false);
   const [creatingRoleRequest, setCreatingRoleRequest] = useState(false);
   const [reviewingRoleRequestAction, setReviewingRoleRequestAction] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"users" | "invites" | "requests">("users");
 
   const selectedOrg = useMemo(
     () => organizations.find((item) => String(item.id) === selectedOrgId) ?? null,
     [organizations, selectedOrgId]
   );
-  const ownerActionsEnabled = selectedOrg?.role === "owner";
+  const orgFromQuery = searchParams.get("org");
+  const selectedOrgRole = selectedOrg?.role ?? null;
+  const ownerActionsEnabled = selectedOrgRole === "owner";
+  const adminOrOwnerActionsEnabled = selectedOrgRole === "owner" || selectedOrgRole === "admin";
+  const roleRequestCreateEnabled = Boolean(selectedOrgRole);
 
   const handle401 = useCallback(() => {
     const next = encodeURIComponent(buildNextPath(pathname, window.location.search));
@@ -161,13 +166,16 @@ export default function DashboardOrganizationsPage() {
     const nextItems = Array.isArray(orgResult.data.items) ? orgResult.data.items : [];
     setOrganizations(nextItems);
     setSelectedOrgId((prev) => {
+      if (orgFromQuery && nextItems.some((item) => String(item.id) === orgFromQuery)) {
+        return orgFromQuery;
+      }
       if (prev && nextItems.some((item) => String(item.id) === prev)) {
         return prev;
       }
       return nextItems.length > 0 ? String(nextItems[0].id) : "";
     });
     setLoading(false);
-  }, [handle401]);
+  }, [handle401, orgFromQuery]);
 
   const loadMembers = useCallback(async () => {
     if (!selectedOrgId) {
@@ -270,7 +278,7 @@ export default function DashboardOrganizationsPage() {
       return;
     }
     if (result.status === 403 || result.status === 404) {
-      setError("Owner role required for member updates.");
+      setError("Member update is not allowed for current role/target.");
       setSavingMember(false);
       return;
     }
@@ -298,7 +306,7 @@ export default function DashboardOrganizationsPage() {
         return;
       }
       if (result.status === 403 || result.status === 404) {
-        setError("Owner role required for member deletion.");
+        setError("Member deletion is not allowed for current role/target.");
         return;
       }
       if (!result.ok) {
@@ -332,7 +340,7 @@ export default function DashboardOrganizationsPage() {
       return;
     }
     if (result.status === 403 || result.status === 404) {
-      setError("Owner role required for invite creation.");
+      setError("Invite creation is not allowed for current role.");
       setCreatingInvite(false);
       return;
     }
@@ -360,7 +368,7 @@ export default function DashboardOrganizationsPage() {
         return;
       }
       if (result.status === 403 || result.status === 404) {
-        setError("Owner role required for invite management.");
+        setError("Invite action is not allowed for current role.");
         return;
       }
       if (!result.ok) {
@@ -371,37 +379,6 @@ export default function DashboardOrganizationsPage() {
     },
     [handle401, loadInvites, selectedOrgId]
   );
-
-  const acceptInvite = useCallback(async () => {
-    if (!acceptToken.trim()) {
-      setError("Invite token is required.");
-      return;
-    }
-    setAcceptingInvite(true);
-    setError(null);
-    const result = await dashboardApiRequest("/api/organizations/invites/accept", {
-      method: "POST",
-      body: { token: acceptToken.trim() },
-    });
-    if (result.status === 401) {
-      handle401();
-      setAcceptingInvite(false);
-      return;
-    }
-    if (result.status === 403 || result.status === 404 || result.status === 409) {
-      setError("Invite acceptance failed. Check token, role, and invite status.");
-      setAcceptingInvite(false);
-      return;
-    }
-    if (!result.ok) {
-      setError(result.error ?? "Failed to accept invite.");
-      setAcceptingInvite(false);
-      return;
-    }
-    setAcceptToken("");
-    await loadOrganizations();
-    setAcceptingInvite(false);
-  }, [acceptToken, handle401, loadOrganizations]);
 
   const loadRoleRequests = useCallback(async () => {
     if (!selectedOrgId) {
@@ -437,7 +414,9 @@ export default function DashboardOrganizationsPage() {
       setError("Select an organization first.");
       return;
     }
-    if (!roleRequestTargetUserId.trim()) {
+    const targetUserId =
+      selectedOrgRole === "member" ? (me?.user_id ?? "").trim() : roleRequestTargetUserId.trim();
+    if (!targetUserId) {
       setError("Role request target user_id is required.");
       return;
     }
@@ -446,7 +425,7 @@ export default function DashboardOrganizationsPage() {
     const result = await dashboardApiRequest(`/api/organizations/${selectedOrgId}/role-requests`, {
       method: "POST",
       body: {
-        target_user_id: roleRequestTargetUserId.trim(),
+        target_user_id: targetUserId,
         requested_role: roleRequestRequestedRole,
         reason: roleRequestReason.trim() || null,
       },
@@ -457,7 +436,7 @@ export default function DashboardOrganizationsPage() {
       return;
     }
     if (result.status === 403 || result.status === 404) {
-      setError("Owner role required for role request creation.");
+      setError("Role request creation is not allowed for this target/role.");
       setCreatingRoleRequest(false);
       return;
     }
@@ -471,7 +450,7 @@ export default function DashboardOrganizationsPage() {
     setRoleRequestReason("");
     await loadRoleRequests();
     setCreatingRoleRequest(false);
-  }, [handle401, loadRoleRequests, roleRequestReason, roleRequestRequestedRole, roleRequestTargetUserId, selectedOrgId]);
+  }, [handle401, loadRoleRequests, me?.user_id, roleRequestReason, roleRequestRequestedRole, roleRequestTargetUserId, selectedOrgId, selectedOrgRole]);
 
   const reviewRoleRequest = useCallback(
     async (requestId: number, decision: "approve" | "reject") => {
@@ -523,6 +502,19 @@ export default function DashboardOrganizationsPage() {
   }, [loadInvites, loadMembers, loadRoleRequests, selectedOrgId]);
 
   useEffect(() => {
+    if (!selectedOrgId) {
+      return;
+    }
+    const params = new URLSearchParams(searchParams.toString());
+    if (params.get("org") === selectedOrgId) {
+      return;
+    }
+    params.set("org", selectedOrgId);
+    const encoded = params.toString();
+    router.replace(encoded ? `${pathname}?${encoded}` : pathname);
+  }, [pathname, router, searchParams, selectedOrgId]);
+
+  useEffect(() => {
     const handler = (event: Event) => {
       const custom = event as CustomEvent<{ path?: string }>;
       if (custom.detail?.path === pathname) {
@@ -548,21 +540,28 @@ export default function DashboardOrganizationsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (selectedOrgRole !== "member") {
+      return;
+    }
+    if (!me?.user_id) {
+      return;
+    }
+    setRoleRequestTargetUserId((prev) => (prev.trim() ? prev : me.user_id));
+    if (roleRequestRequestedRole === "owner") {
+      setRoleRequestRequestedRole("admin");
+    }
+  }, [me?.user_id, roleRequestRequestedRole, selectedOrgRole]);
+
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-semibold">Organizations</h1>
       <p className="text-sm text-muted-foreground">
-        Organization creation, member role updates, and invite actions are available in route-based V2.
+        Owner/Admin can manage members and invites. Role requests can be created by all roles, and only owner can approve.
       </p>
 
       {error ? <AlertBanner message={error} tone="danger" /> : null}
       {loading ? <p className="text-sm text-muted-foreground">Loading organizations...</p> : null}
-
-      <div className="flex items-center justify-end">
-        <Button type="button" variant="outline" className="h-9 px-3 text-sm" onClick={() => setCreateOrgDialogOpen(true)}>
-          Create Organization
-        </Button>
-      </div>
 
       <Dialog open={createOrgDialogOpen} onOpenChange={setCreateOrgDialogOpen}>
         <DialogContent className="sm:max-w-md">
@@ -605,324 +604,327 @@ export default function DashboardOrganizationsPage() {
       </Dialog>
 
       <div className="ds-card p-4">
-        <p className="mb-2 text-sm font-semibold">Accept invite token</p>
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            value={acceptToken}
-            onChange={(event) => setAcceptToken(event.target.value)}
-            placeholder="Invite token"
-            className="ds-input h-11 min-w-[280px] rounded-md px-3 text-sm md:h-9"
-          />
-          <Button
-            type="button"
-            onClick={() => void acceptInvite()}
-            disabled={acceptingInvite}
-            className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
-          >
-            {acceptingInvite ? "Accepting..." : "Accept Invite"}
-          </Button>
-        </div>
-      </div>
-
-      <div className="ds-card p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="text-sm text-muted-foreground">Organization</label>
-          <Select
-            value={selectedOrgId}
-            onChange={(event) => setSelectedOrgId(event.target.value)}
-            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
-          >
-            {organizations.length === 0 ? <option value="">No organizations</option> : null}
-            {organizations.map((item) => (
-              <option key={`org-${item.id}`} value={String(item.id)}>
-                Org #{item.id} - {item.name} ({item.role})
-              </option>
-            ))}
-          </Select>
-          <Button type="button" onClick={() => void loadMembers()} className="ds-btn h-11 rounded-md px-3 text-sm md:h-9">
-            Load Members
-          </Button>
-          <Button type="button" onClick={() => void loadInvites()} className="ds-btn h-11 rounded-md px-3 text-sm md:h-9">
-            Load Invites
-          </Button>
-          <Button type="button" onClick={() => void loadRoleRequests()} className="ds-btn h-11 rounded-md px-3 text-sm md:h-9">
-            Load Requests
-          </Button>
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           signed-in user: {me?.user_id ?? "-"} / selected org role: {selectedOrg?.role ?? "-"}
         </p>
       </div>
 
-      <div className="ds-card p-4">
-        <p className="mb-2 text-sm font-semibold">Add / update member</p>
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            value={memberUserId}
-            onChange={(event) => setMemberUserId(event.target.value)}
-            placeholder="User ID"
-            className="ds-input h-11 min-w-[320px] rounded-md px-3 text-sm md:h-9"
-          />
-          <Select
-            value={memberRole}
-            onChange={(event) => setMemberRole(event.target.value as "owner" | "admin" | "member")}
-            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
-          >
-            <option value="owner">owner</option>
-            <option value="admin">admin</option>
-            <option value="member">member</option>
-          </Select>
-          <Button
-            type="button"
-            onClick={() => void saveMember()}
-            disabled={!ownerActionsEnabled || savingMember}
-            className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
-            title={ownerActionsEnabled ? "" : "Owner role required"}
-          >
-            {savingMember ? "Saving..." : "Add / Update Member"}
-          </Button>
-        </div>
-        {!ownerActionsEnabled ? <p className="mt-2 text-xs text-muted-foreground">Owner role required.</p> : null}
-      </div>
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => setActiveTab(value as "users" | "invites" | "requests")}
+        className="space-y-4"
+      >
+        <TabsList className="ds-card h-auto w-full justify-start gap-2 p-2">
+          <TabsTrigger value="users" className="h-9 rounded-md px-3 text-sm">
+            Users
+          </TabsTrigger>
+          <TabsTrigger value="invites" className="h-9 rounded-md px-3 text-sm">
+            Invites
+          </TabsTrigger>
+          <TabsTrigger value="requests" className="h-9 rounded-md px-3 text-sm">
+            Requests
+          </TabsTrigger>
+        </TabsList>
 
-      <div className="ds-card overflow-x-auto">
-        <Table className="min-w-[640px] text-sm">
-          <TableHeader className="bg-muted/60 text-left text-xs text-muted-foreground">
-            <TableRow>
-              <TableHead className="px-4 py-3">User ID</TableHead>
-              <TableHead className="px-4 py-3">Role</TableHead>
-              <TableHead className="px-4 py-3">Created At</TableHead>
-              <TableHead className="px-4 py-3">Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {members.map((item) => (
-              <TableRow key={`member-${item.user_id}`} className="border-t border-border">
-                <TableCell className="px-4 py-3 font-mono text-xs">{item.user_id}</TableCell>
-                <TableCell className="px-4 py-3">{item.role}</TableCell>
-                <TableCell className="px-4 py-3">{formatDate(item.created_at)}</TableCell>
-                <TableCell className="px-4 py-3">
-                  <Button
-                    type="button"
-                    disabled={!ownerActionsEnabled || item.user_id === me?.user_id}
-                    onClick={() => void deleteMember(item.user_id)}
-                    className="ds-btn h-11 rounded-md px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
-                    title={item.user_id === me?.user_id ? "Cannot remove signed-in owner" : ownerActionsEnabled ? "" : "Owner role required"}
-                  >
-                    Delete
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-            {members.length === 0 ? (
-              <TableRow>
-                <TableCell className="px-4 py-4 text-muted-foreground" colSpan={4}>
-                  No members loaded.
-                </TableCell>
-              </TableRow>
+        <TabsContent value="users" className="space-y-4">
+          <div className="ds-card p-4">
+            <p className="mb-2 text-sm font-semibold">Add / update member</p>
+            <div className="flex items-center gap-2">
+              <Input
+                value={memberUserId}
+                onChange={(event) => setMemberUserId(event.target.value)}
+                placeholder="User ID"
+                className="ds-input h-11 min-w-[320px] flex-1 rounded-md px-3 text-sm md:h-9"
+              />
+              <Select
+                value={memberRole}
+                onChange={(event) => setMemberRole(event.target.value as "owner" | "admin" | "member")}
+                className="ds-input h-11 w-[160px] shrink-0 rounded-md px-3 text-sm md:h-9"
+              >
+                {selectedOrgRole === "owner" ? <option value="owner">owner</option> : null}
+                {selectedOrgRole === "owner" ? <option value="admin">admin</option> : null}
+                <option value="member">member</option>
+              </Select>
+              <Button
+                type="button"
+                onClick={() => void saveMember()}
+                disabled={!adminOrOwnerActionsEnabled || savingMember}
+                className="ds-btn h-11 shrink-0 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+                title={adminOrOwnerActionsEnabled ? "" : "Admin or owner role required"}
+              >
+                {savingMember ? "Saving..." : "Add / Update Member"}
+              </Button>
+            </div>
+            {!adminOrOwnerActionsEnabled ? <p className="mt-2 text-xs text-muted-foreground">Admin or owner role required.</p> : null}
+            {selectedOrgRole === "admin" ? (
+              <p className="mt-2 text-xs text-muted-foreground">Admin can assign member role only.</p>
             ) : null}
-          </TableBody>
-        </Table>
-      </div>
+          </div>
 
-      <div className="ds-card p-4">
-        <p className="mb-2 text-sm font-semibold">Create invite</p>
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            value={inviteEmail}
-            onChange={(event) => setInviteEmail(event.target.value)}
-            placeholder="Invited email (optional)"
-            className="ds-input h-11 min-w-[280px] rounded-md px-3 text-sm md:h-9"
-          />
-          <Select
-            value={inviteRole}
-            onChange={(event) => setInviteRole(event.target.value as "owner" | "admin" | "member")}
-            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
-          >
-            <option value="owner">owner</option>
-            <option value="admin">admin</option>
-            <option value="member">member</option>
-          </Select>
-          <Input
-            value={inviteHours}
-            onChange={(event) => setInviteHours(event.target.value)}
-            placeholder="Hours"
-            className="ds-input h-11 w-24 rounded-md px-3 text-sm md:h-9"
-          />
-          <Button
-            type="button"
-            onClick={() => void createInvite()}
-            disabled={!ownerActionsEnabled || creatingInvite}
-            className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
-            title={ownerActionsEnabled ? "" : "Owner role required"}
-          >
-            {creatingInvite ? "Creating..." : "Create Invite"}
-          </Button>
-        </div>
-      </div>
-
-      <div className="ds-card overflow-x-auto">
-        <Table className="min-w-[880px] text-sm">
-          <TableHeader className="bg-muted/60 text-left text-xs text-muted-foreground">
-            <TableRow>
-              <TableHead className="px-4 py-3">ID</TableHead>
-              <TableHead className="px-4 py-3">Role</TableHead>
-              <TableHead className="px-4 py-3">Invited Email</TableHead>
-              <TableHead className="px-4 py-3">Status</TableHead>
-              <TableHead className="px-4 py-3">Expires</TableHead>
-              <TableHead className="px-4 py-3">Token</TableHead>
-              <TableHead className="px-4 py-3">Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {invites.map((item) => {
-              const status = item.revoked_at ? "revoked" : item.accepted_at ? "accepted" : "pending";
-              return (
-                <TableRow key={`invite-${item.id}`} className="border-t border-border">
-                  <TableCell className="px-4 py-3">#{item.id}</TableCell>
-                  <TableCell className="px-4 py-3">{item.role}</TableCell>
-                  <TableCell className="px-4 py-3">{item.invited_email || "-"}</TableCell>
-                  <TableCell className="px-4 py-3">{status}</TableCell>
-                  <TableCell className="px-4 py-3">{formatDate(item.expires_at)}</TableCell>
-                  <TableCell className="px-4 py-3 font-mono text-xs">{item.token}</TableCell>
-                  <TableCell className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        disabled={!ownerActionsEnabled || status !== "pending"}
-                        onClick={() => void invokeInviteAction(item.id, "revoke")}
-                        className="ds-btn h-11 rounded-md px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
-                        title={ownerActionsEnabled ? "" : "Owner role required"}
-                      >
-                        Revoke
-                      </Button>
-                      <Button
-                        type="button"
-                        disabled={!ownerActionsEnabled || status !== "pending"}
-                        onClick={() => void invokeInviteAction(item.id, "reissue")}
-                        className="ds-btn h-11 rounded-md px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
-                        title={ownerActionsEnabled ? "" : "Owner role required"}
-                      >
-                        Reissue
-                      </Button>
-                    </div>
-                  </TableCell>
+          <div className="ds-card overflow-x-auto">
+            <Table className="min-w-[640px] text-sm">
+              <TableHeader className="bg-muted/60 text-left text-xs text-muted-foreground">
+                <TableRow>
+                  <TableHead className="px-4 py-3">User ID</TableHead>
+                  <TableHead className="px-4 py-3">Role</TableHead>
+                  <TableHead className="px-4 py-3">Created At</TableHead>
+                  <TableHead className="px-4 py-3">Action</TableHead>
                 </TableRow>
-              );
-            })}
-            {invites.length === 0 ? (
-              <TableRow>
-                <TableCell className="px-4 py-4 text-muted-foreground" colSpan={7}>
-                  No invites loaded.
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
-      </div>
-
-      <div className="ds-card p-4">
-        <p className="mb-2 text-sm font-semibold">Role change requests</p>
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            value={roleRequestTargetUserId}
-            onChange={(event) => setRoleRequestTargetUserId(event.target.value)}
-            placeholder="target user_id"
-            className="ds-input h-11 min-w-[220px] rounded-md px-3 text-sm md:h-9"
-            disabled={!ownerActionsEnabled}
-          />
-          <Select
-            value={roleRequestRequestedRole}
-            onChange={(event) => setRoleRequestRequestedRole(event.target.value as "owner" | "admin" | "member")}
-            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
-            disabled={!ownerActionsEnabled}
-          >
-            <option value="member">member</option>
-            <option value="admin">admin</option>
-            <option value="owner">owner</option>
-          </Select>
-          <Input
-            value={roleRequestReason}
-            onChange={(event) => setRoleRequestReason(event.target.value)}
-            placeholder="reason (optional)"
-            className="ds-input h-11 min-w-[180px] rounded-md px-3 text-sm md:h-9"
-            disabled={!ownerActionsEnabled}
-          />
-          <Button
-            type="button"
-            onClick={() => void createRoleRequest()}
-            disabled={!ownerActionsEnabled || creatingRoleRequest}
-            className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
-            title={ownerActionsEnabled ? "" : "Owner role required"}
-          >
-            {creatingRoleRequest ? "Creating..." : "Create Request"}
-          </Button>
-        </div>
-        {!ownerActionsEnabled ? <p className="mt-2 text-xs text-muted-foreground">Owner role required.</p> : null}
-      </div>
-
-      <div className="ds-card overflow-x-auto">
-        <Table className="min-w-[880px] text-sm">
-          <TableHeader className="bg-muted/60 text-left text-xs text-muted-foreground">
-            <TableRow>
-              <TableHead className="px-4 py-3">ID</TableHead>
-              <TableHead className="px-4 py-3">Target</TableHead>
-              <TableHead className="px-4 py-3">Requested Role</TableHead>
-              <TableHead className="px-4 py-3">Status</TableHead>
-              <TableHead className="px-4 py-3">Requested By</TableHead>
-              <TableHead className="px-4 py-3">Created At</TableHead>
-              <TableHead className="px-4 py-3">Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {roleRequests.map((item) => (
-              <TableRow key={`role-request-${item.id}`} className="border-t border-border">
-                <TableCell className="px-4 py-3">#{item.id}</TableCell>
-                <TableCell className="px-4 py-3 font-mono text-xs">{item.target_user_id}</TableCell>
-                <TableCell className="px-4 py-3">{item.requested_role}</TableCell>
-                <TableCell className="px-4 py-3">{item.status}</TableCell>
-                <TableCell className="px-4 py-3 font-mono text-xs">{item.requested_by}</TableCell>
-                <TableCell className="px-4 py-3">{formatDate(item.created_at)}</TableCell>
-                <TableCell className="px-4 py-3">
-                  {item.status === "pending" && item.requested_by !== me?.user_id && ownerActionsEnabled ? (
-                    <div className="flex items-center gap-2">
+              </TableHeader>
+              <TableBody>
+                {members.map((item) => (
+                  <TableRow key={`member-${item.user_id}`} className="border-t border-border">
+                    <TableCell className="px-4 py-3 font-mono text-xs">{item.user_id}</TableCell>
+                    <TableCell className="px-4 py-3">{item.role}</TableCell>
+                    <TableCell className="px-4 py-3">{formatDate(item.created_at)}</TableCell>
+                    <TableCell className="px-4 py-3">
                       <Button
                         type="button"
-                        onClick={() => void reviewRoleRequest(item.id, "approve")}
-                        disabled={reviewingRoleRequestAction === `${item.id}:approve`}
-                        className="h-11 rounded-md border border-chart-2/40 px-3 text-xs font-medium text-chart-2 disabled:opacity-60 md:h-9"
+                        disabled={
+                          !adminOrOwnerActionsEnabled ||
+                          item.user_id === me?.user_id ||
+                          (selectedOrgRole === "admin" && item.role !== "member")
+                        }
+                        onClick={() => void deleteMember(item.user_id)}
+                        className="ds-btn h-11 rounded-md px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+                        title={
+                          item.user_id === me?.user_id
+                            ? "Cannot remove signed-in user"
+                            : selectedOrgRole === "admin" && item.role !== "member"
+                            ? "Admin can remove member role only"
+                            : adminOrOwnerActionsEnabled
+                            ? ""
+                            : "Admin or owner role required"
+                        }
                       >
-                        Approve
+                        Delete
                       </Button>
-                      <Button
-                        type="button"
-                        onClick={() => void reviewRoleRequest(item.id, "reject")}
-                        disabled={reviewingRoleRequestAction === `${item.id}:reject`}
-                        className="h-11 rounded-md border border-destructive/40 px-3 text-xs font-medium text-destructive disabled:opacity-60 md:h-9"
-                      >
-                        Reject
-                      </Button>
-                    </div>
-                  ) : item.status === "pending" && item.requested_by === me?.user_id ? (
-                    <p className="text-xs text-muted-foreground">Self-review blocked</p>
-                  ) : item.status === "pending" ? (
-                    <p className="text-xs text-muted-foreground">Review is owner-only.</p>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">-</p>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-            {roleRequests.length === 0 ? (
-              <TableRow>
-                <TableCell className="px-4 py-4 text-muted-foreground" colSpan={7}>
-                  {loadingRoleRequests ? "Loading role requests..." : "No role requests loaded."}
-                </TableCell>
-              </TableRow>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {members.length === 0 ? (
+                  <TableRow>
+                    <TableCell className="px-4 py-4 text-muted-foreground" colSpan={4}>
+                      No members loaded.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="invites" className="space-y-4">
+          <div className="ds-card p-4">
+            <p className="mb-2 text-sm font-semibold">Create invite</p>
+            <div className="flex items-center gap-2">
+              <Input
+                value={inviteEmail}
+                onChange={(event) => setInviteEmail(event.target.value)}
+                placeholder="Invited email (optional)"
+                className="ds-input h-11 min-w-[280px] flex-1 rounded-md px-3 text-sm md:h-9"
+              />
+              <Select
+                value={inviteRole}
+                onChange={(event) => setInviteRole(event.target.value as "owner" | "admin" | "member")}
+                className="ds-input h-11 w-[160px] shrink-0 rounded-md px-3 text-sm md:h-9"
+              >
+                {selectedOrgRole === "owner" ? <option value="owner">owner</option> : null}
+                {selectedOrgRole === "owner" ? <option value="admin">admin</option> : null}
+                <option value="member">member</option>
+              </Select>
+              <Input
+                value={inviteHours}
+                onChange={(event) => setInviteHours(event.target.value)}
+                placeholder="Hours"
+                className="ds-input h-11 w-24 shrink-0 rounded-md px-3 text-sm md:h-9"
+              />
+              <Button
+                type="button"
+                onClick={() => void createInvite()}
+                disabled={!adminOrOwnerActionsEnabled || creatingInvite}
+                className="ds-btn h-11 shrink-0 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+                title={adminOrOwnerActionsEnabled ? "" : "Admin or owner role required"}
+              >
+                {creatingInvite ? "Creating..." : "Create Invite"}
+              </Button>
+            </div>
+            {selectedOrgRole === "admin" ? (
+              <p className="mt-2 text-xs text-muted-foreground">Admin can invite member role only.</p>
             ) : null}
-          </TableBody>
-        </Table>
-      </div>
+          </div>
+
+          <div className="ds-card overflow-x-auto">
+            <Table className="min-w-[880px] text-sm">
+              <TableHeader className="bg-muted/60 text-left text-xs text-muted-foreground">
+                <TableRow>
+                  <TableHead className="px-4 py-3">ID</TableHead>
+                  <TableHead className="px-4 py-3">Role</TableHead>
+                  <TableHead className="px-4 py-3">Invited Email</TableHead>
+                  <TableHead className="px-4 py-3">Status</TableHead>
+                  <TableHead className="px-4 py-3">Expires</TableHead>
+                  <TableHead className="px-4 py-3">Token</TableHead>
+                  <TableHead className="px-4 py-3">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {invites.map((item) => {
+                  const status = item.revoked_at ? "revoked" : item.accepted_at ? "accepted" : "pending";
+                  return (
+                    <TableRow key={`invite-${item.id}`} className="border-t border-border">
+                      <TableCell className="px-4 py-3">#{item.id}</TableCell>
+                      <TableCell className="px-4 py-3">{item.role}</TableCell>
+                      <TableCell className="px-4 py-3">{item.invited_email || "-"}</TableCell>
+                      <TableCell className="px-4 py-3">{status}</TableCell>
+                      <TableCell className="px-4 py-3">{formatDate(item.expires_at)}</TableCell>
+                      <TableCell className="px-4 py-3 font-mono text-xs">{item.token}</TableCell>
+                      <TableCell className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            disabled={!adminOrOwnerActionsEnabled || status !== "pending"}
+                            onClick={() => void invokeInviteAction(item.id, "revoke")}
+                            className="ds-btn h-11 rounded-md px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+                            title={adminOrOwnerActionsEnabled ? "" : "Admin or owner role required"}
+                          >
+                            Revoke
+                          </Button>
+                          <Button
+                            type="button"
+                            disabled={!adminOrOwnerActionsEnabled || status !== "pending"}
+                            onClick={() => void invokeInviteAction(item.id, "reissue")}
+                            className="ds-btn h-11 rounded-md px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+                            title={adminOrOwnerActionsEnabled ? "" : "Admin or owner role required"}
+                          >
+                            Reissue
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+                {invites.length === 0 ? (
+                  <TableRow>
+                    <TableCell className="px-4 py-4 text-muted-foreground" colSpan={7}>
+                      No invites loaded.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="requests" className="space-y-4">
+          <div className="ds-card p-4">
+            <p className="mb-2 text-sm font-semibold">Role change requests</p>
+            <div className="flex items-center gap-2">
+              <Input
+                value={selectedOrgRole === "member" ? (me?.user_id ?? "") : roleRequestTargetUserId}
+                onChange={(event) => setRoleRequestTargetUserId(event.target.value)}
+                placeholder={selectedOrgRole === "member" ? "self user_id" : "target user_id"}
+                className="ds-input h-11 min-w-[220px] flex-1 rounded-md px-3 text-sm md:h-9"
+                disabled={!roleRequestCreateEnabled || selectedOrgRole === "member"}
+              />
+              <Select
+                value={roleRequestRequestedRole}
+                onChange={(event) => setRoleRequestRequestedRole(event.target.value as "owner" | "admin" | "member")}
+                className="ds-input h-11 w-[160px] shrink-0 rounded-md px-3 text-sm md:h-9"
+                disabled={!roleRequestCreateEnabled}
+              >
+                <option value="member">member</option>
+                <option value="admin">admin</option>
+                {selectedOrgRole === "owner" ? <option value="owner">owner</option> : null}
+              </Select>
+              <Input
+                value={roleRequestReason}
+                onChange={(event) => setRoleRequestReason(event.target.value)}
+                placeholder="reason (optional)"
+                className="ds-input h-11 min-w-[180px] flex-1 rounded-md px-3 text-sm md:h-9"
+                disabled={!roleRequestCreateEnabled}
+              />
+              <Button
+                type="button"
+                onClick={() => void createRoleRequest()}
+                disabled={!roleRequestCreateEnabled || creatingRoleRequest}
+                className="ds-btn h-11 shrink-0 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+                title={roleRequestCreateEnabled ? "" : "Select organization first"}
+              >
+                {creatingRoleRequest ? "Creating..." : "Create Request"}
+              </Button>
+            </div>
+            {selectedOrgRole === "member" ? (
+              <p className="mt-2 text-xs text-muted-foreground">Member can request role change for self only.</p>
+            ) : null}
+            {selectedOrgRole === "admin" ? (
+              <p className="mt-2 text-xs text-muted-foreground">Admin cannot request owner role.</p>
+            ) : null}
+          </div>
+
+          <div className="ds-card overflow-x-auto">
+            <Table className="min-w-[880px] text-sm">
+              <TableHeader className="bg-muted/60 text-left text-xs text-muted-foreground">
+                <TableRow>
+                  <TableHead className="px-4 py-3">ID</TableHead>
+                  <TableHead className="px-4 py-3">Target</TableHead>
+                  <TableHead className="px-4 py-3">Requested Role</TableHead>
+                  <TableHead className="px-4 py-3">Status</TableHead>
+                  <TableHead className="px-4 py-3">Requested By</TableHead>
+                  <TableHead className="px-4 py-3">Created At</TableHead>
+                  <TableHead className="px-4 py-3">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {roleRequests.map((item) => (
+                  <TableRow key={`role-request-${item.id}`} className="border-t border-border">
+                    <TableCell className="px-4 py-3">#{item.id}</TableCell>
+                    <TableCell className="px-4 py-3 font-mono text-xs">{item.target_user_id}</TableCell>
+                    <TableCell className="px-4 py-3">{item.requested_role}</TableCell>
+                    <TableCell className="px-4 py-3">{item.status}</TableCell>
+                    <TableCell className="px-4 py-3 font-mono text-xs">{item.requested_by}</TableCell>
+                    <TableCell className="px-4 py-3">{formatDate(item.created_at)}</TableCell>
+                    <TableCell className="px-4 py-3">
+                      {item.status === "pending" && item.requested_by !== me?.user_id && ownerActionsEnabled ? (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            onClick={() => void reviewRoleRequest(item.id, "approve")}
+                            disabled={reviewingRoleRequestAction === `${item.id}:approve`}
+                            className="h-11 rounded-md border border-chart-2/40 px-3 text-xs font-medium text-chart-2 disabled:opacity-60 md:h-9"
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            type="button"
+                            onClick={() => void reviewRoleRequest(item.id, "reject")}
+                            disabled={reviewingRoleRequestAction === `${item.id}:reject`}
+                            className="h-11 rounded-md border border-destructive/40 px-3 text-xs font-medium text-destructive disabled:opacity-60 md:h-9"
+                          >
+                            Reject
+                          </Button>
+                        </div>
+                      ) : item.status === "pending" && item.requested_by === me?.user_id ? (
+                        <p className="text-xs text-muted-foreground">Self-review blocked</p>
+                      ) : item.status === "pending" ? (
+                        <p className="text-xs text-muted-foreground">Review is owner-only.</p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">-</p>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {roleRequests.length === 0 ? (
+                  <TableRow>
+                    <TableCell className="px-4 py-4 text-muted-foreground" colSpan={7}>
+                      {loadingRoleRequests ? "Loading role requests..." : "No role requests loaded."}
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
+          </div>
+        </TabsContent>
+      </Tabs>
     </section>
   );
 }

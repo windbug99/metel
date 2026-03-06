@@ -2,10 +2,11 @@
 
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
-import { buildNextPath } from "../../../../lib/dashboard-v2-client";
+import { buildNextPath, dashboardApiRequest } from "../../../../lib/dashboard-v2-client";
 import { detectBrowserTimezone, updateUserTimezone, upsertUserProfile } from "../../../../lib/profile";
 import { supabase } from "../../../../lib/supabase";
 import AlertBanner from "../../../../components/dashboard-v2/alert-banner";
@@ -41,6 +42,9 @@ export default function DashboardProfilePage() {
   const [timezoneMessage, setTimezoneMessage] = useState<string | null>(null);
   const [themeDraft, setThemeDraft] = useState<"light" | "dark">("light");
   const [themeMessage, setThemeMessage] = useState<string | null>(null);
+  const [inviteTokenDraft, setInviteTokenDraft] = useState("");
+  const [inviteAccepting, setInviteAccepting] = useState(false);
+  const [inviteMessage, setInviteMessage] = useState<string | null>(null);
   const browserTimezone = useMemo(() => detectBrowserTimezone(), []);
 
   const timezoneOptions = useMemo(() => {
@@ -151,6 +155,45 @@ export default function DashboardProfilePage() {
     setThemeMessage("Theme updated.");
   }, [themeDraft]);
 
+  const handleAcceptInvite = useCallback(async () => {
+    const token = inviteTokenDraft.trim();
+    if (!token) {
+      setError("Invite token is required.");
+      return;
+    }
+    setInviteAccepting(true);
+    setInviteMessage(null);
+    setError(null);
+    const result = await dashboardApiRequest("/api/organizations/invites/accept", {
+      method: "POST",
+      body: { token },
+    });
+    if (result.status === 401) {
+      const next = encodeURIComponent(buildNextPath(pathname, window.location.search));
+      router.replace(`/?next=${next}`);
+      setInviteAccepting(false);
+      return;
+    }
+    if (result.status === 403 || result.status === 404 || result.status === 409) {
+      setError("Invite acceptance failed. Check token, role, and invite status.");
+      setInviteAccepting(false);
+      return;
+    }
+    if (!result.ok) {
+      setError(result.error ?? "Failed to accept invite.");
+      setInviteAccepting(false);
+      return;
+    }
+    setInviteTokenDraft("");
+    setInviteMessage("Invite accepted. Organization list was refreshed.");
+    window.dispatchEvent(
+      new CustomEvent("dashboard:v2:refresh", {
+        detail: { path: "/dashboard/access/organizations" },
+      })
+    );
+    setInviteAccepting(false);
+  }, [inviteTokenDraft, pathname, router]);
+
   return (
     <section className="space-y-4">
       <h1 className="text-2xl font-semibold">Profile</h1>
@@ -225,6 +268,27 @@ export default function DashboardProfilePage() {
               </Button>
             </div>
             {themeMessage ? <p className="mt-2 text-sm text-muted-foreground">{themeMessage}</p> : null}
+          </div>
+
+          <div className="border-t border-border pt-4">
+            <p className="mb-2 text-sm font-medium">Accept invite token</p>
+            <div className="flex items-center gap-2">
+              <Input
+                value={inviteTokenDraft}
+                onChange={(event) => setInviteTokenDraft(event.target.value)}
+                placeholder="Invite token"
+                className="h-11 flex-1 rounded-md px-3 text-sm md:h-9"
+              />
+              <Button
+                type="button"
+                onClick={() => void handleAcceptInvite()}
+                disabled={inviteAccepting}
+                className="h-11 shrink-0 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+              >
+                {inviteAccepting ? "Accepting..." : "Accept Invite"}
+              </Button>
+            </div>
+            {inviteMessage ? <p className="mt-2 text-sm text-muted-foreground">{inviteMessage}</p> : null}
           </div>
         </div>
       ) : null}
