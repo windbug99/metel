@@ -47,7 +47,7 @@ export default function DashboardAppSidebar({
   onSignOut,
 }: AppSidebarProps) {
   return (
-    <Sidebar collapsible="offcanvas">
+    <Sidebar variant="inset" collapsible="icon">
       <SidebarHeader className="border-b border-sidebar-border">
         <p className="px-2 pt-1 text-sm font-semibold tracking-tight">metel Dashboard</p>
         <p className="px-2 text-[11px] text-sidebar-foreground/70">role: {roleLabel}</p>
