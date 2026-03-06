@@ -7,7 +7,7 @@ import { buildNextPath, dashboardApiGet } from "../../lib/dashboard-v2-client";
 import { supabase } from "../../lib/supabase";
 import DashboardAppSidebar from "./app-sidebar";
 import AlertBanner from "./alert-banner";
-import DashboardTopbar from "./topbar";
+import { SiteHeader } from "./sidebar07/site-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import {
   GLOBAL_QUERY_KEYS,
@@ -212,7 +212,7 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
           onSignOut={() => void handleSignOut()}
         />
         <SidebarInset className="min-w-0">
-          <DashboardTopbar
+          <SiteHeader
             title={title}
             globalSearchEnabled={globalSearchEnabled}
             currentTeam={currentTeam}
@@ -224,7 +224,13 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
             theme={theme}
           />
 
-          <div className="p-4 md:p-6">
+          {!globalSearchEnabled ? (
+            <p className="border-b border-border px-4 py-2 text-[11px] text-muted-foreground md:px-6">
+              Global Search is disabled until backend search API scope is finalized.
+            </p>
+          ) : null}
+
+          <div className="flex flex-1 flex-col gap-4 p-4 pt-0 md:p-6 md:pt-0">
             {forbiddenBanner ? (
               <AlertBanner
                 message={forbiddenBanner}
@@ -234,7 +240,7 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
               />
             ) : null}
             {permissionError ? <AlertBanner message={permissionError} tone="danger" /> : null}
-            {permissionLoading ? <p className="mb-3 text-sm text-[var(--muted)]">Loading permissions...</p> : null}
+            {permissionLoading ? <p className="mb-3 text-sm text-muted-foreground">Loading permissions...</p> : null}
             {children}
           </div>
         </SidebarInset>

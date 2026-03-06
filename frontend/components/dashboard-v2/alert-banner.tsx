@@ -10,8 +10,8 @@ type AlertBannerProps = {
 export default function AlertBanner({ message, tone = "warning", dismissible = false, onDismiss }: AlertBannerProps) {
   const classes =
     tone === "danger"
-      ? "border-[var(--danger-500)]/40 bg-[color-mix(in_srgb,var(--danger-500)_12%,white)] text-[var(--danger-500)]"
-      : "border-[var(--warning-500)]/40 bg-[color-mix(in_srgb,var(--warning-500)_12%,white)] text-[var(--warning-500)]";
+      ? "border-destructive/40 bg-destructive/10 text-destructive"
+      : "border-chart-4/40 bg-chart-4/10 text-chart-4";
 
   return (
     <div className={`mb-4 rounded-md border px-3 py-2 text-sm ${classes}`}>
