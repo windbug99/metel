@@ -222,56 +222,44 @@ export default function DashboardIntegrationsWebhooksPage() {
       <p className="text-sm text-muted-foreground">Manage event subscriptions, delivery status, and retry processing.</p>
 
       <div className="ds-card p-4">
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            onClick={() => void handleProcessRetries()}
-            disabled={!canManage || processingRetries}
-            className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
-          >
-            {processingRetries ? "Processing..." : "Process Retries"}
-          </Button>
-          {!canManage ? <p className="text-xs text-muted-foreground">Integration write actions are read-only for your role.</p> : null}
-        </div>
-
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="flex items-center gap-2">
           <Input
             value={newWebhookName}
             onChange={(event) => setNewWebhookName(event.target.value)}
             disabled={!canManage}
             placeholder="Webhook name"
-            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+            className="ds-input h-11 min-w-[220px] flex-1 rounded-md px-3 text-sm md:h-9"
           />
           <Input
             value={newWebhookUrl}
             onChange={(event) => setNewWebhookUrl(event.target.value)}
             disabled={!canManage}
             placeholder="Endpoint URL"
-            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+            className="ds-input h-11 min-w-[260px] flex-1 rounded-md px-3 text-sm md:h-9"
           />
           <Input
             value={newWebhookSecret}
             onChange={(event) => setNewWebhookSecret(event.target.value)}
             disabled={!canManage}
             placeholder="Secret (optional)"
-            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+            className="ds-input h-11 min-w-[180px] flex-1 rounded-md px-3 text-sm md:h-9"
           />
           <Input
             value={newWebhookEvents}
             onChange={(event) => setNewWebhookEvents(event.target.value)}
             disabled={!canManage}
             placeholder="Event types (comma separated)"
-            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+            className="ds-input h-11 min-w-[260px] flex-1 rounded-md px-3 text-sm md:h-9"
           />
+          <Button
+            type="button"
+            onClick={() => void handleCreateWebhook()}
+            disabled={!canManage || creatingWebhook}
+            className="ds-btn h-11 shrink-0 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+          >
+            {creatingWebhook ? "Creating..." : "Create Webhook"}
+          </Button>
         </div>
-        <Button
-          type="button"
-          onClick={() => void handleCreateWebhook()}
-          disabled={!canManage || creatingWebhook}
-          className="mt-2 ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
-        >
-          {creatingWebhook ? "Creating..." : "Create Webhook"}
-        </Button>
       </div>
 
       {loading ? <p className="text-sm text-muted-foreground">Loading webhooks...</p> : null}
@@ -280,6 +268,21 @@ export default function DashboardIntegrationsWebhooksPage() {
           {error}
         </div>
       ) : null}
+
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold">Webhook Operations</h2>
+          {!canManage ? <p className="text-xs text-muted-foreground">Integration write actions are read-only for your role.</p> : null}
+        </div>
+        <Button
+          type="button"
+          onClick={() => void handleProcessRetries()}
+          disabled={!canManage || processingRetries}
+          className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+        >
+          {processingRetries ? "Processing..." : "Process Retries"}
+        </Button>
+      </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <article className="ds-card p-4">

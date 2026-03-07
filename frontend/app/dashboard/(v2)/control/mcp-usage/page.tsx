@@ -3,6 +3,7 @@
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -111,10 +112,10 @@ export default function DashboardMcpUsagePage() {
       query.set("tool_name", toolNameFilter.trim());
     }
     if (fromFilter) {
-      query.set("from", new Date(fromFilter).toISOString());
+      query.set("from", new Date(`${fromFilter}T00:00:00`).toISOString());
     }
     if (toFilter) {
-      query.set("to", new Date(toFilter).toISOString());
+      query.set("to", new Date(`${toFilter}T23:59:59.999`).toISOString());
     }
 
     const result = await dashboardApiGet<ToolCallListPayload>(`/api/tool-calls?${query.toString()}`);
@@ -202,11 +203,11 @@ export default function DashboardMcpUsagePage() {
       <p className="text-sm text-muted-foreground">Recent tool calls, 24h execution summary, and 7d usage trends.</p>
 
       <div className="ds-card p-4">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
           <Select
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value as "all" | "success" | "fail")}
-            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+            className="ds-input h-11 w-[160px] shrink-0 rounded-md px-3 text-sm md:h-9"
           >
             <option value="all">All status</option>
             <option value="success">Success</option>
@@ -216,21 +217,18 @@ export default function DashboardMcpUsagePage() {
             value={toolNameFilter}
             onChange={(event) => setToolNameFilter(event.target.value)}
             placeholder="Filter by tool name (exact)"
-            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+            className="ds-input h-11 min-w-[280px] flex-1 rounded-md px-3 text-sm md:h-9"
           />
-          <Input
-            type="datetime-local"
-            value={fromFilter}
-            onChange={(event) => setFromFilter(event.target.value)}
-            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+          <DateRangePicker
+            from={fromFilter}
+            to={toFilter}
+            onChange={(next) => {
+              setFromFilter(next.from);
+              setToFilter(next.to);
+            }}
+            className="shrink-0"
           />
-          <Input
-            type="datetime-local"
-            value={toFilter}
-            onChange={(event) => setToFilter(event.target.value)}
-            className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
-          />
-          <Button type="button" onClick={() => void fetchToolCalls()} disabled={toolCallsLoading} className="ds-btn h-11 rounded-md px-3 text-sm disabled:opacity-60 md:h-9">
+          <Button type="button" onClick={() => void fetchToolCalls()} disabled={toolCallsLoading} className="ds-btn h-11 shrink-0 rounded-md px-3 text-sm disabled:opacity-60 md:h-9">
             {toolCallsLoading ? "Loading..." : "Apply"}
           </Button>
         </div>
