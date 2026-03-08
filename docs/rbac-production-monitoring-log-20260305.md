@@ -14,6 +14,17 @@
   - `owner PATCH /teams/{team}=422`는 baseline enforcement에 따른 정상 차단으로 간주.
   - 중간에 발생한 `401` 기반 회귀 알림은 토큰 만료/오염으로 인한 false alert였고, 토큰 갱신 후 재검증에서 정상화.
 
+## Latest Dashboard QA Gate Re-Run (2026-03-08)
+
+- 실행:
+  - `backend/scripts/run_dashboard_v2_qa_stage_gate.sh`
+- 결과:
+  - static checks: PASS (deeplink/query-scope/mobile 모두 PASS)
+  - runtime checks: PASS (`rbac-token-validate`, `menu-rbac`, `phase3-dashboard` 모두 PASS)
+  - overall: `pass=6 fail=0 skip=1`
+- 비고:
+  - `mobile manual qa log check`는 `REQUIRE_MOBILE_MANUAL_QA=1`에서만 강제되며 현재는 optional skip.
+
 ## Dashboard Scope/Menu Follow-up (2026-03-08, Local Validation)
 
 - 목적:

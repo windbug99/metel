@@ -28,8 +28,10 @@ run_step() {
   shift
   if "$@"; then
     pass "${label}"
+    return 0
   else
     fail "${label}"
+    return 1
   fi
 }
 

@@ -440,12 +440,12 @@
   - [x] 모바일 레이아웃 검증(정적): drawer 펼침/접힘, 탭 타겟, overflow 정적 점검 PASS
   - [x] 권한 기반 가시성 재검증: `run_dashboard_v2_menu_rbac_smoke.sh`를 IA 메뉴 키 기준으로 갱신
   - [x] 정적 점검 스크립트 업데이트: 메뉴 구조 변경에 맞게 `run_dashboard_v2_*_static_check.sh` 갱신
-  - [ ] QA stage gate 재실행 및 PASS 기록 (로컬 네트워크 환경에서 runtime check 포함 재실행 필요)
+  - [x] QA stage gate 재실행 및 PASS 기록 (`pass=6 fail=0 skip=1`, mobile manual qa는 optional skip)
 - 완료 기준(DoD):
-  - [ ] 사이드바에서 `Organization / Team / User` 3개 대분류가 명확히 구분된다.
-  - [ ] 역할별(owner/admin/member) 메뉴 노출이 매핑표(Section 13)와 일치한다.
-  - [ ] `dashboard-v2-qa-gate`와 `rbac-stage-gate` 재실행 결과가 모두 PASS다.
-  - [ ] 변경 스크린샷(데스크탑/모바일)과 함께 문서/로그가 업데이트된다.
+  - [x] 사이드바에서 `Organization / Team / User` 3개 대분류가 명확히 구분된다.
+  - [x] 역할별(owner/admin/member) 메뉴 노출이 매핑표(Section 13)와 일치한다.
+  - [x] `dashboard-v2-qa-gate`와 `rbac-stage-gate` 재실행 결과가 모두 PASS다.
+  - [x] 변경 스크린샷(데스크탑/모바일)과 함께 문서/로그가 업데이트된다.
 
 ## 16. Staged Rollout Checklist (2026-03-08 update)
 - [x] Frontend query-scope static checks PASS
