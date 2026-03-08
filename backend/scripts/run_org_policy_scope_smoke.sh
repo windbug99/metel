@@ -48,6 +48,32 @@ http_status() {
     "${API_BASE_URL}${path}"
 }
 
+http_status_and_body() {
+  local token="$1"
+  local method="$2"
+  local path="$3"
+  local data="${4:-}"
+  local out
+  local code
+  out="$(mktemp)"
+  if [[ -n "${data}" ]]; then
+    code="$(curl -sS -o "${out}" -w "%{http_code}" \
+      -X "${method}" \
+      -H "Authorization: Bearer ${token}" \
+      -H "Content-Type: application/json" \
+      -d "${data}" \
+      "${API_BASE_URL}${path}")"
+  else
+    code="$(curl -sS -o "${out}" -w "%{http_code}" \
+      -X "${method}" \
+      -H "Authorization: Bearer ${token}" \
+      "${API_BASE_URL}${path}")"
+  fi
+  printf "%s\n" "${code}"
+  cat "${out}"
+  rm -f "${out}"
+}
+
 echo "[org-policy-smoke] API_BASE_URL=${API_BASE_URL} ORG_ID=${ORG_ID} TEAM_ID=${TEAM_ID}"
 
 owner_org_get="$(http_status "${OWNER_JWT}" GET "/api/organizations/${ORG_ID}/policy")"
@@ -58,8 +84,30 @@ member_org_get="$(http_status "${MEMBER_JWT}" GET "/api/organizations/${ORG_ID}/
 [[ "${admin_org_get}" == "200" ]] && record_pass "admin GET /organizations/{org}/policy=200" || record_fail "admin GET /organizations/{org}/policy expected 200 got ${admin_org_get}"
 [[ "${member_org_get}" == "200" ]] && record_pass "member GET /organizations/{org}/policy=200" || record_fail "member GET /organizations/{org}/policy expected 200 got ${member_org_get}"
 
-owner_org_patch="$(http_status "${OWNER_JWT}" PATCH "/api/organizations/${ORG_ID}/policy" '{"policy_json":{"allowed_services":["notion","linear"],"allow_high_risk":false}}')"
-member_org_patch="$(http_status "${MEMBER_JWT}" PATCH "/api/organizations/${ORG_ID}/policy" '{"policy_json":{"allowed_services":["notion"]}}')"
+current_org_policy_body="$(
+  curl -sS -H "Authorization: Bearer ${OWNER_JWT}" \
+    "${API_BASE_URL}/api/organizations/${ORG_ID}/policy"
+)"
+current_org_policy_json="$(
+  python3 - <<'PY' "${current_org_policy_body}"
+import json
+import sys
+payload = json.loads(sys.argv[1] or "{}")
+item = payload.get("item") or {}
+policy = item.get("policy_json") if isinstance(item.get("policy_json"), dict) else {}
+print(json.dumps(policy))
+PY
+)"
+owner_org_patch_payload="$(
+  python3 - <<'PY' "${current_org_policy_json}"
+import json
+import sys
+policy = json.loads(sys.argv[1] or "{}")
+print(json.dumps({"policy_json": policy}))
+PY
+)"
+owner_org_patch="$(http_status "${OWNER_JWT}" PATCH "/api/organizations/${ORG_ID}/policy" "${owner_org_patch_payload}")"
+member_org_patch="$(http_status "${MEMBER_JWT}" PATCH "/api/organizations/${ORG_ID}/policy" "${owner_org_patch_payload}")"
 [[ "${owner_org_patch}" == "200" ]] && record_pass "owner PATCH /organizations/{org}/policy=200" || record_fail "owner PATCH /organizations/{org}/policy expected 200 got ${owner_org_patch}"
 [[ "${member_org_patch}" == "403" ]] && record_pass "member PATCH /organizations/{org}/policy=403" || record_fail "member PATCH /organizations/{org}/policy expected 403 got ${member_org_patch}"
 
@@ -107,6 +155,9 @@ if [[ "${owner_team_patch}" == "200" ]]; then
   record_pass "owner PATCH /teams/{team}=200 (policy roundtrip)"
 elif [[ "${owner_team_patch}" == "422" ]]; then
   record_fail "owner PATCH /teams/{team} got 422 (baseline violation)"
+  team_patch_result="$(http_status_and_body "${OWNER_JWT}" PATCH "/api/teams/${TEAM_ID}" "${owner_team_patch_payload}")"
+  team_patch_body="$(printf "%s\n" "${team_patch_result}" | sed '1d')"
+  echo "[org-policy-smoke] team policy 422 detail: ${team_patch_body}"
 else
   record_fail "owner PATCH /teams/{team} expected 200 got ${owner_team_patch}"
 fi

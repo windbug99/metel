@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-import { buildNextPath, dashboardApiGet } from "../../lib/dashboard-v2-client";
+import { dashboardApiGet } from "../../lib/dashboard-v2-client";
 import { supabase } from "../../lib/supabase";
 import DashboardAppSidebar from "./app-sidebar";
 import AlertBanner from "./alert-banner";
@@ -89,10 +89,6 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
   const globalSearchEnabled = process.env.NEXT_PUBLIC_DASHBOARD_GLOBAL_SEARCH_ENABLED === "true";
   const pageKey = useMemo(() => currentPageKey(pathname), [pathname]);
 
-  const currentPathWithQuery = useMemo(() => {
-    return buildNextPath(pathname, searchParams.toString() ? `?${searchParams.toString()}` : "");
-  }, [pathname, searchParams]);
-
   const navItems = useMemo(() => buildNavItems(permissionSnapshot), [permissionSnapshot]);
 
   const buildNavHref = useCallback(
@@ -145,7 +141,9 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
   const fetchPermissions = useCallback(async () => {
     const result = await dashboardApiGet<PermissionSnapshot>("/api/me/permissions");
     if (result.status === 401) {
-      const next = encodeURIComponent(currentPathWithQuery);
+      const nextPath =
+        typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}` : pathname;
+      const next = encodeURIComponent(nextPath);
       router.replace(`/?next=${next}`);
       setPermissionLoading(false);
       return;
@@ -165,7 +163,7 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
     setPermissionSnapshot(result.data);
     setPermissionError(null);
     setPermissionLoading(false);
-  }, [currentPathWithQuery, router]);
+  }, [pathname, router]);
 
   useEffect(() => {
     void fetchPermissions();
@@ -260,13 +258,15 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
       changed = true;
     }
 
-    const teamParam = params.get("team");
-    if (teamIds.length === 1 && (!teamParam || teamParam === "all")) {
-      params.set("team", String(teamIds[0]));
-      changed = true;
-    } else if (isMemberRole && teamIds.length > 0 && teamParam === "all") {
-      params.set("team", String(teamIds[0]));
-      changed = true;
+    if (currentScope === "team") {
+      const teamParam = params.get("team");
+      if (teamIds.length === 1 && (!teamParam || teamParam === "all")) {
+        params.set("team", String(teamIds[0]));
+        changed = true;
+      } else if (isMemberRole && teamIds.length > 0 && teamParam === "all") {
+        params.set("team", String(teamIds[0]));
+        changed = true;
+      }
     }
 
     if (!changed) {

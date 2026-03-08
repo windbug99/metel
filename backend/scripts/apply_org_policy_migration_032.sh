@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MIGRATION_FILE="${MIGRATION_FILE:-${ROOT_DIR}/docs/sql/032_create_org_policy_tables.sql}"
 DB_URL="${STAGING_DB_URL:-${DATABASE_URL:-}}"
+HOMEBREW_LIBPQ_BIN="/opt/homebrew/opt/libpq/bin"
 
 if [[ -z "${DB_URL}" ]]; then
   echo "[org-policy-migration] ERROR: STAGING_DB_URL (or DATABASE_URL) is required"
@@ -13,6 +14,12 @@ fi
 if [[ ! -f "${MIGRATION_FILE}" ]]; then
   echo "[org-policy-migration] ERROR: migration file not found: ${MIGRATION_FILE}"
   exit 1
+fi
+
+if ! command -v psql >/dev/null 2>&1; then
+  if [[ -x "${HOMEBREW_LIBPQ_BIN}/psql" ]]; then
+    export PATH="${HOMEBREW_LIBPQ_BIN}:${PATH}"
+  fi
 fi
 
 if ! command -v psql >/dev/null 2>&1; then
