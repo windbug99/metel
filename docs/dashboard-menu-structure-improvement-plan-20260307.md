@@ -417,6 +417,15 @@
 - 진행 중: 0
 - 미착수: 3
 
+### 15.7 Completion Scope Clarification (2026-03-08)
+- [x] 완료(백엔드/권한/스코프): Organization Policy/OAuth Policy API, baseline enforcement, rollout gate 자동화, QA/RBAC gate 통과
+- [x] 완료(네비게이션 동작): scope/org/team/range canonical query 정규화, breadcrumb/category 동기화, 무한 요청 루프 수정
+- [ ] 미완료(시각 IA 재배치): 사이드바를 `Organization/Team/User` 3개 대분류로 완전 분리하는 최종 메뉴 정보구조 개편
+- [ ] 미완료(UI 라벨 체계): `Access/Integrations/Audit` 하위 메뉴를 대분류별 트리로 전면 재배열
+- 비고:
+  - 현재 화면은 안정화/권한/스코프 개선이 우선 반영된 상태이며, 메뉴의 "보이는 구조"는 부분 개편 상태다.
+  - 따라서 기능적 개선은 완료에 가깝지만, IA 시각 개편은 후속 UI 작업이 필요하다.
+
 ## 16. Staged Rollout Checklist (2026-03-08 update)
 - [x] Frontend query-scope static checks PASS
 - [x] Frontend type-check(`tsc --noEmit`) PASS
@@ -428,9 +437,9 @@
   - `backend/scripts/run_org_policy_rollout_stage_gate.sh`
   - `backend/scripts/run_org_policy_rollout_from_env_file.sh`
   - `backend/.env.stage.example`
-- [ ] Staging DB migration apply (`032_create_org_policy_tables.sql`)
-- [ ] Staging smoke after migration (organization/team policy + oauth-policy read/write)
-- [ ] Production canary + 24h monitor snapshot append
+- [x] Staging DB migration apply (`032_create_org_policy_tables.sql`)
+- [x] Staging smoke after migration (organization/team policy + oauth-policy read/write)
+- [x] Production predeploy/rollout gate full PASS append (2026-03-08)
 
 실행 순서(스테이징):
 1. `STAGING_DB_URL='<postgres-url>' backend/scripts/apply_org_policy_migration_032.sh`
@@ -451,3 +460,20 @@
   - monitoring snapshot: `PASS|FAIL` (요약)
 - 후속 조치:
   - 
+
+## 18. Stage Execution Log (Actual, 2026-03-08)
+- 실행일시: 2026-03-08
+- 실행자: tomato
+- 대상 환경(API/DB): `https://metel-production.up.railway.app` + staging postgres
+- 명령:
+  - `backend/scripts/run_org_policy_rollout_from_env_file.sh`
+- 결과:
+  - migration 032: PASS (table exists + RLS policy count `2/2` 확인)
+  - token validation: PASS (owner/admin/member role matrix 통과)
+  - org policy scope smoke: PASS (`pass=11 fail=0`, team policy `422 baseline enforcement` 포함)
+  - dashboard v2 predeploy gate: PASS (`pass=7 fail=0 skip=0`)
+  - rbac rollout stage gate(full_guard): PASS
+  - monitoring snapshot: PASS
+  - final stage gate: `org-policy-stage-gate PASS`
+- 후속 조치:
+  - 메뉴 IA 시각 개편(Organization/Team/User 대분류 재배치) 별도 UI phase로 진행

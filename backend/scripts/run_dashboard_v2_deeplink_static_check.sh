@@ -4,12 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 DASHBOARD_ROOT_PAGE="${ROOT_DIR}/frontend/app/dashboard/page.tsx"
-LEGACY_PAGE="${ROOT_DIR}/frontend/app/dashboard/legacy/page.tsx"
 SHELL_PAGE="${ROOT_DIR}/frontend/components/dashboard-v2/shell.tsx"
 NOTION_ROUTE="${ROOT_DIR}/backend/app/routes/notion.py"
 LINEAR_ROUTE="${ROOT_DIR}/backend/app/routes/linear.py"
 
-for f in "${DASHBOARD_ROOT_PAGE}" "${LEGACY_PAGE}" "${SHELL_PAGE}" "${NOTION_ROUTE}" "${LINEAR_ROUTE}"; do
+for f in "${DASHBOARD_ROOT_PAGE}" "${SHELL_PAGE}" "${NOTION_ROUTE}" "${LINEAR_ROUTE}"; do
   if [[ ! -f "${f}" ]]; then
     echo "[dashboard-v2-deeplink-static] ERROR: missing file ${f}"
     exit 1
@@ -59,17 +58,11 @@ expect_pattern "${DASHBOARD_ROOT_PAGE}" "#audit-events\": \"/dashboard/control/a
 expect_pattern "${DASHBOARD_ROOT_PAGE}" "HASH_TO_ROUTE\\[hash\\] \\?\\? \"/dashboard/overview\"" "root default redirect to /dashboard/overview"
 expect_pattern "${DASHBOARD_ROOT_PAGE}" "window.location.search" "root redirect preserves query string"
 
-# legacy hash compatibility
-expect_pattern "${LEGACY_PAGE}" "LEGACY_HASH_TO_V2_ROUTE" "legacy hash map constant exists"
-expect_pattern "${LEGACY_PAGE}" "#overview\": \"/dashboard/overview\"" "legacy hash mapping: #overview"
-expect_pattern "${LEGACY_PAGE}" "#api-keys\": \"/dashboard/access/api-keys\"" "legacy hash mapping: #api-keys"
-expect_pattern "${LEGACY_PAGE}" "#audit-events\": \"/dashboard/control/audit-events\"" "legacy hash mapping: #audit-events"
-expect_pattern "${LEGACY_PAGE}" "window.location.search" "legacy redirect preserves query string"
-
 # auth-expired deep-link next restore
-expect_pattern "${SHELL_PAGE}" "buildNextPath" "shell uses buildNextPath"
 expect_pattern "${SHELL_PAGE}" "router.replace" "shell has redirect handler"
 expect_pattern "${SHELL_PAGE}" "\\/\\?next=\\$\\{next\\}" "shell preserves next on 401 redirect"
+expect_pattern "${SHELL_PAGE}" "window.location.pathname" "shell uses current location path for next restore"
+expect_pattern "${SHELL_PAGE}" "window.location.search" "shell uses current location query for next restore"
 
 # OAuth callback landing compatibility
 expect_pattern "${NOTION_ROUTE}" "\\/dashboard\\/integrations\\/oauth\\?\\{query\\}" "notion oauth callback base landing path"

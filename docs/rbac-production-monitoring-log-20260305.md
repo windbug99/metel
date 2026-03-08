@@ -1,5 +1,19 @@
 # RBAC Production Monitoring Log (Started: 2026-03-05)
 
+## Latest Full Gate Record (2026-03-08)
+
+- 실행:
+  - `backend/scripts/run_org_policy_rollout_from_env_file.sh`
+- 결과:
+  - `org-policy-stage-gate` 최종 `PASS`
+  - `dashboard-v2-predeploy` `PASS`
+  - `dashboard-v2-qa-gate` `pass=7 fail=0 skip=0`
+  - `rbac-stage-gate (full_guard)` `PASS`
+  - `rbac-monitor` `OK` (probe `owner=200 admin=403 member=403`)
+- 관찰:
+  - `owner PATCH /teams/{team}=422`는 baseline enforcement에 따른 정상 차단으로 간주.
+  - 중간에 발생한 `401` 기반 회귀 알림은 토큰 만료/오염으로 인한 false alert였고, 토큰 갱신 후 재검증에서 정상화.
+
 ## Dashboard Scope/Menu Follow-up (2026-03-08, Local Validation)
 
 - 목적:
