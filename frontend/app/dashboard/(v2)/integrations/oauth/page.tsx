@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -432,12 +433,10 @@ export default function DashboardOAuthConnectionsPage() {
                         return (
                           <label key={provider} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
                             <span>{provider}</span>
-                            <input
-                              type="checkbox"
+                            <Checkbox
                               checked={checked}
-                              onChange={() => toggleProvider(activePolicyTab, provider)}
+                              onCheckedChange={() => toggleProvider(activePolicyTab, provider)}
                               disabled={!canManagePolicy || savingPolicy}
-                              className="h-4 w-4 accent-primary"
                             />
                           </label>
                         );
