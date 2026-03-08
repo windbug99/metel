@@ -435,11 +435,11 @@
   - [x] 사이드바 그룹 렌더러 개편: 기존 top-level 혼합 메뉴를 대분류 하위로 재배치
   - [x] Team 섹션 하위 트리 재배치: `Overview/Usage/Team Policy/Agent Guide/API Keys/Policy Simulator/Audit Events`
   - [x] User 섹션 신설/노출 규칙 1차 반영: `Profile/OAuth Connections`
-  - [ ] Scope 전환 UX 개선: 그룹 전환 시 query(`scope/org/team`) 일관 유지
+  - [x] Scope 전환 UX 1차 개선: 섹션 메뉴 클릭 시 query(`scope/org/team`) 자동 정규화
   - [ ] 라벨/문구 통일: breadcrumb/페이지 타이틀/사이드바 텍스트 동기화
   - [ ] 모바일 레이아웃 검증: drawer 펼침/접힘, 탭 타겟, overflow 점검
   - [ ] 권한 기반 가시성 재검증: owner/admin/member 메뉴 노출 표 재확인
-  - [ ] 정적 점검 스크립트 업데이트: 메뉴 구조 변경에 맞게 `run_dashboard_v2_*_static_check.sh` 갱신
+  - [x] 정적 점검 스크립트 업데이트: 메뉴 구조 변경에 맞게 `run_dashboard_v2_*_static_check.sh` 갱신
   - [ ] QA stage gate 재실행 및 PASS 기록
 - 완료 기준(DoD):
   - [ ] 사이드바에서 `Organization / Team / User` 3개 대분류가 명확히 구분된다.

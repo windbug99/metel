@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 type AppSidebarProps = {
   pathname: string;
   navItems: NavItem[];
-  buildNavHref: (targetPath: string) => string;
+  buildNavHref: (targetPath: string, section?: NavItem["section"]) => string;
   roleLabel: string;
   currentOrg: string;
   orgIds: number[];

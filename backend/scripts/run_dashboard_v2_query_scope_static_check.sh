@@ -63,7 +63,7 @@ expect_pattern "${SHELL_PAGE}" "for \\(const key of GLOBAL_QUERY_KEYS\\)" "nav/g
 expect_pattern "${SHELL_PAGE}" "const allowed = new Set<string>\\(\\[\\.\\.\\.GLOBAL_QUERY_KEYS, \\.\\.\\.PAGE_QUERY_KEYS\\[pageKey\\]\\]\\)" "allowed set merges global + current page keys"
 expect_pattern "${SHELL_PAGE}" "if \\(!allowed\\.has\\(key\\)\\) \\{" "unknown query keys are filtered"
 expect_pattern "${SHELL_PAGE}" "params\\.delete\\(key\\);" "unknown/page-irrelevant query keys deleted"
-expect_pattern "${NAV_MAIN_PAGE}" "href=\\{buildNavHref\\(item\\.href\\)\\}" "sidebar navigation keeps global query keys"
+expect_pattern "${NAV_MAIN_PAGE}" "href=\\{buildNavHref\\(item\\.href, item\\.section\\)\\}" "sidebar navigation keeps global query keys"
 
 echo "[dashboard-v2-query-scope] pass=${PASS} fail=${FAIL}"
 if [[ "${FAIL}" -gt 0 ]]; then

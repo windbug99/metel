@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 type NavMainProps = {
   pathname: string;
   navItems: NavItem[];
-  buildNavHref: (targetPath: string) => string;
+  buildNavHref: (targetPath: string, section?: NavItem["section"]) => string;
   collapsed: boolean;
 };
 
@@ -40,7 +40,7 @@ export function NavMain({ pathname, navItems, buildNavHref, collapsed }: NavMain
                 return (
                   <Link
                     key={item.key}
-                    href={buildNavHref(item.href)}
+                    href={buildNavHref(item.href, item.section)}
                     className={cn(
                       "mb-1 block rounded-md px-3 py-2 text-sm font-light transition-colors",
                       active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-foreground hover:bg-sidebar-accent/70",

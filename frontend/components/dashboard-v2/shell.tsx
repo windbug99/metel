@@ -17,6 +17,7 @@ import {
   buildNavItems,
   currentPageKey,
   pageTitle,
+  type NavItem,
   type PermissionSnapshot,
 } from "./nav-model";
 
@@ -88,11 +89,13 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
   const title = useMemo(() => pageTitle(pathname), [pathname]);
   const globalSearchEnabled = process.env.NEXT_PUBLIC_DASHBOARD_GLOBAL_SEARCH_ENABLED === "true";
   const pageKey = useMemo(() => currentPageKey(pathname), [pathname]);
+  const orgIds = permissionSnapshot?.org_ids ?? [];
+  const teamIds = permissionSnapshot?.team_ids ?? [];
 
   const navItems = useMemo(() => buildNavItems(permissionSnapshot), [permissionSnapshot]);
 
   const buildNavHref = useCallback(
-    (targetPath: string) => {
+    (targetPath: string, section?: NavItem["section"]) => {
       const params = new URLSearchParams();
       for (const key of GLOBAL_QUERY_KEYS) {
         const value = searchParams.get(key);
@@ -100,10 +103,46 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
           params.set(key, value);
         }
       }
+
+      if (section === "user") {
+        params.set("scope", "user");
+        params.delete("org");
+        params.delete("team");
+      } else if (section === "organization") {
+        const orgParam = (params.get("org") ?? "").trim();
+        if ((!orgParam || orgParam === "all") && orgIds.length > 0) {
+          params.set("org", String(orgIds[0]));
+        }
+        params.set("scope", params.get("org") ? "org" : "user");
+        params.delete("team");
+      } else if (section === "team") {
+        const orgParam = (params.get("org") ?? "").trim();
+        const teamParam = (params.get("team") ?? "").trim();
+        if ((!orgParam || orgParam === "all") && orgIds.length > 0) {
+          params.set("org", String(orgIds[0]));
+        }
+        if ((!teamParam || teamParam === "all") && teamIds.length > 0) {
+          params.set("team", String(teamIds[0]));
+        }
+        const hasOrg = Boolean((params.get("org") ?? "").trim());
+        const hasTeam = Boolean((params.get("team") ?? "").trim());
+        if (hasOrg && hasTeam) {
+          params.set("scope", "team");
+        } else if (hasOrg) {
+          params.set("scope", "org");
+          params.delete("team");
+        } else {
+          params.set("scope", "user");
+          params.delete("org");
+          params.delete("team");
+        }
+      }
+
+      normalizeDashboardScope(params);
       const encoded = params.toString();
       return encoded ? `${targetPath}?${encoded}` : targetPath;
     },
-    [searchParams]
+    [orgIds, searchParams, teamIds]
   );
 
   const currentScopeParam = (searchParams.get("scope") ?? "").trim().toLowerCase();
@@ -112,8 +151,6 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
   const currentOrg = currentScope === "org" || currentScope === "team" ? searchParams.get("org") ?? "all" : "all";
   const currentTeam = currentScope === "team" ? searchParams.get("team") ?? "all" : "all";
   const currentRange = searchParams.get("range") ?? "24h";
-  const orgIds = permissionSnapshot?.org_ids ?? [];
-  const teamIds = permissionSnapshot?.team_ids ?? [];
   const isMemberRole = permissionSnapshot?.role === "member";
   const breadcrumb = useMemo(() => buildBreadcrumb(pathname, currentScope), [currentScope, pathname]);
 
