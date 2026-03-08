@@ -436,11 +436,11 @@
   - [x] Team 섹션 하위 트리 재배치: `Overview/Usage/Team Policy/Agent Guide/API Keys/Policy Simulator/Audit Events`
   - [x] User 섹션 신설/노출 규칙 2차 반영: `Profile/My Requests/Security/OAuth Connections`
   - [x] Scope 전환 UX 1차 개선: 섹션 메뉴 클릭 시 query(`scope/org/team`) 자동 정규화
-  - [ ] 라벨/문구 통일: breadcrumb/페이지 타이틀/사이드바 텍스트 동기화
-  - [ ] 모바일 레이아웃 검증: drawer 펼침/접힘, 탭 타겟, overflow 점검
+  - [x] 라벨/문구 통일 1차: OAuth 페이지 breadcrumb를 scope 기준(`user=OAuth Connections`, `org/team=OAuth Governance`)으로 동기화
+  - [x] 모바일 레이아웃 검증(정적): drawer 펼침/접힘, 탭 타겟, overflow 정적 점검 PASS
   - [x] 권한 기반 가시성 재검증: `run_dashboard_v2_menu_rbac_smoke.sh`를 IA 메뉴 키 기준으로 갱신
   - [x] 정적 점검 스크립트 업데이트: 메뉴 구조 변경에 맞게 `run_dashboard_v2_*_static_check.sh` 갱신
-  - [ ] QA stage gate 재실행 및 PASS 기록
+  - [ ] QA stage gate 재실행 및 PASS 기록 (로컬 네트워크 환경에서 runtime check 포함 재실행 필요)
 - 완료 기준(DoD):
   - [ ] 사이드바에서 `Organization / Team / User` 3개 대분류가 명확히 구분된다.
   - [ ] 역할별(owner/admin/member) 메뉴 노출이 매핑표(Section 13)와 일치한다.

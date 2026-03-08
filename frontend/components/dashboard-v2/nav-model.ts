@@ -158,10 +158,15 @@ export function buildBreadcrumb(pathname: string, scope: "org" | "team" | "user"
     menu = "Admin";
   }
 
+  const submenu =
+    pathname.startsWith("/dashboard/integrations/oauth") && scope !== "user"
+      ? "OAuth Governance"
+      : pageTitle(pathname);
+
   return {
     category,
     menu,
-    submenu: pageTitle(pathname),
+    submenu,
   };
 }
 
