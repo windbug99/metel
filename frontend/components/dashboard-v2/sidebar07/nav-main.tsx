@@ -42,7 +42,7 @@ export function NavMain({ pathname, navItems, buildNavHref, collapsed }: NavMain
                     key={item.key}
                     href={buildNavHref(item.href, item.section)}
                     className={cn(
-                      "mb-0.5 block rounded-md px-3 pt-[4px] pb-[4px] text-xs font-light transition-colors",
+                      "mb-0.5 block rounded-md px-3 pt-[4px] pb-[4px] text-sm font-light transition-colors",
                       active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-foreground hover:bg-sidebar-accent/70",
                       collapsed && "px-2 text-center"
                     )}
