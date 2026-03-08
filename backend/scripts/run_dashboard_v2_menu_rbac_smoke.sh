@@ -36,13 +36,41 @@ owner = json.loads(sys.argv[1])
 admin = json.loads(sys.argv[2])
 member = json.loads(sys.argv[3])
 
-BASE_MENU = ["overview", "api-keys", "audit-events"]
+TEAM_MENU = [
+    "team-overview",
+    "team-usage",
+    "team-policy",
+    "team-agent-guide",
+    "team-api-keys",
+    "team-policy-simulator",
+    "team-audit-events",
+]
+USER_MENU = [
+    "user-profile",
+    "user-my-requests",
+    "user-security",
+    "user-oauth-connections",
+]
+ORG_MENU_BASE = [
+    "org-access",
+    "org-integrations",
+    "org-oauth-governance",
+    "org-audit-settings",
+]
 
-def visible_menu(row: dict) -> list[str]:
-    items = list(BASE_MENU)
-    if bool((row.get("permissions") or {}).get("can_read_admin_ops")):
-        items.append("admin-ops")
-    return items
+def visible_menu_keys(row: dict) -> list[str]:
+    role = str(row.get("role") or "")
+    perms = row.get("permissions") or {}
+    can_read_admin_ops = bool(perms.get("can_read_admin_ops"))
+    is_admin_plus = role in {"owner", "admin"}
+    keys: list[str] = []
+    if is_admin_plus:
+        keys.extend(ORG_MENU_BASE)
+        if can_read_admin_ops:
+            keys.append("org-admin-ops")
+    keys.extend(TEAM_MENU)
+    keys.extend(USER_MENU)
+    return keys
 
 def expect(cond: bool, label: str):
     if not cond:
@@ -53,9 +81,17 @@ expect(owner.get("role") == "owner", "owner.role == owner")
 expect(admin.get("role") == "admin", "admin.role == admin")
 expect(member.get("role") == "member", "member.role == member")
 
-expect(visible_menu(owner) == ["overview", "api-keys", "audit-events", "admin-ops"], "owner visible menu")
-expect(visible_menu(admin) == ["overview", "api-keys", "audit-events", "admin-ops"], "admin visible menu")
-expect(visible_menu(member) == ["overview", "api-keys", "audit-events"], "member visible menu")
+expect(
+    visible_menu_keys(owner)
+    == ORG_MENU_BASE + ["org-admin-ops"] + TEAM_MENU + USER_MENU,
+    "owner visible menu keys",
+)
+expect(
+    visible_menu_keys(admin)
+    == ORG_MENU_BASE + ["org-admin-ops"] + TEAM_MENU + USER_MENU,
+    "admin visible menu keys",
+)
+expect(visible_menu_keys(member) == TEAM_MENU + USER_MENU, "member visible menu keys")
 
 expect(bool((owner.get("permissions") or {}).get("can_manage_incident_banner")) is True, "owner incident-banner manage")
 expect(bool((admin.get("permissions") or {}).get("can_manage_incident_banner")) is False, "admin incident-banner denied")

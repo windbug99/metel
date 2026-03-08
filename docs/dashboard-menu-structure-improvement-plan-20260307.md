@@ -438,7 +438,7 @@
   - [x] Scope 전환 UX 1차 개선: 섹션 메뉴 클릭 시 query(`scope/org/team`) 자동 정규화
   - [ ] 라벨/문구 통일: breadcrumb/페이지 타이틀/사이드바 텍스트 동기화
   - [ ] 모바일 레이아웃 검증: drawer 펼침/접힘, 탭 타겟, overflow 점검
-  - [ ] 권한 기반 가시성 재검증: owner/admin/member 메뉴 노출 표 재확인
+  - [x] 권한 기반 가시성 재검증: `run_dashboard_v2_menu_rbac_smoke.sh`를 IA 메뉴 키 기준으로 갱신
   - [x] 정적 점검 스크립트 업데이트: 메뉴 구조 변경에 맞게 `run_dashboard_v2_*_static_check.sh` 갱신
   - [ ] QA stage gate 재실행 및 PASS 기록
 - 완료 기준(DoD):
