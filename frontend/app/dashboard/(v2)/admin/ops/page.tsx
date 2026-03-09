@@ -11,13 +11,15 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown, Loader2 } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from "recharts";
 
 import { buildNextPath, dashboardApiGet, dashboardApiRequest } from "../../../../../lib/dashboard-v2-client";
 import AlertBanner from "../../../../../components/dashboard-v2/alert-banner";
 import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 
 type PermissionSnapshot = {
   user_id?: string;
@@ -378,6 +380,85 @@ export default function DashboardAdminOpsPage() {
     };
   }, [fetchAdminOps, pathname]);
 
+  const systemHealthScore = useMemo(() => {
+    if (!systemHealth) {
+      return 0;
+    }
+    const checks = [systemHealth.status === "ok", Boolean(systemHealth.services?.database?.ok)];
+    const passed = checks.filter(Boolean).length;
+    return Math.round((passed / checks.length) * 100);
+  }, [systemHealth]);
+
+  const systemHealthServiceChart = useMemo(
+    () => [
+      {
+        service: "API",
+        healthy: systemHealth?.status === "ok" ? 1 : 0,
+      },
+      {
+        service: "DB",
+        healthy: systemHealth?.services?.database?.ok ? 1 : 0,
+      },
+    ],
+    [systemHealth]
+  );
+
+  const connectorDiagnosticsChart = useMemo(() => {
+    const byProvider = new Map<string, { provider: string; ok: number; stale: number }>();
+    for (const item of connectorDiagnostics) {
+      const provider = item.provider || "unknown";
+      const prev = byProvider.get(provider) ?? { provider, ok: 0, stale: 0 };
+      if (item.status === "stale") {
+        prev.stale += 1;
+      } else {
+        prev.ok += 1;
+      }
+      byProvider.set(provider, prev);
+    }
+    return Array.from(byProvider.values()).sort((a, b) => a.provider.localeCompare(b.provider));
+  }, [connectorDiagnostics]);
+
+  const externalHealthChart = useMemo(
+    () =>
+      externalHealth.slice(0, 8).map((item) => ({
+        connector: item.connector,
+        calls: item.calls,
+        failRate: Number((item.fail_rate * 100).toFixed(1)),
+      })),
+    [externalHealth]
+  );
+
+  const rateLimitTrendChart = useMemo(() => {
+    const byDay = new Map<string, { dayKey: string; label: string; count: number }>();
+    for (const item of rateLimitEvents) {
+      const dt = new Date(item.created_at);
+      if (Number.isNaN(dt.getTime())) {
+        continue;
+      }
+      const month = `${dt.getMonth() + 1}`.padStart(2, "0");
+      const day = `${dt.getDate()}`.padStart(2, "0");
+      const dayKey = `${dt.getFullYear()}-${month}-${day}`;
+      const prev = byDay.get(dayKey) ?? { dayKey, label: `${month}/${day}`, count: 0 };
+      prev.count += 1;
+      byDay.set(dayKey, prev);
+    }
+    return Array.from(byDay.values())
+      .sort((a, b) => a.dayKey.localeCompare(b.dayKey))
+      .slice(-7);
+  }, [rateLimitEvents]);
+
+  const rateLimitCodeSummary = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of rateLimitEvents) {
+      const code = item.error_code ?? "unknown";
+      counts.set(code, (counts.get(code) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([code, count]) => ({ code, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3);
+  }, [rateLimitEvents]);
+
   if (loading) {
     return (
       <section className="space-y-5">
@@ -438,23 +519,14 @@ export default function DashboardAdminOpsPage() {
         <>
           <div className="grid gap-2">
             <article className="ds-card p-4">
-              <p className="text-xs font-medium text-muted-foreground">System Health</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--text-primary)]">{systemHealth?.status ?? "unknown"}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                DB: {systemHealth?.services?.database?.ok ? "ok" : "degraded"}
-                {systemHealth?.services?.database?.error ? ` (${systemHealth.services.database.error})` : ""}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">time_utc: {asDate(systemHealth?.time_utc)}</p>
-            </article>
-
-            <article className="ds-card p-4">
-              <p className="text-xs font-medium text-muted-foreground">Incident Banner</p>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-xs font-medium text-muted-foreground">Incident Banner</p>
+                <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
                   <Switch
                     checked={incidentEnabledDraft}
                     onCheckedChange={setIncidentEnabledDraft}
                     disabled={!canManageIncidentBanner}
+                    className="h-5 w-9 [&>span]:h-4 [&>span]:w-4 data-[state=checked]:[&>span]:translate-x-4 data-[state=unchecked]:[&>span]:translate-x-0"
                   />
                   Show banner
                 </label>
@@ -569,9 +641,52 @@ export default function DashboardAdminOpsPage() {
             </article>
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            <article className="ds-card p-4">
+              <p className="text-xs font-medium text-muted-foreground">System Health</p>
+              <p className="mt-1 text-sm font-semibold text-[var(--text-primary)]">{systemHealth?.status ?? "unknown"}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Health score: {systemHealthScore}%</p>
+              <ChartContainer
+                className="mt-2 h-28 w-full"
+                config={{
+                  healthy: { label: "Healthy", color: "hsl(var(--chart-2))" },
+                }}
+              >
+                <BarChart data={systemHealthServiceChart} layout="vertical" margin={{ left: 0, right: 0, top: 0, bottom: 0 }}>
+                  <CartesianGrid horizontal={false} />
+                  <XAxis type="number" domain={[0, 1]} hide />
+                  <YAxis type="category" dataKey="service" width={28} tickLine={false} axisLine={false} />
+                  <ChartTooltip cursor={false} content={<ChartTooltipContent formatter={(value) => (Number(value) > 0 ? "ok" : "degraded")} />} />
+                  <Bar dataKey="healthy" fill="var(--color-healthy)" radius={4} maxBarSize={16} background={{ fill: "hsl(var(--muted))" }} />
+                </BarChart>
+              </ChartContainer>
+              <p className="mt-1 text-xs text-muted-foreground">
+                DB: {systemHealth?.services?.database?.ok ? "ok" : "degraded"}
+                {systemHealth?.services?.database?.error ? ` (${systemHealth.services.database.error})` : ""}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">time_utc: {asDate(systemHealth?.time_utc)}</p>
+            </article>
+
             <article className="ds-card p-4">
               <p className="text-xs font-medium text-muted-foreground">Connector Diagnostics</p>
+              {connectorDiagnosticsChart.length > 0 ? (
+                <ChartContainer
+                  className="mt-2 h-28 w-full"
+                  config={{
+                    ok: { label: "OK", color: "hsl(var(--chart-2))" },
+                    stale: { label: "Stale", color: "hsl(var(--destructive))" },
+                  }}
+                >
+                  <BarChart data={connectorDiagnosticsChart} margin={{ left: 0, right: 0, top: 0, bottom: 0 }}>
+                    <CartesianGrid vertical={false} />
+                    <XAxis dataKey="provider" tickLine={false} axisLine={false} />
+                    <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={24} />
+                    <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                    <Bar dataKey="ok" stackId="status" fill="var(--color-ok)" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="stale" stackId="status" fill="var(--color-stale)" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ChartContainer>
+              ) : null}
               <div className="mt-2 space-y-1">
                 {connectorDiagnostics.length === 0 ? (
                   <p className="text-xs text-muted-foreground">No diagnostics.</p>
@@ -587,6 +702,28 @@ export default function DashboardAdminOpsPage() {
 
             <article className="ds-card p-4">
               <p className="text-xs font-medium text-muted-foreground">External Connector Health (24h)</p>
+              {externalHealthChart.length > 0 ? (
+                <ChartContainer
+                  className="mt-2 h-28 w-full"
+                  config={{
+                    calls: { label: "Calls", color: "hsl(var(--chart-1))" },
+                    failRate: { label: "Fail Rate (%)", color: "hsl(var(--destructive))" },
+                  }}
+                >
+                  <ComposedChart data={externalHealthChart} margin={{ left: 0, right: 0, top: 0, bottom: 0 }}>
+                    <CartesianGrid vertical={false} />
+                    <XAxis dataKey="connector" tickLine={false} axisLine={false} />
+                    <YAxis yAxisId="left" domain={[0, 100]} tickFormatter={(value) => `${value}%`} tickLine={false} axisLine={false} width={32} />
+                    <YAxis yAxisId="right" orientation="right" allowDecimals={false} tickLine={false} axisLine={false} width={24} />
+                    <ChartTooltip
+                      cursor={false}
+                      content={<ChartTooltipContent formatter={(value, name) => (name === "failRate" ? `${Number(value).toFixed(1)}%` : Number(value).toLocaleString())} />}
+                    />
+                    <Bar yAxisId="right" dataKey="calls" fill="var(--color-calls)" radius={4} maxBarSize={24} />
+                    <Line yAxisId="left" dataKey="failRate" type="monotone" stroke="var(--color-failRate)" strokeWidth={2} dot={{ r: 2 }} />
+                  </ComposedChart>
+                </ChartContainer>
+              ) : null}
               <div className="mt-2 space-y-1">
                 {externalHealth.length === 0 ? (
                   <p className="text-xs text-muted-foreground">No health samples.</p>
@@ -602,6 +739,22 @@ export default function DashboardAdminOpsPage() {
 
             <article className="ds-card p-4">
               <p className="text-xs font-medium text-muted-foreground">Rate-limit / Quota Hits</p>
+              {rateLimitTrendChart.length > 0 ? (
+                <ChartContainer
+                  className="mt-2 h-28 w-full"
+                  config={{
+                    count: { label: "Hits", color: "hsl(var(--destructive))" },
+                  }}
+                >
+                  <BarChart data={rateLimitTrendChart} margin={{ left: 0, right: 0, top: 0, bottom: 0 }}>
+                    <CartesianGrid vertical={false} />
+                    <XAxis dataKey="label" tickLine={false} axisLine={false} />
+                    <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={24} />
+                    <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                    <Bar dataKey="count" fill="var(--color-count)" radius={4} />
+                  </BarChart>
+                </ChartContainer>
+              ) : null}
               <div className="mt-2 space-y-1">
                 {rateLimitEvents.length === 0 ? (
                   <p className="text-xs text-muted-foreground">No events.</p>
@@ -613,6 +766,11 @@ export default function DashboardAdminOpsPage() {
                   ))
                 )}
               </div>
+              {rateLimitCodeSummary.length > 0 ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  top codes: {rateLimitCodeSummary.map((item) => `${item.code} (${item.count})`).join(", ")}
+                </p>
+              ) : null}
             </article>
           </div>
         </>

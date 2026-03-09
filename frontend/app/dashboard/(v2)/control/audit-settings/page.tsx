@@ -4,6 +4,7 @@ import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
@@ -33,6 +34,26 @@ type TeamItem = {
   name: string;
 };
 
+const RECOMMENDED_MASK_KEYS = ["token", "access_token", "authorization", "password", "secret"];
+const SAMPLE_AUDIT_PAYLOAD = {
+  actor: {
+    user_id: "9f8e7d6c-1234-4abc-9def-000000000001",
+    email: "owner@example.com",
+  },
+  request: {
+    authorization: "Bearer eyJhbGciOi...",
+    ip: "203.0.113.10",
+  },
+  integration: {
+    token: "xoxb-1234-secret-token",
+    access_token: "ghp_example_access_token",
+  },
+  credentials: {
+    password: "plain-text-password",
+    secret: "internal-secret-value",
+  },
+};
+
 function asDate(value?: string | null): string {
   if (!value) {
     return "-";
@@ -42,6 +63,38 @@ function asDate(value?: string | null): string {
     return value;
   }
   return date.toLocaleString();
+}
+
+function normalizeMaskKeys(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const deduped = new Set<string>();
+  for (const item of value) {
+    const key = String(item ?? "").trim().toLowerCase();
+    if (key) {
+      deduped.add(key);
+    }
+  }
+  return Array.from(deduped);
+}
+
+function applyMaskPolicy(value: unknown, maskKeys: Set<string>): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => applyMaskPolicy(item, maskKeys));
+  }
+  if (value && typeof value === "object") {
+    const next: Record<string, unknown> = {};
+    for (const [key, fieldValue] of Object.entries(value as Record<string, unknown>)) {
+      if (maskKeys.has(key.toLowerCase())) {
+        next[key] = "***";
+      } else {
+        next[key] = applyMaskPolicy(fieldValue, maskKeys);
+      }
+    }
+    return next;
+  }
+  return value;
 }
 
 export default function DashboardAuditSettingsPage() {
@@ -60,6 +113,10 @@ export default function DashboardAuditSettingsPage() {
   const [retentionDraft, setRetentionDraft] = useState("90");
   const [exportEnabledDraft, setExportEnabledDraft] = useState(false);
   const [maskingPolicyDraft, setMaskingPolicyDraft] = useState("{}");
+  const [maskingPolicyBaseDraft, setMaskingPolicyBaseDraft] = useState<Record<string, unknown>>({});
+  const [maskKeysDraft, setMaskKeysDraft] = useState<string[]>([]);
+  const [maskKeyInputDraft, setMaskKeyInputDraft] = useState("");
+  const [maskingEditorMode, setMaskingEditorMode] = useState<"basic" | "advanced">("basic");
 
   const [teams, setTeams] = useState<TeamItem[]>([]);
   const [teamFilter, setTeamFilter] = useState("");
@@ -162,9 +219,25 @@ export default function DashboardAuditSettingsPage() {
     setSettings(settingsRes.data);
     setRetentionDraft(String(settingsRes.data.retention_days ?? 90));
     setExportEnabledDraft(Boolean(settingsRes.data.export_enabled));
-    setMaskingPolicyDraft(JSON.stringify(settingsRes.data.masking_policy ?? {}, null, 2));
+    const nextPolicy = (settingsRes.data.masking_policy ?? {}) as Record<string, unknown>;
+    setMaskingPolicyBaseDraft(nextPolicy);
+    setMaskKeysDraft(normalizeMaskKeys(nextPolicy.mask_keys));
+    setMaskingPolicyDraft(JSON.stringify(nextPolicy, null, 2));
     setLoading(false);
   }, [fetchScopeOptions, handle401, isOrgScope, isUserScope]);
+
+  const addMaskKey = useCallback(() => {
+    const next = String(maskKeyInputDraft || "").trim().toLowerCase();
+    if (!next) {
+      return;
+    }
+    setMaskKeysDraft((prev) => (prev.includes(next) ? prev : [...prev, next]));
+    setMaskKeyInputDraft("");
+  }, [maskKeyInputDraft]);
+
+  const removeMaskKey = useCallback((key: string) => {
+    setMaskKeysDraft((prev) => prev.filter((item) => item !== key));
+  }, []);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -179,12 +252,19 @@ export default function DashboardAuditSettingsPage() {
     }
 
     let maskingPolicy: Record<string, unknown> = {};
-    try {
-      maskingPolicy = JSON.parse(maskingPolicyDraft) as Record<string, unknown>;
-    } catch {
-      setError("Masking policy JSON is invalid.");
-      setSaving(false);
-      return;
+    if (maskingEditorMode === "advanced") {
+      try {
+        maskingPolicy = JSON.parse(maskingPolicyDraft) as Record<string, unknown>;
+      } catch {
+        setError("Masking policy JSON is invalid.");
+        setSaving(false);
+        return;
+      }
+    } else {
+      maskingPolicy = {
+        ...maskingPolicyBaseDraft,
+        mask_keys: normalizeMaskKeys(maskKeysDraft),
+      };
     }
 
     const response = await dashboardApiRequest<AuditSettings>("/api/audit/settings", {
@@ -215,7 +295,7 @@ export default function DashboardAuditSettingsPage() {
     await fetchAuditSettings();
     setMessage("Audit settings saved.");
     setSaving(false);
-  }, [exportEnabledDraft, fetchAuditSettings, handle401, maskingPolicyDraft, retentionDraft]);
+  }, [exportEnabledDraft, fetchAuditSettings, handle401, maskKeysDraft, maskingEditorMode, maskingPolicyBaseDraft, maskingPolicyDraft, retentionDraft]);
 
   const handleExport = useCallback(
     async (format: "jsonl" | "csv") => {
@@ -381,13 +461,104 @@ export default function DashboardAuditSettingsPage() {
               </Button>
             </div>
 
-            <textarea
-              value={maskingPolicyDraft}
-              onChange={(event) => setMaskingPolicyDraft(event.target.value)}
-              disabled={!canUpdateSettings}
-              className="ds-input mt-3 min-h-[140px] w-full rounded-md px-3 py-2 text-sm font-mono"
-              placeholder='Masking policy JSON, e.g. {"mask_keys":["token","secret"]}'
-            />
+            <div className="mt-3 rounded-md border border-border p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">Masking Policy</p>
+                <Tabs
+                  value={maskingEditorMode}
+                  onValueChange={(value) => setMaskingEditorMode(value as "basic" | "advanced")}
+                >
+                  <TabsList className="h-8">
+                    <TabsTrigger value="basic" className="h-7 px-2 text-xs">Basic</TabsTrigger>
+                    <TabsTrigger value="advanced" className="h-7 px-2 text-xs">Advanced JSON</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
+
+              {maskingEditorMode === "basic" ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Add keys that should be masked in audit payloads. Example: token, password, secret.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      value={maskKeyInputDraft}
+                      onChange={(event) => setMaskKeyInputDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          addMaskKey();
+                        }
+                      }}
+                      disabled={!canUpdateSettings}
+                      placeholder="Add mask key (e.g. api_key)"
+                      className="ds-input h-10 min-w-[240px] flex-1 rounded-md px-3 text-sm"
+                    />
+                    <Button
+                      type="button"
+                      onClick={addMaskKey}
+                      disabled={!canUpdateSettings}
+                      className="ds-btn h-10 rounded-md px-3 text-xs disabled:opacity-60"
+                    >
+                      Add key
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => setMaskKeysDraft(RECOMMENDED_MASK_KEYS)}
+                      disabled={!canUpdateSettings}
+                      className="h-10 rounded-md border border-border bg-card px-3 text-xs text-foreground hover:bg-accent"
+                    >
+                      Use recommended keys
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {maskKeysDraft.length === 0 ? <p className="text-xs text-muted-foreground">No mask keys added.</p> : null}
+                    {maskKeysDraft.map((key) => (
+                      <span key={`mask-key-${key}`} className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-xs">
+                        {key}
+                        {canUpdateSettings ? (
+                          <button
+                            type="button"
+                            onClick={() => removeMaskKey(key)}
+                            className="text-muted-foreground hover:text-foreground"
+                            aria-label={`Remove ${key}`}
+                          >
+                            x
+                          </button>
+                        ) : null}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="grid gap-2 lg:grid-cols-2">
+                    <div className="rounded-md border border-border p-2">
+                      <p className="mb-1 text-xs font-medium text-muted-foreground">Preview (before masking)</p>
+                      <pre className="overflow-x-auto text-[11px] text-muted-foreground">
+                        {JSON.stringify(SAMPLE_AUDIT_PAYLOAD, null, 2)}
+                      </pre>
+                    </div>
+                    <div className="rounded-md border border-border p-2">
+                      <p className="mb-1 text-xs font-medium text-muted-foreground">Preview (after masking)</p>
+                      <pre className="overflow-x-auto text-[11px] text-muted-foreground">
+                        {JSON.stringify(applyMaskPolicy(SAMPLE_AUDIT_PAYLOAD, new Set(normalizeMaskKeys(maskKeysDraft))), null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    Advanced mode accepts raw JSON. Use when you need custom policy fields beyond mask_keys.
+                  </p>
+                  <textarea
+                    value={maskingPolicyDraft}
+                    onChange={(event) => setMaskingPolicyDraft(event.target.value)}
+                    disabled={!canUpdateSettings}
+                    className="ds-input min-h-[140px] w-full rounded-md px-3 py-2 text-sm font-mono"
+                    placeholder='{"mask_keys":["token","secret"]}'
+                  />
+                </div>
+              )}
+            </div>
 
             {!canUpdateSettings ? <p className="mt-2 text-xs text-muted-foreground">Audit settings update is organization owner-only (team scope is read-only).</p> : null}
             <p className="mt-2 text-xs text-muted-foreground">updated_at: {asDate(settings?.updated_at)}</p>

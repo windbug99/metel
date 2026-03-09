@@ -96,6 +96,7 @@ async def connector_diagnostics(request: Request):
         supabase.table("oauth_tokens")
         .select("provider,workspace_id,workspace_name,granted_scopes,updated_at")
         .eq("user_id", user_id)
+        .in_("provider", ["notion", "linear"])
         .execute()
     ).data or []
     now = datetime.now(timezone.utc)

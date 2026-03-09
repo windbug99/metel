@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
@@ -155,7 +154,6 @@ export default function DashboardOAuthConnectionsPage() {
   const [policyError, setPolicyError] = useState<string | null>(null);
   const [oauthPolicy, setOauthPolicy] = useState<OrganizationOAuthPolicyPayload["item"] | null>(null);
   const [canManagePolicy, setCanManagePolicy] = useState(false);
-  const [activePolicyTab, setActivePolicyTab] = useState<"allowed" | "required" | "blocked">("allowed");
   const [allowedDraft, setAllowedDraft] = useState<string[]>([]);
   const [requiredDraft, setRequiredDraft] = useState<string[]>([]);
   const [blockedDraft, setBlockedDraft] = useState<string[]>([]);
@@ -238,50 +236,33 @@ export default function DashboardOAuthConnectionsPage() {
     setPolicyLoading(false);
   }, [handle401, scope.organizationId, scope.scope]);
 
-  const toggleProvider = useCallback((target: "allowed" | "required" | "blocked", provider: string) => {
+  const setProviderPolicyState = useCallback((provider: string, nextState: "allowed" | "required" | "blocked" | "off") => {
     const normalized = String(provider ?? "").trim().toLowerCase();
     if (!normalized) {
       return;
     }
-    const toggle = (prev: string[]) => {
-      if (prev.includes(normalized)) {
-        return prev.filter((item) => item !== normalized);
-      }
-      return normalizeProviders([...prev, normalized]);
-    };
-    if (target === "allowed") {
-      setAllowedDraft((prev) => {
-        const next = toggle(prev);
-        if (!next.includes(normalized)) {
-          // required must always be a subset of allowed.
-          setRequiredDraft((requiredPrev) => requiredPrev.filter((item) => item !== normalized));
-        }
-        return next;
-      });
-    } else if (target === "required") {
-      setRequiredDraft((prev) => {
-        const next = toggle(prev);
-        if (next.includes(normalized)) {
-          // required provider should be auto-allowed and not blocked.
-          setAllowedDraft((allowedPrev) =>
-            allowedPrev.includes(normalized) ? allowedPrev : normalizeProviders([...allowedPrev, normalized])
-          );
-          setBlockedDraft((blockedPrev) => blockedPrev.filter((item) => item !== normalized));
-        }
-        return next;
-      });
-    } else {
-      setBlockedDraft((prev) => {
-        const next = toggle(prev);
-        if (next.includes(normalized)) {
-          // blocked cannot overlap with required.
-          setRequiredDraft((requiredPrev) => requiredPrev.filter((item) => item !== normalized));
-        }
-        return next;
-      });
+    const nextAllowed = new Set(allowedDraft);
+    const nextRequired = new Set(requiredDraft);
+    const nextBlocked = new Set(blockedDraft);
+
+    nextAllowed.delete(normalized);
+    nextRequired.delete(normalized);
+    nextBlocked.delete(normalized);
+
+    if (nextState === "allowed") {
+      nextAllowed.add(normalized);
+    } else if (nextState === "required") {
+      nextAllowed.add(normalized);
+      nextRequired.add(normalized);
+    } else if (nextState === "blocked") {
+      nextBlocked.add(normalized);
     }
+
+    setAllowedDraft(normalizeProviders(Array.from(nextAllowed)));
+    setRequiredDraft(normalizeProviders(Array.from(nextRequired)));
+    setBlockedDraft(normalizeProviders(Array.from(nextBlocked)));
     setPolicySaveMessage(null);
-  }, []);
+  }, [allowedDraft, blockedDraft, requiredDraft]);
 
   const saveOrgPolicy = useCallback(async () => {
     if (scope.scope !== "org" || scope.organizationId === null || !canManagePolicy) {
@@ -437,6 +418,14 @@ export default function DashboardOAuthConnectionsPage() {
     return Array.from(new Set(["notion", "linear", ...allowedDraft, ...requiredDraft, ...blockedDraft])).sort();
   }, [allowedDraft, blockedDraft, requiredDraft]);
 
+  const providerStateSummary = useMemo(() => {
+    return {
+      allowed: allowedDraft.length,
+      required: requiredDraft.length,
+      blocked: blockedDraft.length,
+    };
+  }, [allowedDraft.length, blockedDraft.length, requiredDraft.length]);
+
   if (scope.scope !== "user") {
     return (
       <section className="space-y-4">
@@ -468,57 +457,66 @@ export default function DashboardOAuthConnectionsPage() {
               {scope.scope === "org" ? (
                 <div className="space-y-3">
                   <p className="text-sm font-medium">Policy Editor</p>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {[
-                      { key: "allowed" as const, label: "Allowed Providers" },
-                      { key: "required" as const, label: "Required Providers" },
-                      { key: "blocked" as const, label: "Blocked Providers" },
-                    ].map((tab) => (
-                      <Button
-                        key={tab.key}
-                        type="button"
-                        onClick={() => setActivePolicyTab(tab.key)}
-                        className={`h-9 rounded-md px-3 text-xs ${
-                          activePolicyTab === tab.key ? "bg-sidebar-accent text-sidebar-accent-foreground" : "ds-btn"
-                        }`}
-                        disabled={savingPolicy}
-                      >
-                        {tab.label}
-                      </Button>
-                    ))}
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span className="rounded-full border border-border px-2 py-1">Allowed {providerStateSummary.allowed}</span>
+                    <span className="rounded-full border border-border px-2 py-1">Required {providerStateSummary.required}</span>
+                    <span className="rounded-full border border-border px-2 py-1">Blocked {providerStateSummary.blocked}</span>
                   </div>
 
                   <div className="space-y-2 rounded-md border border-border p-3">
                     <p className="text-xs text-muted-foreground">
-                      Toggle providers for <span className="font-medium text-foreground">{activePolicyTab}</span> policy.
+                      Set each provider policy directly. Required providers are auto-included in Allowed.
                     </p>
                     <div className="grid gap-2 sm:grid-cols-2">
                       {providerCatalog.map((provider) => {
-                        const checked =
-                          activePolicyTab === "allowed"
-                            ? allowedDraft.includes(provider)
-                            : activePolicyTab === "required"
-                              ? requiredDraft.includes(provider)
-                              : blockedDraft.includes(provider);
+                        const currentState = requiredDraft.includes(provider)
+                          ? "required"
+                          : blockedDraft.includes(provider)
+                            ? "blocked"
+                            : allowedDraft.includes(provider)
+                              ? "allowed"
+                              : "off";
                         const logoSrc = providerLogoSrc(provider);
                         return (
-                          <label key={provider} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
-                            <span className="flex items-center gap-2">
-                              {logoSrc ? (
-                                <Image src={logoSrc} alt={`${formatProviderLabel(provider)} logo`} width={16} height={16} className="h-4 w-4 shrink-0" />
-                              ) : (
-                                <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-border text-[10px]">
-                                  {formatProviderLabel(provider).slice(0, 1)}
-                                </span>
-                              )}
-                              <span>{formatProviderLabel(provider)}</span>
-                            </span>
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={() => toggleProvider(activePolicyTab, provider)}
-                              disabled={!canManagePolicy || savingPolicy}
-                            />
-                          </label>
+                          <article key={provider} className="space-y-2 rounded-md border border-border px-3 py-2 text-sm">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="flex items-center gap-2">
+                                {logoSrc ? (
+                                  <Image src={logoSrc} alt={`${formatProviderLabel(provider)} logo`} width={16} height={16} className="h-4 w-4 shrink-0" />
+                                ) : (
+                                  <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-border text-[10px]">
+                                    {formatProviderLabel(provider).slice(0, 1)}
+                                  </span>
+                                )}
+                                <span>{formatProviderLabel(provider)}</span>
+                              </span>
+                              <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                                {currentState}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-4 gap-1">
+                              {[
+                                { key: "allowed" as const, label: "Allow" },
+                                { key: "required" as const, label: "Require" },
+                                { key: "blocked" as const, label: "Block" },
+                                { key: "off" as const, label: "Off" },
+                              ].map((option) => (
+                                <button
+                                  key={`${provider}-${option.key}`}
+                                  type="button"
+                                  onClick={() => setProviderPolicyState(provider, option.key)}
+                                  disabled={!canManagePolicy || savingPolicy}
+                                  className={`h-8 rounded-md border px-2 text-[11px] ${
+                                    currentState === option.key
+                                      ? "border-primary bg-primary/10 text-primary"
+                                      : "border-border text-muted-foreground hover:bg-accent"
+                                  } disabled:cursor-not-allowed disabled:opacity-50`}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
+                          </article>
                         );
                       })}
                     </div>
