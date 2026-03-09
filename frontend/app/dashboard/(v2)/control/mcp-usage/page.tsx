@@ -113,11 +113,22 @@ export default function DashboardMcpUsagePage() {
   const [toolNameFilter, setToolNameFilter] = useState("");
   const [fromFilter, setFromFilter] = useState("");
   const [toFilter, setToFilter] = useState("");
+  const [appliedStatusFilter, setAppliedStatusFilter] = useState<"all" | "success" | "fail">("all");
+  const [appliedToolNameFilter, setAppliedToolNameFilter] = useState("");
+  const [appliedFromFilter, setAppliedFromFilter] = useState("");
+  const [appliedToFilter, setAppliedToFilter] = useState("");
 
   const handle401 = useCallback(() => {
     const next = encodeURIComponent(buildNextPath(pathname, window.location.search));
     router.replace(`/?next=${next}`);
   }, [pathname, router]);
+
+  const handleApplyFilters = useCallback(() => {
+    setAppliedStatusFilter(statusFilter);
+    setAppliedToolNameFilter(toolNameFilter);
+    setAppliedFromFilter(fromFilter);
+    setAppliedToFilter(toFilter);
+  }, [fromFilter, statusFilter, toFilter, toolNameFilter]);
 
   const fetchToolCalls = useCallback(async () => {
     setToolCallsLoading(true);
@@ -125,21 +136,21 @@ export default function DashboardMcpUsagePage() {
 
     const query = new URLSearchParams();
     query.set("limit", "20");
-    query.set("status", statusFilter);
+    query.set("status", appliedStatusFilter);
     if (scope.organizationId !== null) {
       query.set("organization_id", String(scope.organizationId));
     }
     if (scope.teamId !== null) {
       query.set("team_id", String(scope.teamId));
     }
-    if (toolNameFilter.trim()) {
-      query.set("tool_name", toolNameFilter.trim());
+    if (appliedToolNameFilter.trim()) {
+      query.set("tool_name", appliedToolNameFilter.trim());
     }
-    if (fromFilter) {
-      query.set("from", new Date(`${fromFilter}T00:00:00`).toISOString());
+    if (appliedFromFilter) {
+      query.set("from", new Date(`${appliedFromFilter}T00:00:00`).toISOString());
     }
-    if (toFilter) {
-      query.set("to", new Date(`${toFilter}T23:59:59.999`).toISOString());
+    if (appliedToFilter) {
+      query.set("to", new Date(`${appliedToFilter}T23:59:59.999`).toISOString());
     }
 
     const result = await dashboardApiGet<ToolCallListPayload>(`/api/tool-calls?${query.toString()}`);
@@ -162,7 +173,7 @@ export default function DashboardMcpUsagePage() {
     setToolCalls(Array.isArray(result.data.items) ? result.data.items : []);
     setToolCallsSummary(result.data.summary ?? null);
     setToolCallsLoading(false);
-  }, [fromFilter, handle401, scope.organizationId, scope.teamId, statusFilter, toFilter, toolNameFilter]);
+  }, [appliedFromFilter, appliedStatusFilter, appliedToFilter, appliedToolNameFilter, handle401, scope.organizationId, scope.teamId]);
 
   const fetchTrendAndBreakdown = useCallback(async () => {
     setTrendLoading(true);
@@ -348,7 +359,7 @@ export default function DashboardMcpUsagePage() {
             }}
             className="shrink-0"
           />
-          <Button type="button" onClick={() => void fetchToolCalls()} disabled={toolCallsLoading} className="ds-btn h-11 shrink-0 rounded-md px-3 text-sm disabled:opacity-60 md:h-9">
+          <Button type="button" onClick={handleApplyFilters} disabled={toolCallsLoading} className="ds-btn h-11 shrink-0 rounded-md px-3 text-sm disabled:opacity-60 md:h-9">
             {toolCallsLoading ? "Loading..." : "Apply"}
           </Button>
         </div>

@@ -31,6 +31,48 @@ import {
 } from "./nav-model";
 
 type DashboardScope = "org" | "team" | "user";
+type IncidentBannerPayload = {
+  organization_id?: number | null;
+  enabled?: boolean;
+  message?: string | null;
+  severity?: "info" | "warning" | "critical" | string;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  updated_at?: string | null;
+};
+type OrganizationOption = {
+  id: number;
+  name: string;
+};
+
+function parseOrgId(value: string): number | null {
+  const text = String(value || "").trim();
+  if (!text || text === "all") {
+    return null;
+  }
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function shouldShowIncidentBanner(payload: IncidentBannerPayload | null): boolean {
+  if (!payload || !payload.enabled || !String(payload.message || "").trim()) {
+    return false;
+  }
+  const now = Date.now();
+  if (payload.starts_at) {
+    const start = new Date(payload.starts_at).getTime();
+    if (Number.isFinite(start) && now < start) {
+      return false;
+    }
+  }
+  if (payload.ends_at) {
+    const end = new Date(payload.ends_at).getTime();
+    if (Number.isFinite(end) && now > end) {
+      return false;
+    }
+  }
+  return true;
+}
 
 function normalizeDashboardScope(params: URLSearchParams): boolean {
   let changed = false;
@@ -88,6 +130,9 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
   const [permissionLoading, setPermissionLoading] = useState(true);
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [forbiddenBanner, setForbiddenBanner] = useState<string | null>(null);
+  const [orgOptions, setOrgOptions] = useState<OrganizationOption[]>([]);
+  const [incidentBanner, setIncidentBanner] = useState<IncidentBannerPayload | null>(null);
+  const [dismissedIncidentUpdatedAt, setDismissedIncidentUpdatedAt] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [viewerUsername, setViewerUsername] = useState("user");
   const [viewerEmail, setViewerEmail] = useState("");
@@ -166,6 +211,27 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
   const currentRange = searchParams.get("range") ?? "24h";
   const isMemberRole = permissionSnapshot?.role === "member";
   const breadcrumb = useMemo(() => buildBreadcrumb(pathname, currentScope), [currentScope, pathname]);
+  const activeOrgId = useMemo(() => {
+    const fromQuery = parseOrgId(currentOrg);
+    if (fromQuery !== null) {
+      return fromQuery;
+    }
+    if (orgIds.length > 0) {
+      return Number(orgIds[0]);
+    }
+    return null;
+  }, [currentOrg, orgIds]);
+  const currentOrgName = useMemo(() => {
+    if (currentOrg === "all") {
+      return null;
+    }
+    const orgId = parseOrgId(currentOrg);
+    if (orgId === null) {
+      return null;
+    }
+    const hit = orgOptions.find((item) => item.id === orgId);
+    return hit?.name ?? null;
+  }, [currentOrg, orgOptions]);
 
   const setGlobalQuery = useCallback(
     (next: Partial<Record<(typeof GLOBAL_QUERY_KEYS)[number], string>>) => {
@@ -215,9 +281,62 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
     setPermissionLoading(false);
   }, [pathname, router]);
 
+  const fetchOrganizations = useCallback(async () => {
+    const result = await dashboardApiGet<{ items?: Array<{ id?: number; name?: string | null }> }>("/api/organizations");
+    if (!result.ok || !result.data || !Array.isArray(result.data.items)) {
+      return;
+    }
+    const next = result.data.items
+      .map((item) => {
+        const id = Number(item.id);
+        if (!Number.isFinite(id)) {
+          return null;
+        }
+        return {
+          id,
+          name: String(item.name || `Org #${id}`),
+        };
+      })
+      .filter((item): item is OrganizationOption => item !== null);
+    setOrgOptions(next);
+  }, []);
+
   useEffect(() => {
     void fetchPermissions();
   }, [fetchPermissions]);
+
+  useEffect(() => {
+    if (!permissionSnapshot) {
+      setOrgOptions([]);
+      return;
+    }
+    void fetchOrganizations();
+  }, [fetchOrganizations, permissionSnapshot]);
+
+  useEffect(() => {
+    if (!permissionSnapshot || activeOrgId === null) {
+      setIncidentBanner(null);
+      return;
+    }
+
+    let active = true;
+    const fetchIncidentBanner = async () => {
+      const result = await dashboardApiGet<IncidentBannerPayload>(`/api/admin/incident-banner?organization_id=${activeOrgId}`);
+      if (!active) {
+        return;
+      }
+      if (!result.ok || !result.data) {
+        setIncidentBanner(null);
+        return;
+      }
+      setIncidentBanner(result.data);
+    };
+
+    void fetchIncidentBanner();
+    return () => {
+      active = false;
+    };
+  }, [activeOrgId, permissionSnapshot]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("dashboard-v2-theme");
@@ -328,6 +447,7 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
 
   const triggerRefresh = useCallback(() => {
     void fetchPermissions();
+    void fetchOrganizations();
     if (typeof window !== "undefined") {
       window.dispatchEvent(
         new CustomEvent("dashboard:v2:refresh", {
@@ -335,7 +455,17 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
         })
       );
     }
-  }, [fetchPermissions, pathname]);
+  }, [fetchOrganizations, fetchPermissions, pathname]);
+
+  useEffect(() => {
+    const handler = () => {
+      void fetchOrganizations();
+    };
+    window.addEventListener("dashboard:v2:orgs-updated", handler as EventListener);
+    return () => {
+      window.removeEventListener("dashboard:v2:orgs-updated", handler as EventListener);
+    };
+  }, [fetchOrganizations]);
 
   useEffect(() => {
     const applyThemeFromStorage = () => {
@@ -496,7 +626,9 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
           buildNavHref={buildNavHref}
           roleLabel={permissionSnapshot?.role ?? "loading"}
           currentOrg={currentOrg}
+          currentOrgName={currentOrgName}
           orgIds={orgIds}
+          orgOptions={orgOptions}
           isMemberRole={isMemberRole}
           setGlobalQuery={setGlobalQuery}
           onAddOrganization={openCreateOrganizationModal}
@@ -542,6 +674,15 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
                 />
               ) : null}
               {permissionError ? <AlertBanner message={permissionError} tone="danger" /> : null}
+              {shouldShowIncidentBanner(incidentBanner) &&
+              dismissedIncidentUpdatedAt !== (incidentBanner?.updated_at ?? null) ? (
+                <AlertBanner
+                  message={String(incidentBanner?.message || "")}
+                  tone={incidentBanner?.severity === "critical" ? "danger" : incidentBanner?.severity === "info" ? "info" : "warning"}
+                  dismissible
+                  onDismiss={() => setDismissedIncidentUpdatedAt(incidentBanner?.updated_at ?? "manual")}
+                />
+              ) : null}
               {permissionLoading ? <p className="mb-3 text-sm text-muted-foreground">Loading permissions...</p> : null}
               {children}
             </div>

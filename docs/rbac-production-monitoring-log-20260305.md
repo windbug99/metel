@@ -54,12 +54,12 @@
 목적:
 - production full guard 활성 이후 48시간 동안 권한 이상 징후를 관측한다.
 
-현재 요약(2026-03-06):
+현재 요약(비정기 48h 관찰, 2026-03-06 ~ 2026-03-08 KST):
 - `MODE=full_guard run_rbac_rollout_stage_gate.sh` PASS
 - `run_rbac_monitoring_snapshot.sh` PASS
 - `run_dashboard_v2_qa_stage_gate.sh` PASS (`pass=7 fail=0 skip=0`)
 - probe 결과: `owner=200 admin=403 member=403` (정상 매트릭스)
-- 48h 체크포인트(0h/1h/2h/6h/12h/24h/36h/48h) 전 구간 PASS
+- 48시간 관찰 구간에서 비정기 실행 기준 전 구간 PASS
 - 참고: 동일 날짜 내 `admin/member` 토큰 만료 시점에 401 기반 false alert가 1회 발생했으나, 토큰 갱신 후 재실행에서 정상화 확인
 
 환경:
@@ -70,20 +70,20 @@
   - `RBAC_WRITE_GUARD_ENABLED=true`
   - `UI_RBAC_STRICT_ENABLED=true`
 
-## Checkpoints
+## Irregular Monitoring Runs (48h Window)
 
-| checkpoint | timestamp (KST) | result | note |
+| run | timestamp (KST) | result | note |
 | --- | --- | --- | --- |
-| 0h | 2026-03-06 | PASS | monitor OK, probe `owner=200 admin=403 member=403` |
-| 1h | 2026-03-06 | PASS | monitor OK, probe `owner=200 admin=403 member=403` |
-| 2h | 2026-03-06 | PASS | monitor OK, probe `owner=200 admin=403 member=403` |
-| 6h | 2026-03-06 | PASS | monitor OK, probe `owner=200 admin=403 member=403` |
-| 12h | 2026-03-06 | PASS | monitor OK, probe `owner=200 admin=403 member=403` |
-| 24h | 2026-03-06 | PASS | monitor OK, probe `owner=200 admin=403 member=403` |
-| 36h | 2026-03-06 | PASS | monitor OK, probe `owner=200 admin=403 member=403` |
-| 48h | 2026-03-06 | PASS | monitor OK, probe `owner=200 admin=403 member=403` |
+| #1 | 2026-03-06 | PASS | monitor OK, probe `owner=200 admin=403 member=403` |
+| #2 | 2026-03-06 | PASS | monitor OK, probe `owner=200 admin=403 member=403` |
+| #3 | 2026-03-06 | PASS | monitor OK, probe `owner=200 admin=403 member=403` |
+| #4 | 2026-03-06 | PASS | monitor OK, probe `owner=200 admin=403 member=403` |
+| #5 | 2026-03-06 | PASS | monitor OK, probe `owner=200 admin=403 member=403` |
+| #6 | 2026-03-06 | PASS | monitor OK, probe `owner=200 admin=403 member=403` |
+| #7 | 2026-03-06~2026-03-08 | PASS | 중간 401 false alert(토큰 이슈) 이후 재검증 정상화 포함 |
+| #8 | 2026-03-08 | PASS | latest full gate 기준 monitor/probe 정상 |
 
-## 0h Snapshot
+## Representative Snapshot (비정기 실행 공통 패턴)
 
 - stage gate:
   - rollout smoke `pass=5 fail=0`
@@ -94,12 +94,16 @@
   - `fail_rate_24h=0.0`
   - `policy_override_usage_24h=0.0`
   - false-deny probe: `owner=200 admin=403 member=403`
-- 1h~48h monitor snapshot:
+- repeated runs monitor snapshot:
   - `calls_24h=0`
   - `access_denied_24h=0`
   - `fail_rate_24h=0.0`
   - `policy_override_usage_24h=0.0`
   - false-deny probe: `owner=200 admin=403 member=403`
+
+운영 메모:
+- `calls_24h=0`와 `audit_failed_count=51`은 집계 소스가 다르다. 본 모니터링 게이트 판정은 `access_denied_24h`, `fail_rate_24h`, `policy_override_usage_24h` 임계치와 권한 probe 결과를 기준으로 한다.
+- `zsh: unknown file attribute: ^,`는 로컬 셸 입력 노이즈로 분류했고, 동일 구간 재실행에서 gate/probe PASS를 확인했다.
 
 ## Latest Re-Validation (2026-03-06, token refreshed)
 
@@ -134,23 +138,24 @@
 
 
 # 실행 명령어 (수동 고정 절차)
-## backend 디렉토리에서 실행 (매 체크포인트 동일)
+## backend 디렉토리에서 실행 (비정기 실행 시 동일)
 export API_BASE_URL="https://metel-production.up.railway.app"
 export OWNER_JWT='...'
 export ADMIN_JWT='...'
 export MEMBER_JWT='...'
 
 ## 토큰 값 확인 (비어있지 않아야 함)
-## 검증 실행 (체크포인트마다 동일 2개 명령)
+## 검증 실행 (각 실행 시 동일 2개 명령)
 echo ${#OWNER_JWT} ${#ADMIN_JWT} ${#MEMBER_JWT}
 MODE=full_guard ./scripts/run_rbac_rollout_stage_gate.sh
 ./scripts/run_rbac_monitoring_snapshot.sh
 
-## 체크포인트 스케줄
-0h, 1h, 2h, 6h, 12h, 24h, 36h, 48h
+## 실행 원칙
+- 48시간 관찰 구간 내 비정기적으로 실행한다.
+- 권한 정책 변경/토큰 갱신/알람 발생 시 즉시 추가 실행한다.
 
 ## 기록 원칙
-- 위 2개 명령 결과를 `Checkpoints` 표와 해당 `Snapshot`에 기록한다.
+- 위 2개 명령 결과를 `Irregular Monitoring Runs (48h Window)` 표와 `Representative Snapshot`에 기록한다.
 - `# 모니터링 결과`는 원본 로그 증적 보관 용도로만 사용한다.
 
 

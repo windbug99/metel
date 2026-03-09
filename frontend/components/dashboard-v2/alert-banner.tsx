@@ -3,15 +3,16 @@
 import { Button } from "@/components/ui/button";
 type AlertBannerProps = {
   message: string;
-  tone?: "warning" | "danger";
+  tone?: "info" | "warning" | "danger";
   dismissible?: boolean;
   onDismiss?: () => void;
 };
 
 export default function AlertBanner({ message, tone = "warning", dismissible = false, onDismiss }: AlertBannerProps) {
-  const classes =
-    tone === "danger"
-      ? "border-destructive/40 bg-destructive/10 text-destructive"
+  const classes = tone === "danger"
+    ? "border-destructive/40 bg-destructive/10 text-destructive"
+    : tone === "info"
+      ? "border-primary/40 bg-primary/10 text-primary"
       : "border-chart-4/40 bg-chart-4/10 text-chart-4";
 
   return (

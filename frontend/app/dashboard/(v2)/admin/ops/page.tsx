@@ -1,12 +1,19 @@
 "use client";
 
-import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useCallback, useEffect, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { ChevronDown, Loader2 } from "lucide-react";
 
 import { buildNextPath, dashboardApiGet, dashboardApiRequest } from "../../../../../lib/dashboard-v2-client";
 import AlertBanner from "../../../../../components/dashboard-v2/alert-banner";
@@ -15,6 +22,7 @@ import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tool
 type PermissionSnapshot = {
   user_id?: string;
   role: string;
+  org_ids?: number[];
   permissions?: {
     can_read_admin_ops?: boolean;
     can_manage_incident_banner?: boolean;
@@ -98,14 +106,30 @@ function asDate(value?: string | null): string {
   return date.toLocaleString();
 }
 
+function toStartOfDayISO(value: string): string | null {
+  if (!value) {
+    return null;
+  }
+  return new Date(`${value}T00:00:00`).toISOString();
+}
+
+function toEndOfDayISO(value: string): string | null {
+  if (!value) {
+    return null;
+  }
+  return new Date(`${value}T23:59:59.999`).toISOString();
+}
+
 export default function DashboardAdminOpsPage() {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [userId, setUserId] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [canReadAdminOps, setCanReadAdminOps] = useState(false);
   const [canManageIncidentBanner, setCanManageIncidentBanner] = useState(false);
+  const [activeOrgId, setActiveOrgId] = useState<number | null>(null);
 
   const [systemHealth, setSystemHealth] = useState<SystemHealthPayload | null>(null);
   const [connectorDiagnostics, setConnectorDiagnostics] = useState<ConnectorDiagnosticItem[]>([]);
@@ -150,15 +174,26 @@ export default function DashboardAdminOpsPage() {
     }
 
     const canRead = Boolean(permissionsRes.data.permissions?.can_read_admin_ops);
+    const queryOrgRaw = (searchParams.get("org") ?? "").trim();
+    const queryOrg = queryOrgRaw && queryOrgRaw !== "all" ? Number(queryOrgRaw) : null;
+    const orgFromQuery = typeof queryOrg === "number" && Number.isFinite(queryOrg) ? queryOrg : null;
+    const orgList = Array.isArray(permissionsRes.data.org_ids) ? permissionsRes.data.org_ids : [];
+    const fallbackOrg = orgList.length > 0 ? Number(orgList[0]) : null;
+    const resolvedOrgId = orgFromQuery ?? fallbackOrg;
+
     setUserId(permissionsRes.data.user_id ?? null);
     setRole(permissionsRes.data.role ?? null);
     setCanReadAdminOps(canRead);
     setCanManageIncidentBanner(Boolean(permissionsRes.data.permissions?.can_manage_incident_banner));
+    setActiveOrgId(resolvedOrgId);
 
     if (!canRead) {
       setLoading(false);
       return;
     }
+
+    const incidentBannerPath = `/api/admin/incident-banner${resolvedOrgId !== null ? `?organization_id=${resolvedOrgId}` : ""}`;
+    const incidentRevisionPath = `/api/admin/incident-banner/revisions?limit=20${resolvedOrgId !== null ? `&organization_id=${resolvedOrgId}` : ""}`;
 
     const [
       diagnosticsRes,
@@ -172,8 +207,8 @@ export default function DashboardAdminOpsPage() {
       dashboardApiGet<{ items?: RateLimitEventItem[] }>("/api/admin/rate-limit-events?days=7&limit=20"),
       dashboardApiGet<SystemHealthPayload>("/api/admin/system-health"),
       dashboardApiGet<{ items?: ExternalHealthItem[] }>("/api/admin/external-health?days=1"),
-      dashboardApiGet<IncidentBanner>("/api/admin/incident-banner"),
-      dashboardApiGet<{ items?: IncidentBannerRevisionItem[] }>("/api/admin/incident-banner/revisions?limit=20"),
+      dashboardApiGet<IncidentBanner>(incidentBannerPath),
+      dashboardApiGet<{ items?: IncidentBannerRevisionItem[] }>(incidentRevisionPath),
     ]);
 
     if (
@@ -218,24 +253,24 @@ export default function DashboardAdminOpsPage() {
     setIncidentEnabledDraft(Boolean(incidentRes.data.enabled));
     setIncidentSeverityDraft((incidentRes.data.severity ?? "info") as "info" | "warning" | "critical");
     setIncidentMessageDraft(incidentRes.data.message ?? "");
-    setIncidentStartsAtDraft(incidentRes.data.starts_at ? incidentRes.data.starts_at.slice(0, 16) : "");
-    setIncidentEndsAtDraft(incidentRes.data.ends_at ? incidentRes.data.ends_at.slice(0, 16) : "");
+    setIncidentStartsAtDraft(incidentRes.data.starts_at ? incidentRes.data.starts_at.slice(0, 10) : "");
+    setIncidentEndsAtDraft(incidentRes.data.ends_at ? incidentRes.data.ends_at.slice(0, 10) : "");
 
     setLoading(false);
-  }, [handle401]);
+  }, [handle401, searchParams]);
 
   const handleSaveIncidentBanner = useCallback(async () => {
     setIncidentSaving(true);
     setError(null);
 
-    const response = await dashboardApiRequest("/api/admin/incident-banner", {
+    const response = await dashboardApiRequest(`/api/admin/incident-banner${activeOrgId !== null ? `?organization_id=${activeOrgId}` : ""}`, {
       method: "PATCH",
       body: {
         enabled: incidentEnabledDraft,
         severity: incidentSeverityDraft,
         message: incidentMessageDraft.trim() || null,
-        starts_at: incidentStartsAtDraft ? new Date(incidentStartsAtDraft).toISOString() : null,
-        ends_at: incidentEndsAtDraft ? new Date(incidentEndsAtDraft).toISOString() : null,
+        starts_at: toStartOfDayISO(incidentStartsAtDraft),
+        ends_at: toEndOfDayISO(incidentEndsAtDraft),
       },
     });
 
@@ -257,20 +292,20 @@ export default function DashboardAdminOpsPage() {
 
     await fetchAdminOps();
     setIncidentSaving(false);
-  }, [fetchAdminOps, handle401, incidentEnabledDraft, incidentEndsAtDraft, incidentMessageDraft, incidentSeverityDraft, incidentStartsAtDraft]);
+  }, [activeOrgId, fetchAdminOps, handle401, incidentEnabledDraft, incidentEndsAtDraft, incidentMessageDraft, incidentSeverityDraft, incidentStartsAtDraft]);
 
   const handleCreateIncidentBannerRevision = useCallback(async () => {
     setIncidentRevisionSaving(true);
     setError(null);
 
-    const response = await dashboardApiRequest("/api/admin/incident-banner/revisions", {
+    const response = await dashboardApiRequest(`/api/admin/incident-banner/revisions${activeOrgId !== null ? `?organization_id=${activeOrgId}` : ""}`, {
       method: "POST",
       body: {
         enabled: incidentEnabledDraft,
         severity: incidentSeverityDraft,
         message: incidentMessageDraft.trim() || null,
-        starts_at: incidentStartsAtDraft ? new Date(incidentStartsAtDraft).toISOString() : null,
-        ends_at: incidentEndsAtDraft ? new Date(incidentEndsAtDraft).toISOString() : null,
+        starts_at: toStartOfDayISO(incidentStartsAtDraft),
+        ends_at: toEndOfDayISO(incidentEndsAtDraft),
       },
     });
 
@@ -292,14 +327,14 @@ export default function DashboardAdminOpsPage() {
 
     await fetchAdminOps();
     setIncidentRevisionSaving(false);
-  }, [fetchAdminOps, handle401, incidentEnabledDraft, incidentEndsAtDraft, incidentMessageDraft, incidentSeverityDraft, incidentStartsAtDraft]);
+  }, [activeOrgId, fetchAdminOps, handle401, incidentEnabledDraft, incidentEndsAtDraft, incidentMessageDraft, incidentSeverityDraft, incidentStartsAtDraft]);
 
   const handleReviewIncidentBannerRevision = useCallback(
     async (revisionId: number, decision: "approve" | "reject") => {
       setIncidentRevisionReviewLoadingId(revisionId);
       setError(null);
 
-      const response = await dashboardApiRequest(`/api/admin/incident-banner/revisions/${revisionId}/review`, {
+      const response = await dashboardApiRequest(`/api/admin/incident-banner/revisions/${revisionId}/review${activeOrgId !== null ? `?organization_id=${activeOrgId}` : ""}`, {
         method: "POST",
         body: { decision },
       });
@@ -323,7 +358,7 @@ export default function DashboardAdminOpsPage() {
       await fetchAdminOps();
       setIncidentRevisionReviewLoadingId(null);
     },
-    [fetchAdminOps, handle401]
+    [activeOrgId, fetchAdminOps, handle401]
   );
 
   useEffect(() => {
@@ -423,16 +458,29 @@ export default function DashboardAdminOpsPage() {
                   />
                   enabled
                 </label>
-                <Select
-                  value={incidentSeverityDraft}
-                  onChange={(event) => setIncidentSeverityDraft(event.target.value as "info" | "warning" | "critical")}
-                  disabled={!canManageIncidentBanner}
-                  className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
-                >
-                  <option value="info">info</option>
-                  <option value="warning">warning</option>
-                  <option value="critical">critical</option>
-                </Select>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={!canManageIncidentBanner}
+                      className="h-11 min-w-[120px] justify-between rounded-md px-3 text-sm md:h-9"
+                    >
+                      {incidentSeverityDraft}
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-[140px]">
+                    <DropdownMenuRadioGroup
+                      value={incidentSeverityDraft}
+                      onValueChange={(value) => setIncidentSeverityDraft(value as "info" | "warning" | "critical")}
+                    >
+                      <DropdownMenuRadioItem value="info">info</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="warning">warning</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="critical">critical</DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button
                   type="button"
                   onClick={() => void handleSaveIncidentBanner()}
@@ -451,28 +499,25 @@ export default function DashboardAdminOpsPage() {
                 </Button>
               </div>
 
-              <Input
-                value={incidentMessageDraft}
-                onChange={(event) => setIncidentMessageDraft(event.target.value)}
-                disabled={!canManageIncidentBanner}
-                placeholder="Incident message"
-                className="ds-input mt-2 h-11 w-full rounded-md px-3 text-sm md:h-9"
-              />
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Input
-                  type="datetime-local"
-                  value={incidentStartsAtDraft}
-                  onChange={(event) => setIncidentStartsAtDraft(event.target.value)}
+                  value={incidentMessageDraft}
+                  onChange={(event) => setIncidentMessageDraft(event.target.value)}
                   disabled={!canManageIncidentBanner}
-                  className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+                  placeholder="Incident title"
+                  className="ds-input h-11 min-w-[260px] flex-1 rounded-md px-3 text-sm md:h-9"
                 />
-                <Input
-                  type="datetime-local"
-                  value={incidentEndsAtDraft}
-                  onChange={(event) => setIncidentEndsAtDraft(event.target.value)}
-                  disabled={!canManageIncidentBanner}
-                  className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
-                />
+                <div className={!canManageIncidentBanner ? "pointer-events-none opacity-60" : undefined}>
+                  <DateRangePicker
+                    from={incidentStartsAtDraft}
+                    to={incidentEndsAtDraft}
+                    onChange={(next) => {
+                      setIncidentStartsAtDraft(next.from);
+                      setIncidentEndsAtDraft(next.to);
+                    }}
+                    className="min-w-[280px]"
+                  />
+                </div>
               </div>
 
               {!canManageIncidentBanner ? (

@@ -8,7 +8,9 @@ import { cn } from "@/lib/utils";
 
 type TeamSwitcherProps = {
   currentOrg: string;
+  currentOrgName: string | null;
   orgIds: number[];
+  orgOptions: Array<{ id: number; name: string }>;
   isMemberRole: boolean;
   setGlobalQuery: (next: Partial<Record<"scope" | "org" | "team" | "range", string>>) => void;
   onAddOrganization: () => void;
@@ -20,12 +22,18 @@ const ORG_ICONS = [GalleryVerticalEnd, AudioWaveform, Command] as const;
 
 export function TeamSwitcher({
   currentOrg,
+  currentOrgName,
   orgIds,
+  orgOptions,
   setGlobalQuery,
   onAddOrganization,
   roleLabel,
   collapsed,
 }: TeamSwitcherProps) {
+  const orgEntries = orgOptions.length > 0
+    ? orgOptions
+    : orgIds.map((id) => ({ id, name: `Org #${id}` }));
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -37,7 +45,7 @@ export function TeamSwitcher({
             <GalleryVerticalEnd className="h-4 w-4" />
           </div>
           <div className={cn("grid flex-1 text-left text-sm leading-tight", collapsed && "hidden")}>
-            <span className="truncate font-semibold">{currentOrg === "all" ? "All Organizations" : `Org #${currentOrg}`}</span>
+            <span className="truncate font-semibold">{currentOrg === "all" ? "All Organizations" : currentOrgName ?? `Org #${currentOrg}`}</span>
             <span className="truncate text-xs text-muted-foreground">{roleLabel === "loading" ? "loading" : roleLabel}</span>
           </div>
           <ChevronsUpDown className={cn("size-4", collapsed && "hidden")} strokeWidth={1.5} />
@@ -49,15 +57,15 @@ export function TeamSwitcher({
         className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg border-border bg-card/95 text-foreground shadow-md backdrop-blur"
       >
         <DropdownMenuLabel className="text-xs font-light text-muted-foreground">Organizations</DropdownMenuLabel>
-        {orgIds.length === 0 ? <DropdownMenuItem className="text-sm font-light" disabled>Org: None</DropdownMenuItem> : null}
-        {orgIds.map((id, index) => {
+        {orgEntries.length === 0 ? <DropdownMenuItem className="text-sm font-light" disabled>Org: None</DropdownMenuItem> : null}
+        {orgEntries.map((item, index) => {
           const Icon = ORG_ICONS[index % ORG_ICONS.length];
           return (
-            <DropdownMenuItem key={`org-${id}`} className="gap-2 p-2 text-sm font-light" onClick={() => setGlobalQuery({ scope: "org", org: String(id), team: "all" })}>
+            <DropdownMenuItem key={`org-${item.id}`} className="gap-2 p-2 text-sm font-light" onClick={() => setGlobalQuery({ scope: "org", org: String(item.id), team: "all" })}>
               <div className="flex h-6 w-6 items-center justify-center rounded-md border">
                 <Icon className="h-3.5 w-3.5" strokeWidth={1.5} />
               </div>
-              Org #{id}
+              {item.name || `Org #${item.id}`}
               <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
             </DropdownMenuItem>
           );

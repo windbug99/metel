@@ -23,7 +23,7 @@ from app.routes.admin import (
 
 
 def _request(path: str, method: str = "GET") -> Request:
-    scope = {"type": "http", "method": method, "path": path, "headers": []}
+    scope = {"type": "http", "method": method, "path": path, "query_string": b"", "headers": []}
     return Request(scope)
 
 

@@ -62,6 +62,29 @@ def _parse_iso(value: str | None) -> str | None:
     return dt.isoformat()
 
 
+def _parse_org_id(raw: str | None) -> int | None:
+    text = str(raw or "").strip()
+    if not text or text == "all":
+        return None
+    try:
+        return int(text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid_organization_id") from exc
+
+
+def _resolve_incident_org_id(request: Request, authz_ctx, *, require_value: bool = False) -> int | None:
+    preferred = _parse_org_id(request.query_params.get("organization_id")) or _parse_org_id(request.query_params.get("org"))
+    if preferred is not None:
+        if preferred not in authz_ctx.org_ids:
+            raise HTTPException(status_code=403, detail={"code": "access_denied", "reason": "scope_mismatch"})
+        return preferred
+    if authz_ctx.org_ids:
+        return min(authz_ctx.org_ids)
+    if require_value:
+        raise HTTPException(status_code=400, detail="organization_required")
+    return None
+
+
 @router.get("/connectors/diagnostics")
 async def connector_diagnostics(request: Request):
     user_id = await get_authenticated_user_id(request)
@@ -221,15 +244,31 @@ async def get_incident_banner(request: Request):
     user_id = await get_authenticated_user_id(request)
     settings = get_settings()
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
-    rows = (
-        supabase.table("incident_banners")
-        .select("user_id,enabled,message,severity,starts_at,ends_at,updated_at")
-        .eq("user_id", user_id)
-        .limit(1)
-        .execute()
-    ).data or []
+    authz_ctx = await get_authz_context(request, user_id=user_id, supabase=supabase)
+    organization_id = _resolve_incident_org_id(request, authz_ctx, require_value=False)
+    rows = []
+    if organization_id is not None:
+        try:
+            rows = (
+                supabase.table("incident_banners")
+                .select("organization_id,enabled,message,severity,starts_at,ends_at,updated_at")
+                .eq("organization_id", organization_id)
+                .limit(1)
+                .execute()
+            ).data or []
+        except Exception:
+            rows = []
+    if not rows:
+        rows = (
+            supabase.table("incident_banners")
+            .select("user_id,enabled,message,severity,starts_at,ends_at,updated_at")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        ).data or []
     if not rows:
         return {
+            "organization_id": organization_id,
             "enabled": False,
             "message": None,
             "severity": "info",
@@ -237,7 +276,9 @@ async def get_incident_banner(request: Request):
             "ends_at": None,
             "updated_at": None,
         }
-    return rows[0]
+    row = rows[0]
+    row["organization_id"] = row.get("organization_id") or organization_id
+    return row
 
 
 @router.patch("/incident-banner")
@@ -247,12 +288,14 @@ async def update_incident_banner(request: Request, body: IncidentBannerUpdateReq
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
     authz_ctx = await get_authz_context(request, user_id=user_id, supabase=supabase)
     require_min_role(authz_ctx, Role.OWNER, method=request.method)
+    organization_id = _resolve_incident_org_id(request, authz_ctx, require_value=True)
     severity = str(body.severity or "info").strip().lower()
     if severity not in {"info", "warning", "critical"}:
         raise HTTPException(status_code=400, detail="invalid_severity")
     starts_at = _parse_iso(body.starts_at)
     ends_at = _parse_iso(body.ends_at)
     payload = {
+        "organization_id": organization_id,
         "user_id": user_id,
         "enabled": bool(body.enabled) if body.enabled is not None else False,
         "message": (body.message or "").strip() or None,
@@ -261,7 +304,10 @@ async def update_incident_banner(request: Request, body: IncidentBannerUpdateReq
         "ends_at": ends_at,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    supabase.table("incident_banners").upsert(payload, on_conflict="user_id").execute()
+    try:
+        supabase.table("incident_banners").upsert(payload, on_conflict="organization_id").execute()
+    except Exception:
+        supabase.table("incident_banners").upsert(payload, on_conflict="user_id").execute()
     return payload
 
 
@@ -272,14 +318,25 @@ async def list_incident_banner_revisions(request: Request, limit: int = Query(50
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
     authz_ctx = await get_authz_context(request, user_id=user_id, supabase=supabase)
     require_min_role(authz_ctx, Role.ADMIN, method=request.method)
-    rows = (
-        supabase.table("incident_banner_revisions")
-        .select("id,user_id,enabled,message,severity,starts_at,ends_at,status,requested_by,approved_by,approved_at,created_at,updated_at")
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    ).data or []
+    organization_id = _resolve_incident_org_id(request, authz_ctx, require_value=True)
+    try:
+        rows = (
+            supabase.table("incident_banner_revisions")
+            .select("id,organization_id,user_id,enabled,message,severity,starts_at,ends_at,status,requested_by,approved_by,approved_at,created_at,updated_at")
+            .eq("organization_id", organization_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        ).data or []
+    except Exception:
+        rows = (
+            supabase.table("incident_banner_revisions")
+            .select("id,user_id,enabled,message,severity,starts_at,ends_at,status,requested_by,approved_by,approved_at,created_at,updated_at")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        ).data or []
     return {"items": rows, "count": len(rows)}
 
 
@@ -290,6 +347,7 @@ async def create_incident_banner_revision(request: Request, body: IncidentBanner
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
     authz_ctx = await get_authz_context(request, user_id=user_id, supabase=supabase)
     require_min_role(authz_ctx, Role.ADMIN, method=request.method)
+    organization_id = _resolve_incident_org_id(request, authz_ctx, require_value=True)
     severity = str(body.severity or "info").strip().lower()
     if severity not in {"info", "warning", "critical"}:
         raise HTTPException(status_code=400, detail="invalid_severity")
@@ -297,6 +355,7 @@ async def create_incident_banner_revision(request: Request, body: IncidentBanner
     ends_at = _parse_iso(body.ends_at)
     now = datetime.now(timezone.utc).isoformat()
     payload = {
+        "organization_id": organization_id,
         "user_id": user_id,
         "enabled": bool(body.enabled) if body.enabled is not None else False,
         "message": (body.message or "").strip() or None,
@@ -319,17 +378,28 @@ async def review_incident_banner_revision(request: Request, revision_id: str, bo
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
     authz_ctx = await get_authz_context(request, user_id=user_id, supabase=supabase)
     require_min_role(authz_ctx, Role.OWNER, method=request.method)
+    organization_id = _resolve_incident_org_id(request, authz_ctx, require_value=True)
     decision = str(body.decision or "").strip().lower()
     if decision not in {"approve", "reject"}:
         raise HTTPException(status_code=400, detail="invalid_decision")
-    rows = (
-        supabase.table("incident_banner_revisions")
-        .select("id,user_id,enabled,message,severity,starts_at,ends_at,status,requested_by")
-        .eq("id", revision_id)
-        .eq("user_id", user_id)
-        .limit(1)
-        .execute()
-    ).data or []
+    try:
+        rows = (
+            supabase.table("incident_banner_revisions")
+            .select("id,organization_id,user_id,enabled,message,severity,starts_at,ends_at,status,requested_by")
+            .eq("id", revision_id)
+            .eq("organization_id", organization_id)
+            .limit(1)
+            .execute()
+        ).data or []
+    except Exception:
+        rows = (
+            supabase.table("incident_banner_revisions")
+            .select("id,user_id,enabled,message,severity,starts_at,ends_at,status,requested_by")
+            .eq("id", revision_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        ).data or []
     if not rows:
         raise HTTPException(status_code=404, detail="revision_not_found")
     revision = rows[0]
@@ -340,20 +410,33 @@ async def review_incident_banner_revision(request: Request, revision_id: str, bo
         raise HTTPException(status_code=409, detail="revision_already_reviewed")
     now = datetime.now(timezone.utc).isoformat()
     status = "approved" if decision == "approve" else "rejected"
-    supabase.table("incident_banner_revisions").update(
+    update_query = supabase.table("incident_banner_revisions").update(
         {"status": status, "approved_by": user_id, "approved_at": now, "updated_at": now}
-    ).eq("id", revision_id).eq("user_id", user_id).execute()
+    ).eq("id", revision_id)
+    if revision.get("organization_id") is not None:
+        update_query = update_query.eq("organization_id", int(revision.get("organization_id")))
+    else:
+        update_query = update_query.eq("user_id", user_id)
+    update_query.execute()
     if status == "approved":
-        supabase.table("incident_banners").upsert(
-            {
-                "user_id": user_id,
-                "enabled": bool(revision.get("enabled")),
-                "message": revision.get("message"),
-                "severity": revision.get("severity"),
-                "starts_at": revision.get("starts_at"),
-                "ends_at": revision.get("ends_at"),
-                "updated_at": now,
-            },
-            on_conflict="user_id",
-        ).execute()
+        payload = {
+            "organization_id": revision.get("organization_id") or organization_id,
+            "user_id": user_id,
+            "enabled": bool(revision.get("enabled")),
+            "message": revision.get("message"),
+            "severity": revision.get("severity"),
+            "starts_at": revision.get("starts_at"),
+            "ends_at": revision.get("ends_at"),
+            "updated_at": now,
+        }
+        try:
+            supabase.table("incident_banners").upsert(
+                payload,
+                on_conflict="organization_id",
+            ).execute()
+        except Exception:
+            supabase.table("incident_banners").upsert(
+                payload,
+                on_conflict="user_id",
+            ).execute()
     return {"ok": True, "status": status}

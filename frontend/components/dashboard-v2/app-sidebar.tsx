@@ -17,7 +17,9 @@ type AppSidebarProps = {
   buildNavHref: (targetPath: string, section?: NavItem["section"]) => string;
   roleLabel: string;
   currentOrg: string;
+  currentOrgName: string | null;
   orgIds: number[];
+  orgOptions: Array<{ id: number; name: string }>;
   isMemberRole: boolean;
   setGlobalQuery: (next: Partial<Record<"scope" | "org" | "team" | "range", string>>) => void;
   onAddOrganization: () => void;
@@ -36,7 +38,9 @@ export default function DashboardAppSidebar({
   buildNavHref,
   roleLabel,
   currentOrg,
+  currentOrgName,
   orgIds,
+  orgOptions,
   isMemberRole,
   setGlobalQuery,
   onAddOrganization,
@@ -61,7 +65,9 @@ export default function DashboardAppSidebar({
           <div className="min-w-0 flex-1">
             <TeamSwitcher
               currentOrg={currentOrg}
+              currentOrgName={currentOrgName}
               orgIds={orgIds}
+              orgOptions={orgOptions}
               isMemberRole={isMemberRole}
               setGlobalQuery={setGlobalQuery}
               onAddOrganization={onAddOrganization}

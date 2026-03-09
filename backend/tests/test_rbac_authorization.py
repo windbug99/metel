@@ -13,7 +13,7 @@ from app.routes.teams import TeamCreateRequest, create_team
 
 
 def _request(path: str, method: str = "GET") -> Request:
-    scope = {"type": "http", "method": method, "path": path, "headers": []}
+    scope = {"type": "http", "method": method, "path": path, "query_string": b"", "headers": []}
     return Request(scope)
 
 

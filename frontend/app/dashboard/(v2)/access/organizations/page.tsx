@@ -81,6 +81,13 @@ function formatDate(value?: string | null): string {
   return date.toLocaleString();
 }
 
+function notifyOrganizationsUpdated() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent("dashboard:v2:orgs-updated"));
+}
+
 export default function DashboardOrganizationsPage() {
   const pathname = usePathname();
   const router = useRouter();
@@ -219,6 +226,7 @@ export default function DashboardOrganizationsPage() {
       return;
     }
     await loadOrganizations();
+    notifyOrganizationsUpdated();
     setSavingOrganizationSettings(false);
   }, [handle401, loadOrganizations, organizationNameDraft, selectedOrgId]);
 
@@ -252,6 +260,7 @@ export default function DashboardOrganizationsPage() {
       return;
     }
     const nextItems = await loadOrganizations();
+    notifyOrganizationsUpdated();
     setDeleteConfirmName("");
     setActiveTab("users");
     if (nextItems.length === 0) {
@@ -339,6 +348,7 @@ export default function DashboardOrganizationsPage() {
     setCreateOrgName("");
     setCreateOrgDialogOpen(false);
     await loadOrganizations();
+    notifyOrganizationsUpdated();
     setCreatingOrg(false);
   }, [createOrgName, handle401, loadOrganizations]);
 
