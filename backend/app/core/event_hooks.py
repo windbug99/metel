@@ -22,6 +22,18 @@ def _signature(secret: str, body: str) -> str:
     return hmac.new(secret.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def _is_slack_webhook_url(endpoint_url: str) -> bool:
+    value = str(endpoint_url or "").strip().lower()
+    return value.startswith("https://hooks.slack.com/services/")
+
+
+def _build_slack_payload(*, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    payload_text = json.dumps(payload, ensure_ascii=False, indent=2)
+    # Slack incoming webhook expects text-like payload. Keep it concise and readable.
+    text = f"[{event_type}] webhook event\n```{payload_text}```"
+    return {"text": text[:3500]}
+
+
 def _parse_iso(value: str | None) -> datetime | None:
     text = str(value or "").strip()
     if not text:
@@ -45,7 +57,10 @@ async def _deliver_http(*, endpoint_url: str, secret: str | None, event_type: st
     status = "failed"
     http_status: int | None = None
     error_message: str | None = None
-    body = json.dumps(payload, ensure_ascii=False)
+    body_payload: dict[str, Any] = payload
+    if _is_slack_webhook_url(endpoint_url):
+        body_payload = _build_slack_payload(event_type=event_type, payload=payload)
+    body = json.dumps(body_payload, ensure_ascii=False)
     headers = {"Content-Type": "application/json", "X-Event-Type": event_type}
     normalized_secret = str(secret or "").strip()
     if normalized_secret:

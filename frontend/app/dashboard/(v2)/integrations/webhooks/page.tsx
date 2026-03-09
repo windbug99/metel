@@ -63,6 +63,12 @@ function normalizeEventTypes(value: string[]): string[] {
   return Array.from(new Set(value.map((item) => item.trim()).filter((item) => item.length > 0)));
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function validateWebhookUrl(provider: WebhookProvider, rawUrl: string): { valid: boolean; message: string } {
   const value = rawUrl.trim();
   if (!value) {
@@ -202,6 +208,55 @@ export default function DashboardIntegrationsWebhooksPage() {
     setLoading(false);
   }, [handle401, scope.organizationId, scope.scope, scope.teamId]);
 
+  const fetchLatestDeliveryForWebhook = useCallback(
+    async (webhookId: number): Promise<DeliveryItem | null> => {
+      const query = new URLSearchParams({ limit: "20", webhook_id: String(webhookId) });
+      if (scope.organizationId !== null) {
+        query.set("organization_id", String(scope.organizationId));
+      }
+      if (scope.teamId !== null) {
+        query.set("team_id", String(scope.teamId));
+      }
+      const response = await dashboardApiGet<{ items?: DeliveryItem[] }>(`/api/integrations/deliveries?${query.toString()}`);
+      if (!response.ok || !response.data) {
+        return null;
+      }
+      const items = Array.isArray(response.data.items) ? response.data.items : [];
+      if (items.length === 0) {
+        return null;
+      }
+      return items[0] ?? null;
+    },
+    [scope.organizationId, scope.teamId]
+  );
+
+  const resolveWebhookTestResult = useCallback(
+    async (webhookId: number): Promise<{ ok: boolean; message: string }> => {
+      for (let index = 0; index < 8; index += 1) {
+        const latest = await fetchLatestDeliveryForWebhook(webhookId);
+        if (latest && latest.status === "success") {
+          return {
+            ok: true,
+            message: `Delivery success (HTTP ${latest.http_status ?? 200}).`,
+          };
+        }
+        if (latest && (latest.status === "failed" || latest.status === "dead_letter")) {
+          const detail = latest.error_message ? ` ${latest.error_message}` : "";
+          return {
+            ok: false,
+            message: `Delivery failed${detail}`.trim(),
+          };
+        }
+        await sleep(900);
+      }
+      return {
+        ok: true,
+        message: "Test request accepted. Final delivery status may appear in Recent Deliveries shortly.",
+      };
+    },
+    [fetchLatestDeliveryForWebhook]
+  );
+
   const handleCreateWebhook = useCallback(async () => {
     if (!canCreateWebhook) {
       return;
@@ -253,7 +308,7 @@ export default function DashboardIntegrationsWebhooksPage() {
       return;
     }
     if (testResponse.status === 403) {
-      const message = "Webhook created, but test failed: admin role required to test delivery.";
+      const message = "Webhook created, but test request denied: admin role required.";
       setCreateTestResult({ ok: false, message });
       setTestResultByWebhookId((prev) => ({ ...prev, [createdWebhookId]: { ok: false, message } }));
       setTestingWebhookId(null);
@@ -262,7 +317,7 @@ export default function DashboardIntegrationsWebhooksPage() {
       return;
     }
     if (!testResponse.ok) {
-      const message = testResponse.error ?? "Webhook created, but test delivery failed.";
+      const message = testResponse.error ?? "Webhook created, but test request failed.";
       setCreateTestResult({ ok: false, message });
       setTestResultByWebhookId((prev) => ({ ...prev, [createdWebhookId]: { ok: false, message } }));
       setTestingWebhookId(null);
@@ -271,9 +326,9 @@ export default function DashboardIntegrationsWebhooksPage() {
       return;
     }
 
-    const successMessage = "Webhook created and test event sent successfully.";
-    setCreateTestResult({ ok: true, message: successMessage });
-    setTestResultByWebhookId((prev) => ({ ...prev, [createdWebhookId]: { ok: true, message: "Test event sent." } }));
+    const resolved = await resolveWebhookTestResult(createdWebhookId);
+    setCreateTestResult(resolved);
+    setTestResultByWebhookId((prev) => ({ ...prev, [createdWebhookId]: resolved }));
     setTestingWebhookId(null);
     setNewWebhookName("");
     setNewWebhookUrl("");
@@ -283,7 +338,7 @@ export default function DashboardIntegrationsWebhooksPage() {
     setGuideCompleted(false);
     await fetchIntegrations();
     setCreatingWebhook(false);
-  }, [canCreateWebhook, fetchIntegrations, handle401, newWebhookEvents, newWebhookName, newWebhookSecret, newWebhookUrl]);
+  }, [canCreateWebhook, fetchIntegrations, handle401, newWebhookEvents, newWebhookName, newWebhookSecret, newWebhookUrl, resolveWebhookTestResult]);
 
   const handleTestWebhook = useCallback(
     async (webhookId: number) => {
@@ -296,24 +351,29 @@ export default function DashboardIntegrationsWebhooksPage() {
         return;
       }
       if (response.status === 403) {
-        const message = "Admin role required to send test event.";
+        const message = "Test request denied: admin role required.";
         setError(message);
         setTestResultByWebhookId((prev) => ({ ...prev, [webhookId]: { ok: false, message } }));
         setTestingWebhookId(null);
         return;
       }
       if (!response.ok) {
-        const message = response.error ?? "Failed to send test event.";
+        const message = response.error ?? "Failed to send test request.";
         setError(message);
         setTestResultByWebhookId((prev) => ({ ...prev, [webhookId]: { ok: false, message } }));
         setTestingWebhookId(null);
         return;
       }
-      setTestResultByWebhookId((prev) => ({ ...prev, [webhookId]: { ok: true, message: "Test event sent." } }));
+      setTestResultByWebhookId((prev) => ({
+        ...prev,
+        [webhookId]: { ok: true, message: "Test request accepted. Checking delivery result..." },
+      }));
+      const resolved = await resolveWebhookTestResult(webhookId);
+      setTestResultByWebhookId((prev) => ({ ...prev, [webhookId]: resolved }));
       setTestingWebhookId(null);
       await fetchIntegrations();
     },
-    [fetchIntegrations, handle401]
+    [fetchIntegrations, handle401, resolveWebhookTestResult]
   );
 
   const handleProcessRetries = useCallback(async () => {
