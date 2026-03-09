@@ -27,6 +27,7 @@ export const GLOBAL_QUERY_KEYS = ["scope", "org", "team", "range"] as const;
 
 export const PAGE_QUERY_KEYS: Record<string, string[]> = {
   overview: ["overview_window"],
+  userGuide: ["guide_section"],
   profile: ["profile_tab"],
   requests: ["requests_tab"],
   security: ["security_tab"],
@@ -44,6 +45,9 @@ export const PAGE_QUERY_KEYS: Record<string, string[]> = {
 };
 
 export function currentPageKey(pathname: string): keyof typeof PAGE_QUERY_KEYS {
+  if (pathname.startsWith("/dashboard/user-guide")) {
+    return "userGuide";
+  }
   if (pathname.startsWith("/dashboard/profile")) {
     return "profile";
   }
@@ -90,6 +94,9 @@ export function currentPageKey(pathname: string): keyof typeof PAGE_QUERY_KEYS {
 }
 
 export function pageTitle(pathname: string): string {
+  if (pathname.startsWith("/dashboard/user-guide")) {
+    return "User Guide";
+  }
   if (pathname.startsWith("/dashboard/profile")) {
     return "Profile";
   }
@@ -139,6 +146,8 @@ export function buildBreadcrumb(pathname: string, scope: "org" | "team" | "user"
   let menu = "Overview";
   if (pathname.startsWith("/dashboard/access/")) {
     menu = "Access";
+  } else if (pathname.startsWith("/dashboard/user-guide")) {
+    menu = "Guide";
   } else if (pathname.startsWith("/dashboard/integrations/")) {
     menu = "Integrations";
   } else if (pathname.startsWith("/dashboard/control/audit")) {

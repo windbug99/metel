@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { X } from "lucide-react";
+import { BookOpenText } from "lucide-react";
 
 import type { NavItem } from "./nav-model";
 import { NavMain } from "./sidebar07/nav-main";
@@ -81,7 +83,25 @@ export default function DashboardAppSidebar({
       </div>
 
       <div className="no-scrollbar flex-1 overflow-y-auto px-3 py-3">
-        <NavMain pathname={pathname} navItems={navItems} buildNavHref={buildNavHref} collapsed={collapsed} />
+        <div className="flex h-full flex-col">
+          <NavMain pathname={pathname} navItems={navItems} buildNavHref={buildNavHref} collapsed={collapsed} />
+          <Link
+            href={buildNavHref("/dashboard/user-guide", "user")}
+            className={cn(
+              "mt-3 flex items-center gap-2 rounded-md border border-sidebar-border px-3 pt-[6px] pb-[6px] text-sm font-light transition-colors",
+              pathname.startsWith("/dashboard/user-guide")
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "text-sidebar-foreground hover:bg-sidebar-accent/70",
+              collapsed && "mx-auto h-8 w-8 justify-center p-0"
+            )}
+            title={collapsed ? "User Guide" : undefined}
+          >
+            <span className={cn("flex shrink-0 items-center justify-center", collapsed ? "h-8 w-8" : "h-5 w-5")}>
+              <BookOpenText className="h-3.5 w-3.5 shrink-0" />
+            </span>
+            <span className={cn("truncate", collapsed && "hidden")}>User Guide</span>
+          </Link>
+        </div>
       </div>
 
       <div className="border-t border-sidebar-border p-3">
