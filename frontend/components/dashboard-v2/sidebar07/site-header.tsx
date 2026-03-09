@@ -17,9 +17,8 @@ import { Separator } from "@/components/ui/separator";
 type SiteHeaderProps = {
   title: string;
   breadcrumb: {
-    category: string;
     menu: string;
-    submenu: string;
+    page: string;
   };
   globalSearchEnabled: boolean;
   currentTeam: string;
@@ -56,15 +55,11 @@ export function SiteHeader({
         <Breadcrumb>
           <BreadcrumbList>
             <BreadcrumbItem>
-              <BreadcrumbPage>{breadcrumb.category}</BreadcrumbPage>
+              <BreadcrumbPage>{breadcrumb.menu}</BreadcrumbPage>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
             <BreadcrumbItem className="hidden md:block">
-              <BreadcrumbPage>{breadcrumb.menu}</BreadcrumbPage>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator className="hidden md:block" />
-            <BreadcrumbItem className="hidden md:block">
-              <BreadcrumbPage>{breadcrumb.submenu || title}</BreadcrumbPage>
+              <BreadcrumbPage>{breadcrumb.page || title}</BreadcrumbPage>
             </BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>

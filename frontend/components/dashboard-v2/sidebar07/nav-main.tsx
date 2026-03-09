@@ -1,6 +1,23 @@
 "use client";
 
 import Link from "next/link";
+import {
+  Activity,
+  Building2,
+  FileSearch,
+  KeyRound,
+  LifeBuoy,
+  Link2,
+  ListChecks,
+  Shield,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  UserRound,
+  Users,
+  Waypoints,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 import type { NavItem } from "../nav-model";
 import { cn } from "@/lib/utils";
@@ -13,6 +30,24 @@ type NavMainProps = {
 };
 
 export function NavMain({ pathname, navItems, buildNavHref, collapsed }: NavMainProps) {
+  const navIconByKey: Record<string, LucideIcon> = {
+    "org-access": Building2,
+    "org-integrations": Waypoints,
+    "org-oauth-governance": Link2,
+    "org-audit-settings": ShieldCheck,
+    "org-admin-ops": LifeBuoy,
+    "team-overview": Sparkles,
+    "team-usage": Activity,
+    "team-policy": Users,
+    "team-agent-guide": SlidersHorizontal,
+    "team-api-keys": KeyRound,
+    "team-policy-simulator": FileSearch,
+    "team-audit-events": ListChecks,
+    "user-my-requests": ListChecks,
+    "user-security": Shield,
+    "user-oauth-connections": UserRound,
+  };
+
   const visibleItems = navItems.filter((item) => item.visible);
   const sectionOrder: Array<{ key: NavItem["section"]; label: string }> = [
     { key: "organization", label: "Organization" },
@@ -36,20 +71,21 @@ export function NavMain({ pathname, navItems, buildNavHref, collapsed }: NavMain
                 if (!item.href) {
                   return null;
                 }
+                const Icon = navIconByKey[item.key] ?? Sparkles;
                 const active = pathname.startsWith(item.href);
                 return (
                   <Link
                     key={item.key}
                     href={buildNavHref(item.href, item.section)}
                     className={cn(
-                      "mb-0.5 block rounded-md px-3 pt-[6px] pb-[6px] text-sm font-light transition-colors",
+                      "mb-0.5 flex items-center gap-2 rounded-md px-3 pt-[6px] pb-[6px] text-sm font-light transition-colors",
                       active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-foreground hover:bg-sidebar-accent/70",
-                      collapsed && "px-2 text-center"
+                      collapsed && "justify-center px-2"
                     )}
                     title={collapsed ? `${section.label}: ${item.label}` : undefined}
                   >
+                    <Icon className="h-4 w-4 shrink-0" />
                     <span className={cn("truncate", collapsed && "hidden")}>{item.label}</span>
-                    <span className={cn("hidden", collapsed && "inline")}>{item.label.slice(0, 1)}</span>
                   </Link>
                 );
               })}

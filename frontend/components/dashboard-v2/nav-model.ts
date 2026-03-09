@@ -19,9 +19,8 @@ export type NavItem = {
 };
 
 export type BreadcrumbModel = {
-  category: string;
   menu: string;
-  submenu: string;
+  page: string;
 };
 
 export const GLOBAL_QUERY_KEYS = ["scope", "org", "team", "range"] as const;
@@ -137,8 +136,6 @@ export function pageTitle(pathname: string): string {
 }
 
 export function buildBreadcrumb(pathname: string, scope: "org" | "team" | "user"): BreadcrumbModel {
-  const category = scope === "org" ? "Organization" : scope === "team" ? "Team" : "User";
-
   let menu = "Overview";
   if (pathname.startsWith("/dashboard/access/")) {
     menu = "Access";
@@ -158,15 +155,14 @@ export function buildBreadcrumb(pathname: string, scope: "org" | "team" | "user"
     menu = "Admin";
   }
 
-  const submenu =
+  const page =
     pathname.startsWith("/dashboard/integrations/oauth") && scope !== "user"
       ? "OAuth Governance"
       : pageTitle(pathname);
 
   return {
-    category,
     menu,
-    submenu,
+    page,
   };
 }
 
