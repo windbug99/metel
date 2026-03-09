@@ -40,6 +40,14 @@ type DeliveryItem = {
   created_at: string;
 };
 
+type WebhookProvider = "slack" | "generic";
+
+type EventPreset = {
+  id: string;
+  label: string;
+  events: string[];
+};
+
 function formatDate(value?: string | null): string {
   if (!value) {
     return "-";
@@ -49,6 +57,29 @@ function formatDate(value?: string | null): string {
     return value;
   }
   return date.toLocaleString();
+}
+
+function normalizeEventTypes(value: string[]): string[] {
+  return Array.from(new Set(value.map((item) => item.trim()).filter((item) => item.length > 0)));
+}
+
+function validateWebhookUrl(provider: WebhookProvider, rawUrl: string): { valid: boolean; message: string } {
+  const value = rawUrl.trim();
+  if (!value) {
+    return { valid: false, message: "Webhook URL is required." };
+  }
+  if (provider === "slack") {
+    const slackPattern = /^https:\/\/hooks\.slack\.com\/services\/[^/]+\/[^/]+\/[^/]+$/;
+    if (!slackPattern.test(value)) {
+      return { valid: false, message: "Use a valid Slack Incoming Webhook URL format." };
+    }
+    return { valid: true, message: "Slack webhook URL format looks valid." };
+  }
+  const genericPattern = /^https?:\/\/.+/;
+  if (!genericPattern.test(value)) {
+    return { valid: false, message: "Use a valid http(s) endpoint URL." };
+  }
+  return { valid: true, message: "Endpoint URL format looks valid." };
 }
 
 export default function DashboardIntegrationsWebhooksPage() {
@@ -64,13 +95,36 @@ export default function DashboardIntegrationsWebhooksPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [newWebhookName, setNewWebhookName] = useState("");
+  const [webhookProvider, setWebhookProvider] = useState<WebhookProvider>("slack");
+  const [guideCompleted, setGuideCompleted] = useState(false);
   const [newWebhookUrl, setNewWebhookUrl] = useState("");
   const [newWebhookSecret, setNewWebhookSecret] = useState("");
-  const [newWebhookEvents, setNewWebhookEvents] = useState("tool_called, tool_succeeded, tool_failed");
+  const [newWebhookEvents, setNewWebhookEvents] = useState<string[]>(["tool_called", "tool_succeeded", "tool_failed"]);
+  const [eventPresetId, setEventPresetId] = useState("slack-alerts");
 
   const [creatingWebhook, setCreatingWebhook] = useState(false);
+  const [testingWebhookId, setTestingWebhookId] = useState<number | null>(null);
+  const [createTestResult, setCreateTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testResultByWebhookId, setTestResultByWebhookId] = useState<Record<number, { ok: boolean; message: string }>>({});
   const [processingRetries, setProcessingRetries] = useState(false);
   const [retryingDeliveryId, setRetryingDeliveryId] = useState<number | null>(null);
+
+  const eventOptions = useMemo(
+    () => ["tool_called", "tool_succeeded", "tool_failed", "policy_blocked", "quota_exceeded", "rate_limit_exceeded"],
+    []
+  );
+
+  const eventPresets = useMemo<EventPreset[]>(
+    () => [
+      { id: "slack-alerts", label: "Slack Alerts", events: ["tool_failed", "policy_blocked", "quota_exceeded"] },
+      { id: "slack-audit", label: "Slack Audit", events: ["tool_called", "tool_succeeded", "tool_failed"] },
+      { id: "all-events", label: "All Events", events: [...eventOptions] },
+    ],
+    [eventOptions]
+  );
+
+  const urlValidation = useMemo(() => validateWebhookUrl(webhookProvider, newWebhookUrl), [newWebhookUrl, webhookProvider]);
+  const canCreateWebhook = canManage && guideCompleted && urlValidation.valid && newWebhookEvents.length > 0 && newWebhookName.trim().length > 0;
 
   const handle401 = useCallback(() => {
     const next = encodeURIComponent(buildNextPath(pathname, window.location.search));
@@ -118,8 +172,12 @@ export default function DashboardIntegrationsWebhooksPage() {
   }, [handle401, scope.organizationId, scope.scope, scope.teamId]);
 
   const handleCreateWebhook = useCallback(async () => {
+    if (!canCreateWebhook) {
+      return;
+    }
     setCreatingWebhook(true);
     setError(null);
+    setCreateTestResult(null);
 
     const response = await dashboardApiRequest<{ item?: WebhookItem }>("/api/integrations/webhooks", {
       method: "POST",
@@ -127,10 +185,7 @@ export default function DashboardIntegrationsWebhooksPage() {
         name: newWebhookName.trim(),
         endpoint_url: newWebhookUrl.trim(),
         secret: newWebhookSecret.trim() || null,
-        event_types: newWebhookEvents
-          .split(",")
-          .map((item) => item.trim())
-          .filter((item) => item.length > 0),
+        event_types: normalizeEventTypes(newWebhookEvents),
       },
     });
 
@@ -150,12 +205,85 @@ export default function DashboardIntegrationsWebhooksPage() {
       return;
     }
 
+    const createdWebhookId = Number(response.data?.item?.id ?? 0);
+    if (!Number.isFinite(createdWebhookId) || createdWebhookId <= 0) {
+      setError("Webhook was created but test could not start (missing webhook id).");
+      await fetchIntegrations();
+      setCreatingWebhook(false);
+      return;
+    }
+
+    setTestingWebhookId(createdWebhookId);
+    const testResponse = await dashboardApiRequest(`/api/integrations/webhooks/${createdWebhookId}/test`, { method: "POST" });
+    if (testResponse.status === 401) {
+      handle401();
+      setTestingWebhookId(null);
+      setCreatingWebhook(false);
+      return;
+    }
+    if (testResponse.status === 403) {
+      const message = "Webhook created, but test failed: admin role required to test delivery.";
+      setCreateTestResult({ ok: false, message });
+      setTestResultByWebhookId((prev) => ({ ...prev, [createdWebhookId]: { ok: false, message } }));
+      setTestingWebhookId(null);
+      await fetchIntegrations();
+      setCreatingWebhook(false);
+      return;
+    }
+    if (!testResponse.ok) {
+      const message = testResponse.error ?? "Webhook created, but test delivery failed.";
+      setCreateTestResult({ ok: false, message });
+      setTestResultByWebhookId((prev) => ({ ...prev, [createdWebhookId]: { ok: false, message } }));
+      setTestingWebhookId(null);
+      await fetchIntegrations();
+      setCreatingWebhook(false);
+      return;
+    }
+
+    const successMessage = "Webhook created and test event sent successfully.";
+    setCreateTestResult({ ok: true, message: successMessage });
+    setTestResultByWebhookId((prev) => ({ ...prev, [createdWebhookId]: { ok: true, message: "Test event sent." } }));
+    setTestingWebhookId(null);
     setNewWebhookName("");
     setNewWebhookUrl("");
     setNewWebhookSecret("");
+    setNewWebhookEvents(["tool_called", "tool_succeeded", "tool_failed"]);
+    setEventPresetId("slack-alerts");
+    setGuideCompleted(false);
     await fetchIntegrations();
     setCreatingWebhook(false);
-  }, [fetchIntegrations, handle401, newWebhookEvents, newWebhookName, newWebhookSecret, newWebhookUrl]);
+  }, [canCreateWebhook, fetchIntegrations, handle401, newWebhookEvents, newWebhookName, newWebhookSecret, newWebhookUrl]);
+
+  const handleTestWebhook = useCallback(
+    async (webhookId: number) => {
+      setTestingWebhookId(webhookId);
+      setError(null);
+      const response = await dashboardApiRequest(`/api/integrations/webhooks/${webhookId}/test`, { method: "POST" });
+      if (response.status === 401) {
+        handle401();
+        setTestingWebhookId(null);
+        return;
+      }
+      if (response.status === 403) {
+        const message = "Admin role required to send test event.";
+        setError(message);
+        setTestResultByWebhookId((prev) => ({ ...prev, [webhookId]: { ok: false, message } }));
+        setTestingWebhookId(null);
+        return;
+      }
+      if (!response.ok) {
+        const message = response.error ?? "Failed to send test event.";
+        setError(message);
+        setTestResultByWebhookId((prev) => ({ ...prev, [webhookId]: { ok: false, message } }));
+        setTestingWebhookId(null);
+        return;
+      }
+      setTestResultByWebhookId((prev) => ({ ...prev, [webhookId]: { ok: true, message: "Test event sent." } }));
+      setTestingWebhookId(null);
+      await fetchIntegrations();
+    },
+    [fetchIntegrations, handle401]
+  );
 
   const handleProcessRetries = useCallback(async () => {
     setProcessingRetries(true);
@@ -262,21 +390,86 @@ export default function DashboardIntegrationsWebhooksPage() {
       <p className="text-sm text-muted-foreground">Manage event subscriptions, delivery status, and retry processing.</p>
 
       <div className="ds-card p-4">
-        <div className="flex items-center gap-2">
+        <p className="mb-3 text-sm font-semibold">Create Webhook</p>
+        <div className="mb-3 grid gap-2 lg:grid-cols-2">
+          <article className="rounded-md border border-border p-3">
+            <p className="text-xs text-muted-foreground">Step 1. Choose destination</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant={webhookProvider === "slack" ? "default" : "outline"}
+                className="h-9 rounded-md px-3 text-xs"
+                onClick={() => {
+                  setWebhookProvider("slack");
+                  setEventPresetId("slack-alerts");
+                  const preset = eventPresets.find((item) => item.id === "slack-alerts");
+                  if (preset) {
+                    setNewWebhookEvents([...preset.events]);
+                  }
+                }}
+                disabled={!canManage || creatingWebhook}
+              >
+                Slack
+              </Button>
+              <Button
+                type="button"
+                variant={webhookProvider === "generic" ? "default" : "outline"}
+                className="h-9 rounded-md px-3 text-xs"
+                onClick={() => setWebhookProvider("generic")}
+                disabled={!canManage || creatingWebhook}
+              >
+                Generic Webhook
+              </Button>
+            </div>
+          </article>
+          <article className="rounded-md border border-border p-3">
+            <p className="text-xs text-muted-foreground">Step 2. Setup guide</p>
+            {webhookProvider === "slack" ? (
+              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                <p>1) Open Slack App settings and enable Incoming Webhooks.</p>
+                <p>2) Choose a channel and copy the generated webhook URL.</p>
+                <p>3) Paste it below and save this connection.</p>
+                <a
+                  href="https://api.slack.com/messaging/webhooks"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex text-primary underline underline-offset-2"
+                >
+                  Open Slack Incoming Webhooks Docs
+                </a>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-muted-foreground">Use any HTTPS endpoint that can receive POST webhook events.</p>
+            )}
+            <label className="mt-2 flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={guideCompleted}
+                onChange={(event) => setGuideCompleted(event.target.checked)}
+                disabled={!canManage || creatingWebhook}
+              />
+              I completed the setup steps
+            </label>
+          </article>
+        </div>
+        <div className="grid gap-2 lg:grid-cols-2">
           <Input
             value={newWebhookName}
             onChange={(event) => setNewWebhookName(event.target.value)}
             disabled={!canManage}
-            placeholder="Webhook name"
+            placeholder={webhookProvider === "slack" ? "e.g. Slack Alerts - Prod" : "Webhook name"}
             className="ds-input h-11 min-w-[220px] flex-1 rounded-md px-3 text-sm md:h-9"
           />
           <Input
             value={newWebhookUrl}
             onChange={(event) => setNewWebhookUrl(event.target.value)}
             disabled={!canManage}
-            placeholder="Endpoint URL"
+            placeholder={webhookProvider === "slack" ? "https://hooks.slack.com/services/..." : "Endpoint URL"}
             className="ds-input h-11 min-w-[260px] flex-1 rounded-md px-3 text-sm md:h-9"
           />
+          <div className="lg:col-span-2">
+            <p className={`text-xs ${urlValidation.valid ? "text-emerald-500" : "text-muted-foreground"}`}>{urlValidation.message}</p>
+          </div>
           <Input
             value={newWebhookSecret}
             onChange={(event) => setNewWebhookSecret(event.target.value)}
@@ -284,21 +477,70 @@ export default function DashboardIntegrationsWebhooksPage() {
             placeholder="Secret (optional)"
             className="ds-input h-11 min-w-[180px] flex-1 rounded-md px-3 text-sm md:h-9"
           />
-          <Input
-            value={newWebhookEvents}
-            onChange={(event) => setNewWebhookEvents(event.target.value)}
-            disabled={!canManage}
-            placeholder="Event types (comma separated)"
-            className="ds-input h-11 min-w-[260px] flex-1 rounded-md px-3 text-sm md:h-9"
-          />
+          <select
+            value={eventPresetId}
+            onChange={(event) => {
+              const nextPreset = event.target.value;
+              setEventPresetId(nextPreset);
+              const preset = eventPresets.find((item) => item.id === nextPreset);
+              if (preset) {
+                setNewWebhookEvents([...preset.events]);
+              }
+            }}
+            disabled={!canManage || creatingWebhook}
+            className="ds-input h-11 min-w-[260px] rounded-md px-3 text-sm md:h-9"
+          >
+            {eventPresets.map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                Preset: {preset.label}
+              </option>
+            ))}
+          </select>
+          <div className="lg:col-span-2">
+            <p className="mb-2 text-xs text-muted-foreground">Step 3. Choose event types</p>
+            <div className="flex flex-wrap gap-2">
+              {eventOptions.map((eventType) => {
+                const active = newWebhookEvents.includes(eventType);
+                return (
+                  <Button
+                    key={eventType}
+                    type="button"
+                    variant={active ? "default" : "outline"}
+                    className="h-8 rounded-md px-2 text-[11px]"
+                    disabled={!canManage || creatingWebhook}
+                    onClick={() =>
+                      setNewWebhookEvents((prev) => {
+                        if (prev.includes(eventType)) {
+                          return prev.filter((item) => item !== eventType);
+                        }
+                        return normalizeEventTypes([...prev, eventType]);
+                      })
+                    }
+                  >
+                    {eventType}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="lg:col-span-2">
+            <p className="text-xs text-muted-foreground">Selected: {newWebhookEvents.join(", ") || "-"}</p>
+          </div>
+          <div className="lg:col-span-2">
+            {!canManage ? <p className="mb-2 text-xs text-muted-foreground">{writeDisabledReason}</p> : null}
+            {!guideCompleted && canManage ? <p className="mb-2 text-xs text-muted-foreground">Complete setup step checkbox to enable save.</p> : null}
+          </div>
           <Button
             type="button"
             onClick={() => void handleCreateWebhook()}
-            disabled={!canManage || creatingWebhook}
-            className="ds-btn h-11 shrink-0 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+            disabled={!canCreateWebhook || creatingWebhook}
+            className="ds-btn h-11 shrink-0 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9 lg:col-span-2"
           >
-            {creatingWebhook ? "Creating..." : "Create Webhook"}
+            {creatingWebhook ? (testingWebhookId ? "Creating & Testing..." : "Creating...") : "Create & Test"}
           </Button>
+          {createTestResult ? (
+            <p className={`text-xs ${createTestResult.ok ? "text-emerald-500" : "text-destructive"} lg:col-span-2`}>{createTestResult.message}</p>
+          ) : null}
         </div>
       </div>
 
@@ -326,12 +568,29 @@ export default function DashboardIntegrationsWebhooksPage() {
       <div className="grid gap-3 sm:grid-cols-2">
         <article className="ds-card p-4">
           <p className="text-sm font-semibold">Subscriptions</p>
-          <div className="mt-2 space-y-1">
+          <div className="mt-2 space-y-2">
             {webhooks.length === 0 ? <p className="text-xs text-muted-foreground">No subscriptions.</p> : null}
             {webhooks.slice(0, 12).map((hook) => (
-              <p key={`hook-${hook.id}`} className="text-xs">
-                {hook.name} ({hook.is_active ? "active" : "disabled"}) · {hook.event_types.join(", ")}
-              </p>
+              <div key={`hook-${hook.id}`} className="rounded-md border border-border px-2 py-2">
+                <p className="text-xs">
+                  {hook.name} ({hook.is_active ? "active" : "disabled"}) · {hook.event_types.join(", ")}
+                </p>
+                <div className="mt-1 flex items-center gap-2">
+                  <Button
+                    type="button"
+                    onClick={() => void handleTestWebhook(hook.id)}
+                    disabled={!canManage || testingWebhookId === hook.id}
+                    className="ds-btn h-8 rounded-md px-2 text-[11px] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {testingWebhookId === hook.id ? "Testing..." : "Send Test"}
+                  </Button>
+                  {testResultByWebhookId[hook.id] ? (
+                    <span className={`text-[11px] ${testResultByWebhookId[hook.id]?.ok ? "text-emerald-500" : "text-destructive"}`}>
+                      {testResultByWebhookId[hook.id]?.message}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
             ))}
           </div>
         </article>

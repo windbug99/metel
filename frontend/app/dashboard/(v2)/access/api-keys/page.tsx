@@ -527,7 +527,7 @@ export default function DashboardApiKeysPage() {
                     }}
                     className="text-xs"
                   >
-                    전체선택
+                    Select All
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onSelect={(event) => {
@@ -536,7 +536,7 @@ export default function DashboardApiKeysPage() {
                     }}
                     className="text-xs"
                   >
-                    전체선택해제
+                    Clear All
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                 </>
@@ -657,7 +657,7 @@ export default function DashboardApiKeysPage() {
                             }}
                             className="text-xs"
                           >
-                            전체선택
+                            Select All
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onSelect={(event) => {
@@ -669,7 +669,7 @@ export default function DashboardApiKeysPage() {
                             }}
                             className="text-xs"
                           >
-                            전체선택해제
+                            Clear All
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                         </>
