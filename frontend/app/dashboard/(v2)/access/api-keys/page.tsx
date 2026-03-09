@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { ChevronsUpDown, Loader2 } from "lucide-react";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 import { buildNextPath, dashboardApiGet, dashboardApiRequest } from "../../../../../lib/dashboard-v2-client";
 import StatusBadge from "../../../../../components/dashboard-v2/status-badge";
@@ -32,6 +33,11 @@ type ApiKeyItem = {
 type TeamItem = {
   id: number;
   name: string;
+};
+
+type ToolOptionItem = {
+  tool_name: string;
+  service: string;
 };
 
 type DrilldownPayload = {
@@ -73,6 +79,35 @@ function parseCsvList(value: string): string[] | null {
   return items.length > 0 ? items : null;
 }
 
+function csvHasValue(csv: string, value: string): boolean {
+  const normalized = value.trim();
+  if (!normalized) {
+    return false;
+  }
+  return (parseCsvList(csv) ?? []).includes(normalized);
+}
+
+function updateCsvSelection(csv: string, value: string, checked: boolean): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    return csv;
+  }
+  const current = parseCsvList(csv) ?? [];
+  const next = checked ? Array.from(new Set([...current, normalized])) : current.filter((item) => item !== normalized);
+  return next.join(", ");
+}
+
+function toolsDropdownLabel(csv: string): string {
+  const selected = parseCsvList(csv) ?? [];
+  if (selected.length === 0) {
+    return "Allowed tools (optional)";
+  }
+  if (selected.length === 1) {
+    return selected[0] ?? "Allowed tools (optional)";
+  }
+  return `${selected[0]} +${selected.length - 1}`;
+}
+
 function stringifyJson(value: unknown): string {
   try {
     return JSON.stringify(value ?? {}, null, 2);
@@ -101,6 +136,7 @@ export default function DashboardApiKeysPage() {
   const router = useRouter();
   const [items, setItems] = useState<ApiKeyItem[]>([]);
   const [teams, setTeams] = useState<TeamItem[]>([]);
+  const [toolOptions, setToolOptions] = useState<ToolOptionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -177,6 +213,11 @@ export default function DashboardApiKeysPage() {
     const teamResult = await dashboardApiGet<{ items?: TeamItem[] }>("/api/teams");
     if (teamResult.ok && teamResult.data) {
       setTeams(Array.isArray(teamResult.data.items) ? teamResult.data.items : []);
+    }
+
+    const toolOptionsResult = await dashboardApiGet<{ items?: ToolOptionItem[] }>("/api/api-keys/tool-options");
+    if (toolOptionsResult.ok && toolOptionsResult.data) {
+      setToolOptions(Array.isArray(toolOptionsResult.data.items) ? toolOptionsResult.data.items : []);
     }
 
     setLoading(false);
@@ -453,12 +494,31 @@ export default function DashboardApiKeysPage() {
             placeholder="Tags CSV (optional)"
             className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
           />
-          <Input
-            value={createAllowedTools}
-            onChange={(event) => setCreateAllowedTools(event.target.value)}
-            placeholder="Allowed tools CSV (optional)"
-            className="ds-input h-11 rounded-md px-3 text-sm md:h-9 lg:col-span-2"
-          />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                className="ds-input h-11 w-full justify-between rounded-md px-3 text-sm md:h-9 lg:col-span-2"
+              >
+                <span className="truncate text-left">{toolsDropdownLabel(createAllowedTools)}</span>
+                <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-72 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto">
+              {toolOptions.length === 0 ? <p className="px-2 py-1 text-xs text-muted-foreground">No tool options</p> : null}
+              {toolOptions.map((tool) => (
+                <DropdownMenuCheckboxItem
+                  key={`create-tool-${tool.tool_name}`}
+                  checked={csvHasValue(createAllowedTools, tool.tool_name)}
+                  onCheckedChange={(checked) => setCreateAllowedTools((prev) => updateCsvSelection(prev, tool.tool_name, checked === true))}
+                  onSelect={(event) => event.preventDefault()}
+                >
+                  <span className="font-mono text-xs">{tool.tool_name}</span>
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
           <textarea
             value={createPolicyJson}
             onChange={(event) => setCreatePolicyJson(event.target.value)}
@@ -538,12 +598,36 @@ export default function DashboardApiKeysPage() {
                     placeholder="Tags CSV"
                     className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
                   />
-                  <Input
-                    value={allowedToolsDraft[item.id] ?? ""}
-                    onChange={(event) => setAllowedToolsDraft((prev) => ({ ...prev, [item.id]: event.target.value }))}
-                    placeholder="Allowed tools CSV"
-                    className="ds-input h-11 rounded-md px-3 text-sm md:h-9 lg:col-span-2"
-                  />
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="ds-input h-11 w-full justify-between rounded-md px-3 text-sm md:h-9 lg:col-span-2"
+                      >
+                        <span className="truncate text-left">{toolsDropdownLabel(allowedToolsDraft[item.id] ?? "")}</span>
+                        <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="max-h-72 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto">
+                      {toolOptions.length === 0 ? <p className="px-2 py-1 text-xs text-muted-foreground">No tool options</p> : null}
+                      {toolOptions.map((tool) => (
+                        <DropdownMenuCheckboxItem
+                          key={`edit-${item.id}-tool-${tool.tool_name}`}
+                          checked={csvHasValue(allowedToolsDraft[item.id] ?? "", tool.tool_name)}
+                          onCheckedChange={(checked) =>
+                            setAllowedToolsDraft((prev) => ({
+                              ...prev,
+                              [item.id]: updateCsvSelection(prev[item.id] ?? "", tool.tool_name, checked === true),
+                            }))
+                          }
+                          onSelect={(event) => event.preventDefault()}
+                        >
+                          <span className="font-mono text-xs">{tool.tool_name}</span>
+                        </DropdownMenuCheckboxItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   <textarea
                     value={policyDraft[item.id] ?? "{}"}
                     onChange={(event) => setPolicyDraft((prev) => ({ ...prev, [item.id]: event.target.value }))}

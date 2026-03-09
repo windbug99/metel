@@ -53,6 +53,21 @@ def _phase1_tool_service_map() -> dict[str, str]:
     }
 
 
+def _phase1_tool_options() -> list[dict[str, str]]:
+    registry = load_registry()
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for tool in registry.list_tools():
+        service = str(tool.service)
+        name = str(tool.tool_name).strip()
+        if service not in _PHASE1_SERVICES or not name or name in seen:
+            continue
+        seen.add(name)
+        rows.append({"tool_name": name, "service": service})
+    rows.sort(key=lambda item: item["tool_name"])
+    return rows
+
+
 def _normalize_allowed_tools(raw_tools: list[str] | None) -> list[str] | None:
     if raw_tools is None:
         return None
@@ -297,6 +312,16 @@ async def list_api_keys(request: Request):
 
     rows = result.data or []
     return {"items": rows, "count": len(rows)}
+
+
+@router.get("/tool-options")
+async def list_api_key_tool_options(request: Request):
+    user_id = await get_authenticated_user_id(request)
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    authz_ctx = await get_authz_context(request, user_id=user_id, supabase=supabase)
+    require_min_role(authz_ctx, Role.MEMBER, method=request.method)
+    return {"items": _phase1_tool_options()}
 
 
 @router.get("/{key_id}/drilldown")

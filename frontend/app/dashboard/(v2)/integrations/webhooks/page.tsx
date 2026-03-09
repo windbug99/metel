@@ -111,7 +111,7 @@ export default function DashboardIntegrationsWebhooksPage() {
       return;
     }
 
-    setCanManage(scope.scope === "user" && Boolean(permissionsRes.data.permissions?.can_manage_integrations));
+    setCanManage(scope.scope === "org" && Boolean(permissionsRes.data.permissions?.can_manage_integrations));
     setWebhooks(Array.isArray(webhooksRes.data.items) ? webhooksRes.data.items : []);
     setDeliveries(Array.isArray(deliveriesRes.data.items) ? deliveriesRes.data.items : []);
     setLoading(false);
@@ -248,6 +248,11 @@ export default function DashboardIntegrationsWebhooksPage() {
     );
   }
 
+  const writeDisabledReason =
+    scope.scope !== "org"
+      ? "Webhook write actions are available in organization scope."
+      : "Integration write actions are read-only for your role.";
+
   return (
     <section className="space-y-4">
       <PageTitleWithTooltip
@@ -306,7 +311,7 @@ export default function DashboardIntegrationsWebhooksPage() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-sm font-semibold">Webhook Operations</h2>
-          {!canManage ? <p className="text-xs text-muted-foreground">Integration write actions are read-only for your role.</p> : null}
+          {!canManage ? <p className="text-xs text-muted-foreground">{writeDisabledReason}</p> : null}
         </div>
         <Button
           type="button"
