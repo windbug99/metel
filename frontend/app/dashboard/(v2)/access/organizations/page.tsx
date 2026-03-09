@@ -114,7 +114,11 @@ export default function DashboardOrganizationsPage() {
   const [loadingRoleRequests, setLoadingRoleRequests] = useState(false);
   const [creatingRoleRequest, setCreatingRoleRequest] = useState(false);
   const [reviewingRoleRequestAction, setReviewingRoleRequestAction] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"users" | "invites" | "requests">("users");
+  const [activeTab, setActiveTab] = useState<"users" | "invites" | "requests" | "settings">("users");
+  const [organizationNameDraft, setOrganizationNameDraft] = useState("");
+  const [savingOrganizationSettings, setSavingOrganizationSettings] = useState(false);
+  const [deletingOrganization, setDeletingOrganization] = useState(false);
+  const [deleteConfirmName, setDeleteConfirmName] = useState("");
 
   const selectedOrg = useMemo(
     () => organizations.find((item) => String(item.id) === selectedOrgId) ?? null,
@@ -131,7 +135,7 @@ export default function DashboardOrganizationsPage() {
     router.replace(`/?next=${next}`);
   }, [pathname, router]);
 
-  const loadOrganizations = useCallback(async () => {
+  const loadOrganizations = useCallback(async (): Promise<OrganizationItem[]> => {
     setLoading(true);
     setError(null);
 
@@ -139,12 +143,12 @@ export default function DashboardOrganizationsPage() {
     if (meResult.status === 401) {
       handle401();
       setLoading(false);
-      return;
+      return [];
     }
     if (!meResult.ok || !meResult.data) {
       setError(meResult.error ?? "Failed to load profile.");
       setLoading(false);
-      return;
+      return [];
     }
     setMe(meResult.data);
 
@@ -152,17 +156,17 @@ export default function DashboardOrganizationsPage() {
     if (orgResult.status === 401) {
       handle401();
       setLoading(false);
-      return;
+      return [];
     }
     if (orgResult.status === 403) {
       setError("Access denied while loading organizations.");
       setLoading(false);
-      return;
+      return [];
     }
     if (!orgResult.ok || !orgResult.data) {
       setError(orgResult.error ?? "Failed to load organizations.");
       setLoading(false);
-      return;
+      return [];
     }
 
     const nextItems = Array.isArray(orgResult.data.items) ? orgResult.data.items : [];
@@ -177,7 +181,86 @@ export default function DashboardOrganizationsPage() {
       return nextItems.length > 0 ? String(nextItems[0].id) : "";
     });
     setLoading(false);
+    return nextItems;
   }, [handle401, orgFromQuery]);
+
+  const updateOrganizationSettings = useCallback(async () => {
+    if (!selectedOrgId) {
+      setError("Select an organization first.");
+      return;
+    }
+    const name = organizationNameDraft.trim();
+    if (!name) {
+      setError("Organization name is required.");
+      return;
+    }
+    setSavingOrganizationSettings(true);
+    setError(null);
+    const result = await dashboardApiRequest(`/api/organizations/${selectedOrgId}`, {
+      method: "PATCH",
+      body: { name },
+    });
+    if (result.status === 401) {
+      handle401();
+      setSavingOrganizationSettings(false);
+      return;
+    }
+    if (result.status === 403 || result.status === 404) {
+      setError("Only organization owner can rename organization.");
+      setSavingOrganizationSettings(false);
+      return;
+    }
+    if (!result.ok) {
+      setError(result.error ?? "Failed to update organization settings.");
+      setSavingOrganizationSettings(false);
+      return;
+    }
+    await loadOrganizations();
+    setSavingOrganizationSettings(false);
+  }, [handle401, loadOrganizations, organizationNameDraft, selectedOrgId]);
+
+  const deleteOrganizationSettings = useCallback(async () => {
+    if (!selectedOrgId || !selectedOrg) {
+      setError("Select an organization first.");
+      return;
+    }
+    if (deleteConfirmName.trim() !== selectedOrg.name) {
+      setError("Type exact organization name to delete.");
+      return;
+    }
+    setDeletingOrganization(true);
+    setError(null);
+    const result = await dashboardApiRequest(`/api/organizations/${selectedOrgId}`, {
+      method: "DELETE",
+    });
+    if (result.status === 401) {
+      handle401();
+      setDeletingOrganization(false);
+      return;
+    }
+    if (result.status === 403 || result.status === 404) {
+      setError("Only organization owner can delete organization.");
+      setDeletingOrganization(false);
+      return;
+    }
+    if (!result.ok) {
+      setError(result.error ?? "Failed to delete organization.");
+      setDeletingOrganization(false);
+      return;
+    }
+    const nextItems = await loadOrganizations();
+    setDeleteConfirmName("");
+    setActiveTab("users");
+    if (nextItems.length === 0) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("scope");
+      params.delete("org");
+      params.delete("team");
+      const encoded = params.toString();
+      router.replace(encoded ? `${pathname}?${encoded}` : pathname);
+    }
+    setDeletingOrganization(false);
+  }, [deleteConfirmName, handle401, loadOrganizations, pathname, router, searchParams, selectedOrg, selectedOrgId]);
 
   const loadMembers = useCallback(async () => {
     if (!selectedOrgId) {
@@ -561,6 +644,11 @@ export default function DashboardOrganizationsPage() {
     }
   }, [me?.user_id, roleRequestRequestedRole, selectedOrgRole]);
 
+  useEffect(() => {
+    setOrganizationNameDraft(selectedOrg?.name ?? "");
+    setDeleteConfirmName("");
+  }, [selectedOrg]);
+
   if (loading) {
     return (
       <section className="space-y-4">
@@ -632,7 +720,7 @@ export default function DashboardOrganizationsPage() {
 
       <Tabs
         value={activeTab}
-        onValueChange={(value) => setActiveTab(value as "users" | "invites" | "requests")}
+        onValueChange={(value) => setActiveTab(value as "users" | "invites" | "requests" | "settings")}
         className="space-y-4"
       >
         <TabsList className="ds-card h-auto w-full justify-start gap-2 p-2">
@@ -644,6 +732,9 @@ export default function DashboardOrganizationsPage() {
           </TabsTrigger>
           <TabsTrigger value="requests" className="h-9 rounded-md px-3 text-sm">
             Requests
+          </TabsTrigger>
+          <TabsTrigger value="settings" className="h-9 rounded-md px-3 text-sm">
+            Settings
           </TabsTrigger>
         </TabsList>
 
@@ -943,6 +1034,66 @@ export default function DashboardOrganizationsPage() {
                 ) : null}
               </TableBody>
             </Table>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="settings" className="space-y-4">
+          <div className="ds-card p-4">
+            <p className="mb-2 text-sm font-semibold">General</p>
+            <p className="mb-3 text-xs text-muted-foreground">Rename current organization. Owner role required.</p>
+            <div className="flex items-center gap-2">
+              <Input
+                value={organizationNameDraft}
+                onChange={(event) => setOrganizationNameDraft(event.target.value)}
+                placeholder="Organization name"
+                className="ds-input h-11 min-w-[280px] flex-1 rounded-md px-3 text-sm md:h-9"
+                disabled={!ownerActionsEnabled || savingOrganizationSettings}
+              />
+              <Button
+                type="button"
+                onClick={() => void updateOrganizationSettings()}
+                disabled={!ownerActionsEnabled || savingOrganizationSettings}
+                className="ds-btn h-11 shrink-0 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+                title={ownerActionsEnabled ? "" : "Owner role required"}
+              >
+                {savingOrganizationSettings ? "Saving..." : "Rename Organization"}
+              </Button>
+            </div>
+            {!ownerActionsEnabled ? <p className="mt-2 text-xs text-muted-foreground">Owner role required.</p> : null}
+          </div>
+
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4">
+            <p className="mb-2 text-sm font-semibold text-destructive">Danger Zone</p>
+            <p className="mb-3 text-xs text-destructive/90">
+              Delete organization permanently. This removes teams, memberships, invites, policies, and related records.
+            </p>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Type <span className="font-mono">{selectedOrg?.name ?? "-"}</span> to confirm.
+            </p>
+            <div className="flex items-center gap-2">
+              <Input
+                value={deleteConfirmName}
+                onChange={(event) => setDeleteConfirmName(event.target.value)}
+                placeholder={selectedOrg?.name ?? "organization name"}
+                className="ds-input h-11 min-w-[280px] flex-1 rounded-md px-3 text-sm md:h-9"
+                disabled={!ownerActionsEnabled || deletingOrganization}
+              />
+              <Button
+                type="button"
+                onClick={() => void deleteOrganizationSettings()}
+                disabled={
+                  !ownerActionsEnabled ||
+                  deletingOrganization ||
+                  !selectedOrg ||
+                  deleteConfirmName.trim() !== selectedOrg.name
+                }
+                className="h-11 shrink-0 rounded-md border border-destructive/50 px-3 text-sm font-medium text-destructive disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+                title={ownerActionsEnabled ? "" : "Owner role required"}
+              >
+                {deletingOrganization ? "Deleting..." : "Delete Organization"}
+              </Button>
+            </div>
+            {!ownerActionsEnabled ? <p className="mt-2 text-xs text-muted-foreground">Owner role required.</p> : null}
           </div>
         </TabsContent>
       </Tabs>

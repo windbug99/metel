@@ -357,6 +357,19 @@ async def update_organization(request: Request, organization_id: str, body: Orga
     return {"ok": True}
 
 
+@router.delete("/{organization_id}")
+async def delete_organization(request: Request, organization_id: str):
+    user_id = await get_authenticated_user_id(request)
+    settings = get_settings()
+    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    authz_ctx = await get_authz_context(request, user_id=user_id, supabase=supabase)
+    require_min_role(authz_ctx, Role.OWNER, method=request.method)
+    if not _is_org_owner(supabase=supabase, user_id=user_id, organization_id=organization_id):
+        raise HTTPException(status_code=404, detail="organization_not_found")
+    supabase.table("organizations").delete().eq("id", organization_id).execute()
+    return {"ok": True}
+
+
 @router.get("/{organization_id}/members")
 async def list_organization_members(request: Request, organization_id: str):
     user_id = await get_authenticated_user_id(request)

@@ -20,6 +20,7 @@ from app.routes.organizations import (
     get_organization_policy,
     create_organization,
     create_organization_role_request,
+    delete_organization,
     delete_organization_member,
     list_organization_members,
     list_organization_role_requests,
@@ -254,6 +255,93 @@ def test_update_organization_requires_owner(monkeypatch):
         assert exc.detail == "organization_not_found"
     else:
         assert False, "expected HTTPException"
+
+
+def test_delete_organization_requires_owner(monkeypatch):
+    class _Query:
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def delete(self):
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=[])
+
+    class _Client:
+        def table(self, _name: str):
+            return _Query()
+
+    async def _fake_user(_request: Request) -> str:
+        return "user-1"
+
+    monkeypatch.setattr("app.routes.organizations.get_authenticated_user_id", _fake_user)
+    monkeypatch.setattr("app.routes.organizations.create_client", lambda *_args, **_kwargs: _Client())
+    monkeypatch.setattr("app.routes.organizations.get_settings", lambda: SimpleNamespace(supabase_url="x", supabase_service_role_key="y"))
+
+    try:
+        asyncio.run(delete_organization(_request("/api/organizations/1", "DELETE"), "1"))
+    except HTTPException as exc:
+        assert exc.status_code == 404
+        assert exc.detail == "organization_not_found"
+    else:
+        assert False, "expected HTTPException"
+
+
+def test_delete_organization_deletes_row(monkeypatch):
+    class _Query:
+        def __init__(self, client, table_name: str):
+            self.client = client
+            self.table_name = table_name
+            self.mode = "select"
+
+        def select(self, *_args, **_kwargs):
+            self.mode = "select"
+            return self
+
+        def eq(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args, **_kwargs):
+            return self
+
+        def delete(self):
+            self.mode = "delete"
+            return self
+
+        def execute(self):
+            if self.table_name == "org_memberships" and self.mode == "select":
+                return SimpleNamespace(data=[{"organization_id": 1}])
+            if self.table_name == "organizations" and self.mode == "delete":
+                self.client.deleted = True
+                return SimpleNamespace(data=[{"id": 1}])
+            return SimpleNamespace(data=[])
+
+    class _Client:
+        def __init__(self):
+            self.deleted = False
+
+        def table(self, name: str):
+            return _Query(self, name)
+
+    client = _Client()
+
+    async def _fake_user(_request: Request) -> str:
+        return "owner-user"
+
+    monkeypatch.setattr("app.routes.organizations.get_authenticated_user_id", _fake_user)
+    monkeypatch.setattr("app.routes.organizations.create_client", lambda *_args, **_kwargs: client)
+    monkeypatch.setattr("app.routes.organizations.get_settings", lambda: SimpleNamespace(supabase_url="x", supabase_service_role_key="y"))
+
+    out = asyncio.run(delete_organization(_request("/api/organizations/1", "DELETE"), "1"))
+    assert out["ok"] is True
+    assert client.deleted is True
 
 
 def test_delete_organization_member_blocks_owner_self_removal(monkeypatch):
