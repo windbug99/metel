@@ -94,7 +94,7 @@ export default function DashboardIntegrationsWebhooksPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [newWebhookName, setNewWebhookName] = useState("");
+  const [newWebhookName, setNewWebhookName] = useState("Slack Alerts - Prod");
   const [webhookProvider, setWebhookProvider] = useState<WebhookProvider>("slack");
   const [guideCompleted, setGuideCompleted] = useState(false);
   const [newWebhookUrl, setNewWebhookUrl] = useState("");
@@ -124,7 +124,38 @@ export default function DashboardIntegrationsWebhooksPage() {
   );
 
   const urlValidation = useMemo(() => validateWebhookUrl(webhookProvider, newWebhookUrl), [newWebhookUrl, webhookProvider]);
-  const canCreateWebhook = canManage && guideCompleted && urlValidation.valid && newWebhookEvents.length > 0 && newWebhookName.trim().length > 0;
+  const createDisabledReason = useMemo(() => {
+    if (!canManage) {
+      return scope.scope !== "org"
+        ? "Switch to organization scope to create webhooks."
+        : "Your role cannot create webhooks.";
+    }
+    if (!newWebhookName.trim()) {
+      return "Webhook name is required.";
+    }
+    if (!guideCompleted) {
+      return "Complete setup step checkbox to enable create.";
+    }
+    if (!urlValidation.valid) {
+      return urlValidation.message;
+    }
+    if (newWebhookEvents.length === 0) {
+      return "Select at least one event type.";
+    }
+    return null;
+  }, [canManage, guideCompleted, newWebhookEvents.length, newWebhookName, scope.scope, urlValidation.message, urlValidation.valid]);
+  const canCreateWebhook = createDisabledReason === null;
+
+  useEffect(() => {
+    if (newWebhookName.trim()) {
+      return;
+    }
+    if (webhookProvider === "slack") {
+      setNewWebhookName("Slack Alerts - Prod");
+    } else {
+      setNewWebhookName("Webhook Endpoint");
+    }
+  }, [newWebhookName, webhookProvider]);
 
   const handle401 = useCallback(() => {
     const next = encodeURIComponent(buildNextPath(pathname, window.location.search));
@@ -453,51 +484,83 @@ export default function DashboardIntegrationsWebhooksPage() {
           </article>
         </div>
         <div className="grid gap-2 lg:grid-cols-2">
-          <Input
-            value={newWebhookName}
-            onChange={(event) => setNewWebhookName(event.target.value)}
-            disabled={!canManage}
-            placeholder={webhookProvider === "slack" ? "e.g. Slack Alerts - Prod" : "Webhook name"}
-            className="ds-input h-11 min-w-[220px] flex-1 rounded-md px-3 text-sm md:h-9"
-          />
-          <Input
-            value={newWebhookUrl}
-            onChange={(event) => setNewWebhookUrl(event.target.value)}
-            disabled={!canManage}
-            placeholder={webhookProvider === "slack" ? "https://hooks.slack.com/services/..." : "Endpoint URL"}
-            className="ds-input h-11 min-w-[260px] flex-1 rounded-md px-3 text-sm md:h-9"
-          />
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">Title</p>
+            <Input
+              value={newWebhookName}
+              onChange={(event) => setNewWebhookName(event.target.value)}
+              disabled={!canManage}
+              placeholder={webhookProvider === "slack" ? "e.g. Slack Alerts - Prod" : "Webhook name"}
+              className="ds-input h-11 min-w-[220px] flex-1 rounded-md px-3 text-sm md:h-9"
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">Webhook URL</p>
+            <Input
+              value={newWebhookUrl}
+              onChange={(event) => setNewWebhookUrl(event.target.value)}
+              disabled={!canManage}
+              placeholder={webhookProvider === "slack" ? "https://hooks.slack.com/services/..." : "Endpoint URL"}
+              className="ds-input h-11 min-w-[260px] flex-1 rounded-md px-3 text-sm md:h-9"
+            />
+          </div>
           <div className="lg:col-span-2">
             <p className={`text-xs ${urlValidation.valid ? "text-emerald-500" : "text-muted-foreground"}`}>{urlValidation.message}</p>
           </div>
-          <Input
-            value={newWebhookSecret}
-            onChange={(event) => setNewWebhookSecret(event.target.value)}
-            disabled={!canManage}
-            placeholder="Secret (optional)"
-            className="ds-input h-11 min-w-[180px] flex-1 rounded-md px-3 text-sm md:h-9"
-          />
-          <select
-            value={eventPresetId}
-            onChange={(event) => {
-              const nextPreset = event.target.value;
-              setEventPresetId(nextPreset);
-              const preset = eventPresets.find((item) => item.id === nextPreset);
-              if (preset) {
-                setNewWebhookEvents([...preset.events]);
-              }
-            }}
-            disabled={!canManage || creatingWebhook}
-            className="ds-input h-11 min-w-[260px] rounded-md px-3 text-sm md:h-9"
-          >
-            {eventPresets.map((preset) => (
-              <option key={preset.id} value={preset.id}>
-                Preset: {preset.label}
-              </option>
-            ))}
-          </select>
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">Secret (optional)</p>
+            <Input
+              value={newWebhookSecret}
+              onChange={(event) => setNewWebhookSecret(event.target.value)}
+              disabled={!canManage}
+              placeholder="Secret (optional)"
+              className="ds-input h-11 min-w-[180px] flex-1 rounded-md px-3 text-sm md:h-9"
+            />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">Event Preset</p>
+            <select
+              value={eventPresetId}
+              onChange={(event) => {
+                const nextPreset = event.target.value;
+                setEventPresetId(nextPreset);
+                const preset = eventPresets.find((item) => item.id === nextPreset);
+                if (preset) {
+                  setNewWebhookEvents([...preset.events]);
+                }
+              }}
+              disabled={!canManage || creatingWebhook}
+              className="ds-input h-11 min-w-[260px] rounded-md px-3 text-sm md:h-9"
+            >
+              {eventPresets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  Preset: {preset.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="lg:col-span-2">
             <p className="mb-2 text-xs text-muted-foreground">Step 3. Choose event types</p>
+            <div className="mb-2 flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-7 rounded-md px-2 text-[11px]"
+                disabled={!canManage || creatingWebhook}
+                onClick={() => setNewWebhookEvents([...eventOptions])}
+              >
+                Select all
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-7 rounded-md px-2 text-[11px]"
+                disabled={!canManage || creatingWebhook}
+                onClick={() => setNewWebhookEvents([])}
+              >
+                Clear
+              </Button>
+            </div>
             <div className="flex flex-wrap gap-2">
               {eventOptions.map((eventType) => {
                 const active = newWebhookEvents.includes(eventType);
@@ -505,8 +568,12 @@ export default function DashboardIntegrationsWebhooksPage() {
                   <Button
                     key={eventType}
                     type="button"
-                    variant={active ? "default" : "outline"}
-                    className="h-8 rounded-md px-2 text-[11px]"
+                    variant="outline"
+                    className={`h-8 rounded-md px-2 text-[11px] ${
+                      active
+                        ? "border-sidebar-primary bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
+                        : "border-border text-foreground hover:bg-accent/40"
+                    }`}
                     disabled={!canManage || creatingWebhook}
                     onClick={() =>
                       setNewWebhookEvents((prev) => {
@@ -524,11 +591,12 @@ export default function DashboardIntegrationsWebhooksPage() {
             </div>
           </div>
           <div className="lg:col-span-2">
-            <p className="text-xs text-muted-foreground">Selected: {newWebhookEvents.join(", ") || "-"}</p>
+            <p className="text-xs text-muted-foreground">
+              Selected ({newWebhookEvents.length}): {newWebhookEvents.join(", ") || "-"}
+            </p>
           </div>
           <div className="lg:col-span-2">
-            {!canManage ? <p className="mb-2 text-xs text-muted-foreground">{writeDisabledReason}</p> : null}
-            {!guideCompleted && canManage ? <p className="mb-2 text-xs text-muted-foreground">Complete setup step checkbox to enable save.</p> : null}
+            {createDisabledReason ? <p className="mb-2 text-xs text-amber-500">{createDisabledReason}</p> : null}
           </div>
           <Button
             type="button"
