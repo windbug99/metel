@@ -2,7 +2,7 @@
 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import {
   DropdownMenu,
@@ -451,13 +451,16 @@ export default function DashboardAdminOpsPage() {
               <p className="text-xs font-medium text-muted-foreground">Incident Banner</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                  <Checkbox
+                  <Switch
                     checked={incidentEnabledDraft}
                     onCheckedChange={setIncidentEnabledDraft}
                     disabled={!canManageIncidentBanner}
                   />
-                  enabled
+                  Show banner
                 </label>
+              </div>
+
+              <div className="mt-2 flex flex-wrap items-center gap-2">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -481,25 +484,6 @@ export default function DashboardAdminOpsPage() {
                     </DropdownMenuRadioGroup>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                <Button
-                  type="button"
-                  onClick={() => void handleSaveIncidentBanner()}
-                  disabled={incidentSaving || !canManageIncidentBanner}
-                  className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
-                >
-                  {incidentSaving ? "Saving..." : "Save Banner"}
-                </Button>
-                <Button
-                  type="button"
-                  onClick={() => void handleCreateIncidentBannerRevision()}
-                  disabled={incidentRevisionSaving || !canManageIncidentBanner}
-                  className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
-                >
-                  {incidentRevisionSaving ? "Requesting..." : "Request Revision"}
-                </Button>
-              </div>
-
-              <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Input
                   value={incidentMessageDraft}
                   onChange={(event) => setIncidentMessageDraft(event.target.value)}
@@ -518,6 +502,22 @@ export default function DashboardAdminOpsPage() {
                     className="min-w-[280px]"
                   />
                 </div>
+                <Button
+                  type="button"
+                  onClick={() => void handleSaveIncidentBanner()}
+                  disabled={incidentSaving || !canManageIncidentBanner}
+                  className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+                >
+                  {incidentSaving ? "Saving..." : "Save Banner"}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => void handleCreateIncidentBannerRevision()}
+                  disabled={incidentRevisionSaving || !canManageIncidentBanner}
+                  className="ds-btn h-11 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
+                >
+                  {incidentRevisionSaving ? "Requesting..." : "Request Revision"}
+                </Button>
               </div>
 
               {!canManageIncidentBanner ? (
