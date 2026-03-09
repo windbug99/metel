@@ -5,11 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
 
 import { buildNextPath, dashboardApiRequest } from "../../../../lib/dashboard-v2-client";
 import { detectBrowserTimezone, updateUserTimezone, upsertUserProfile } from "../../../../lib/profile";
 import { supabase } from "../../../../lib/supabase";
 import AlertBanner from "../../../../components/dashboard-v2/alert-banner";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 type UserProfile = {
   id: string;
@@ -194,15 +196,32 @@ export default function DashboardProfilePage() {
     setInviteAccepting(false);
   }, [inviteTokenDraft, pathname, router]);
 
+  if (loading) {
+    return (
+      <section className="space-y-4">
+        <PageTitleWithTooltip
+          title="Profile"
+          tooltip="Manage your personal profile preferences and account settings."
+        />
+        <p className="text-sm text-muted-foreground">Manage your profile and timezone preference.</p>
+        <div className="ds-card flex min-h-[220px] items-center justify-center p-4">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-semibold">Profile</h1>
+      <PageTitleWithTooltip
+        title="Profile"
+        tooltip="Manage your personal profile preferences and account settings."
+      />
       <p className="text-sm text-muted-foreground">Manage your profile and timezone preference.</p>
 
       {error ? <AlertBanner message={error} tone="danger" /> : null}
-      {loading ? <p className="text-sm text-muted-foreground">Loading profile...</p> : null}
 
-      {!loading && profile ? (
+      {profile ? (
         <div className="ds-card space-y-4 p-4">
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">User ID</p>

@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Loader2 } from "lucide-react";
 
 import { buildNextPath, dashboardApiGet } from "../../../../lib/dashboard-v2-client";
 import { resolveDashboardScope } from "../../../../lib/dashboard-scope";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 type OverviewPayload = {
   window_hours: number;
@@ -79,7 +81,7 @@ export default function DashboardOverviewPage() {
 
     setData(result.data);
     setLoading(false);
-  }, [pathname, router, scopeState.organizationId, scopeState.teamId]);
+  }, [pathname, router, scopeState.organizationId, scopeState.teamId, searchParams]);
 
   useEffect(() => {
     void fetchOverview();
@@ -98,12 +100,23 @@ export default function DashboardOverviewPage() {
     };
   }, [fetchOverview, pathname]);
 
+  if (loading) {
+    return (
+      <section className="space-y-4">
+        <PageTitleWithTooltip title="Overview" tooltip="View scope-specific usage KPIs, top tools, and anomalies." />
+        <p className="text-sm text-muted-foreground">{scopeLabel}</p>
+        <div className="ds-card flex min-h-[220px] items-center justify-center p-4">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-semibold">Overview</h1>
+      <PageTitleWithTooltip title="Overview" tooltip="View scope-specific usage KPIs, top tools, and anomalies." />
       <p className="text-sm text-muted-foreground">{scopeLabel}</p>
 
-      {loading ? <p className="text-sm text-muted-foreground">Loading overview...</p> : null}
       {error ? (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}

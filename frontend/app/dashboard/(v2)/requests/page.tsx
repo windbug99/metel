@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { buildNextPath, dashboardApiGet, dashboardApiRequest } from "../../../../lib/dashboard-v2-client";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 type RequestType = "permission_request" | "change_request";
 type RequestStatus = "pending" | "approved" | "rejected" | "cancelled";
@@ -282,10 +284,30 @@ export default function DashboardMyRequestsPage() {
     }
   }, [loadRequestDetail, selectedRequestId]);
 
+  if (loading) {
+    return (
+      <section className="space-y-4">
+        <div>
+          <PageTitleWithTooltip
+            title="My Requests"
+            tooltip="Create and track your access and role change requests."
+          />
+          <p className="text-sm text-muted-foreground">Submit role/access requests and track review status.</p>
+        </div>
+        <div className="ds-card flex min-h-[220px] items-center justify-center p-4">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold">My Requests</h1>
+        <PageTitleWithTooltip
+          title="My Requests"
+          tooltip="Create and track your access and role change requests."
+        />
         <p className="text-sm text-muted-foreground">Submit role/access requests and track review status.</p>
       </div>
 
@@ -385,8 +407,7 @@ export default function DashboardMyRequestsPage() {
               </Select>
             </div>
 
-            {loading ? <p className="text-sm text-muted-foreground">Loading requests...</p> : null}
-            {!loading && items.length === 0 ? <p className="text-sm text-muted-foreground">No request history.</p> : null}
+            {items.length === 0 ? <p className="text-sm text-muted-foreground">No request history.</p> : null}
 
             <div className="space-y-2">
               {items.map((item) => {

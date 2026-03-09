@@ -6,10 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Loader2 } from "lucide-react";
 
 import { buildNextPath, dashboardApiGet } from "../../../../../lib/dashboard-v2-client";
 import { resolveDashboardScope } from "../../../../../lib/dashboard-scope";
 import StatusBadge from "../../../../../components/dashboard-v2/status-badge";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 type AuditEventItem = {
   id: number;
@@ -266,9 +268,33 @@ export default function DashboardAuditEventsPage() {
     };
   }, [fetchAuditEvents, pathname]);
 
+  if (loading) {
+    return (
+      <section className="space-y-4">
+        <PageTitleWithTooltip
+          title="Audit Events"
+          tooltip="Search and inspect audit events by status, decision, tool, agent, and date."
+        />
+        <p className="text-sm text-muted-foreground">
+          {isUserScope
+            ? "Your personal audit trail."
+            : isTeamScope
+            ? "Team-scoped audit events under organization governance."
+            : "Organization-scoped audit events with optional team drilldown."}
+        </p>
+        <div className="ds-card flex min-h-[220px] items-center justify-center p-4">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-semibold">Audit Events</h1>
+      <PageTitleWithTooltip
+        title="Audit Events"
+        tooltip="Search and inspect audit events by status, decision, tool, agent, and date."
+      />
       <p className="text-sm text-muted-foreground">
         {isUserScope
           ? "Your personal audit trail."

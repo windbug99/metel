@@ -6,9 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
 
 import { buildNextPath, dashboardApiGet, dashboardApiRequest } from "../../../../../lib/dashboard-v2-client";
 import StatusBadge from "../../../../../components/dashboard-v2/status-badge";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 type ApiKeyItem = {
   id: number;
@@ -401,9 +403,21 @@ export default function DashboardApiKeysPage() {
     };
   }, [fetchApiKeys, pathname]);
 
+  if (loading) {
+    return (
+      <section className="space-y-4">
+        <PageTitleWithTooltip title="API Keys" tooltip="Create, rotate, revoke, and inspect scoped API keys." />
+        <p className="text-sm text-muted-foreground">Issue, rotate, revoke, and inspect API keys with scoped policies.</p>
+        <div className="ds-card flex min-h-[220px] items-center justify-center p-4">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-semibold">API Keys</h1>
+      <PageTitleWithTooltip title="API Keys" tooltip="Create, rotate, revoke, and inspect scoped API keys." />
       <p className="text-sm text-muted-foreground">Create, update, rotate, revoke, and drill down API key activity.</p>
 
       <div className="ds-card p-4">
@@ -474,14 +488,13 @@ export default function DashboardApiKeysPage() {
         ) : null}
       </div>
 
-      {loading ? <p className="text-sm text-muted-foreground">Loading API keys...</p> : null}
       {error ? (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
         </div>
       ) : null}
 
-      {!loading && !error ? (
+      {!error ? (
         <div className="space-y-3">
           {items.map((item) => {
             const drilldown = drilldownById[item.id] ?? null;

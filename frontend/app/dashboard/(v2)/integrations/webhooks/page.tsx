@@ -8,6 +8,7 @@ import { Loader2 } from "lucide-react";
 
 import { buildNextPath, dashboardApiGet, dashboardApiRequest } from "../../../../../lib/dashboard-v2-client";
 import { resolveDashboardScope } from "../../../../../lib/dashboard-scope";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 type PermissionSnapshot = {
   permissions?: {
@@ -235,7 +236,10 @@ export default function DashboardIntegrationsWebhooksPage() {
   if (loading) {
     return (
       <section className="space-y-4">
-        <h1 className="text-2xl font-semibold">Integrations (Webhook)</h1>
+        <PageTitleWithTooltip
+          title="Integrations (Webhook)"
+          tooltip="Manage webhook subscriptions, deliveries, and retry operations."
+        />
         <p className="text-sm text-muted-foreground">Manage event subscriptions, delivery status, and retry processing.</p>
         <div className="ds-card flex min-h-[220px] items-center justify-center p-4">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -246,7 +250,10 @@ export default function DashboardIntegrationsWebhooksPage() {
 
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-semibold">Integrations (Webhook)</h1>
+      <PageTitleWithTooltip
+        title="Integrations (Webhook)"
+        tooltip="Manage webhook subscriptions, deliveries, and retry operations."
+      />
       <p className="text-sm text-muted-foreground">Manage event subscriptions, delivery status, and retry processing.</p>
 
       <div className="ds-card p-4">

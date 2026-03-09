@@ -6,9 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Loader2 } from "lucide-react";
 
 import { buildNextPath, dashboardApiGet, dashboardApiRequest } from "../../../../../lib/dashboard-v2-client";
 import AlertBanner from "../../../../../components/dashboard-v2/alert-banner";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 type PermissionSnapshot = {
   role: string;
@@ -412,14 +414,24 @@ export default function DashboardTeamPolicyPage() {
     };
   }, [fetchTeams, pathname]);
 
+  if (loading) {
+    return (
+      <section className="space-y-4">
+        <PageTitleWithTooltip title="Team Policy" tooltip="Create teams, manage memberships, and edit team policy revisions." />
+        <p className="text-sm text-muted-foreground">Create teams, manage memberships, and control team policy revisions.</p>
+        <div className="ds-card flex min-h-[220px] items-center justify-center p-4">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-semibold">Team Policy</h1>
+      <PageTitleWithTooltip title="Team Policy" tooltip="Create teams, manage memberships, and edit team policy revisions." />
       <p className="text-sm text-muted-foreground">Create teams, manage memberships, and control team policy revisions.</p>
 
       {error ? <AlertBanner message={error} tone="danger" /> : null}
-      {loading ? <p className="text-sm text-muted-foreground">Loading teams...</p> : null}
-
       <div className="ds-card p-4">
         <p className="mb-2 text-sm font-semibold">Create team</p>
         <div className="space-y-2">

@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { useMemo, useState } from "react";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 function buildExamples(apiBaseUrl: string) {
   const base = apiBaseUrl || "$NEXT_PUBLIC_API_BASE_URL";
@@ -36,7 +37,10 @@ export default function DashboardMcpGuidePage() {
 
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-semibold">MCP Guide</h1>
+      <PageTitleWithTooltip
+        title="MCP Guide"
+        tooltip="Copy ready-to-use JSON-RPC examples for MCP list_tools and call_tool."
+      />
       <p className="text-sm text-muted-foreground">Quick copy examples for JSON-RPC `list_tools` and `call_tool` usage.</p>
 
       <article className="ds-card p-4">

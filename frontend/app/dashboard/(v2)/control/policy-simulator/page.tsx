@@ -5,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 import { buildNextPath, dashboardApiGet, dashboardApiRequest } from "../../../../../lib/dashboard-v2-client";
 
@@ -28,6 +30,7 @@ export default function DashboardPolicySimulatorPage() {
   const router = useRouter();
 
   const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([]);
+  const [apiKeysLoading, setApiKeysLoading] = useState(true);
   const [apiKeyId, setApiKeyId] = useState("");
   const [toolName, setToolName] = useState("");
   const [argumentsJson, setArgumentsJson] = useState("{}");
@@ -41,15 +44,19 @@ export default function DashboardPolicySimulatorPage() {
   }, [pathname, router]);
 
   const fetchApiKeys = useCallback(async () => {
+    setApiKeysLoading(true);
     const response = await dashboardApiGet<{ items?: ApiKeyItem[] }>("/api/api-keys");
     if (response.status === 401) {
       handle401();
+      setApiKeysLoading(false);
       return;
     }
     if (!response.ok || !response.data) {
+      setApiKeysLoading(false);
       return;
     }
     setApiKeys(Array.isArray(response.data.items) ? response.data.items : []);
+    setApiKeysLoading(false);
   }, [handle401]);
 
   const runSimulation = useCallback(async () => {
@@ -122,9 +129,27 @@ export default function DashboardPolicySimulatorPage() {
     };
   }, [fetchApiKeys, pathname]);
 
+  if (apiKeysLoading) {
+    return (
+      <section className="space-y-4">
+        <PageTitleWithTooltip
+          title="Policy Simulator"
+          tooltip="Simulate policy decisions before executing tool calls."
+        />
+        <p className="text-sm text-muted-foreground">Preview whether a request is allowed or blocked before execution.</p>
+        <div className="ds-card flex min-h-[220px] items-center justify-center p-4">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-semibold">Policy Simulator</h1>
+      <PageTitleWithTooltip
+        title="Policy Simulator"
+        tooltip="Simulate policy decisions before executing tool calls."
+      />
       <p className="text-sm text-muted-foreground">Preview whether a request is allowed or blocked before execution.</p>
 
       <div className="ds-card space-y-3 p-4">

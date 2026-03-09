@@ -19,6 +19,7 @@ import { Loader2 } from "lucide-react";
 
 import { buildNextPath, dashboardApiGet, dashboardApiRequest } from "../../../../../lib/dashboard-v2-client";
 import AlertBanner from "../../../../../components/dashboard-v2/alert-banner";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 type PermissionSnapshot = {
   user_id: string;
@@ -563,7 +564,7 @@ export default function DashboardOrganizationsPage() {
   if (loading) {
     return (
       <section className="space-y-4">
-        <h1 className="text-2xl font-semibold">Organizations</h1>
+        <PageTitleWithTooltip title="Organizations" tooltip="Manage organizations, members, invites, and role requests." />
         <p className="text-sm text-muted-foreground">
           Owner/Admin can manage members and invites. Role requests can be created by all roles, and only owner can approve.
         </p>
@@ -576,7 +577,7 @@ export default function DashboardOrganizationsPage() {
 
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-semibold">Organizations</h1>
+      <PageTitleWithTooltip title="Organizations" tooltip="Manage organizations, members, invites, and role requests." />
       <p className="text-sm text-muted-foreground">
         Owner/Admin can manage members and invites. Role requests can be created by all roles, and only owner can approve.
       </p>

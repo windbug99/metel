@@ -12,6 +12,7 @@ import { buildNextPath, dashboardApiGet, dashboardApiRequest } from "../../../..
 import { resolveDashboardScope } from "../../../../../lib/dashboard-scope";
 import { supabase } from "../../../../../lib/supabase";
 import AlertBanner from "../../../../../components/dashboard-v2/alert-banner";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 type PermissionSnapshot = {
   permissions?: {
@@ -315,7 +316,10 @@ export default function DashboardAuditSettingsPage() {
 
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-semibold">Audit Settings</h1>
+      <PageTitleWithTooltip
+        title="Audit Settings"
+        tooltip="Configure retention and export policy, masking rules, and download audit exports."
+      />
       <p className="text-sm text-muted-foreground">
         {isUserScope
           ? "Audit governance is managed at organization scope."

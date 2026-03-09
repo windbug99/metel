@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import AlertBanner from "../../../../components/dashboard-v2/alert-banner";
 import { buildNextPath, dashboardApiGet, dashboardApiRequest } from "../../../../lib/dashboard-v2-client";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 type UserSecuritySettings = {
   user_id: string;
@@ -118,18 +120,33 @@ export default function DashboardSecurityPage() {
     void loadSettings();
   }, [loadSettings]);
 
+  if (loading) {
+    return (
+      <section className="space-y-4">
+        <PageTitleWithTooltip
+          title="Security"
+          tooltip="Manage your personal MFA, session timeout, and password rotation settings."
+        />
+        <p className="text-sm text-muted-foreground">Manage personal MFA/session/password policy preferences.</p>
+        <div className="ds-card flex min-h-[220px] items-center justify-center p-4">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-semibold">Security</h1>
+      <PageTitleWithTooltip
+        title="Security"
+        tooltip="Manage your personal MFA, session timeout, and password rotation settings."
+      />
       <p className="text-sm text-muted-foreground">
         Manage personal MFA/session/password policy preferences.
       </p>
 
       {error ? <AlertBanner message={error} tone="danger" /> : null}
-      {loading ? <p className="text-sm text-muted-foreground">Loading security settings...</p> : null}
-
-      {!loading ? (
-        <div className="ds-card space-y-4 p-4">
+      <div className="ds-card space-y-4 p-4">
           <div className="grid gap-3 xl:grid-cols-3">
             <label className="space-y-1">
               <span className="text-xs text-muted-foreground">MFA</span>
@@ -183,8 +200,7 @@ export default function DashboardSecurityPage() {
           </div>
 
           {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
-        </div>
-      ) : null}
+      </div>
     </section>
   );
 }

@@ -8,6 +8,7 @@ import { Loader2 } from "lucide-react";
 
 import { buildNextPath, dashboardApiGet, dashboardApiRequest } from "../../../../../lib/dashboard-v2-client";
 import { resolveDashboardScope } from "../../../../../lib/dashboard-scope";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 type OAuthStatus = {
   connected: boolean;
@@ -367,7 +368,10 @@ export default function DashboardOAuthConnectionsPage() {
   if (scope.scope !== "user") {
     return (
       <section className="space-y-4">
-        <h1 className="text-2xl font-semibold">OAuth Governance</h1>
+        <PageTitleWithTooltip
+          title="OAuth Governance"
+          tooltip="Manage organization OAuth provider governance policies."
+        />
         <p className="text-sm text-muted-foreground">
           {scope.scope === "team" ? "Team scope is read-only and follows organization OAuth governance." : "Organization-level OAuth policy and guardrails."}
         </p>
@@ -464,7 +468,10 @@ export default function DashboardOAuthConnectionsPage() {
 
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-semibold">OAuth Connections</h1>
+      <PageTitleWithTooltip
+        title="OAuth Connections"
+        tooltip="Connect or disconnect personal Notion and Linear accounts."
+      />
       <p className="text-sm text-muted-foreground">Connect Notion and Linear to expose MCP tools.</p>
 
       <div className="ds-card space-y-3 p-4">

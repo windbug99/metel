@@ -10,6 +10,7 @@ import { Loader2 } from "lucide-react";
 
 import { buildNextPath, dashboardApiGet, dashboardApiRequest } from "../../../../../lib/dashboard-v2-client";
 import AlertBanner from "../../../../../components/dashboard-v2/alert-banner";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 type PermissionSnapshot = {
   user_id?: string;
@@ -347,7 +348,10 @@ export default function DashboardAdminOpsPage() {
       <section className="space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h1 className="text-2xl font-semibold">Admin / Ops</h1>
+            <PageTitleWithTooltip
+              title="Admin / Ops"
+              tooltip="Monitor system health, incidents, diagnostics, and operational events."
+            />
             <p className="text-sm text-muted-foreground">Connector diagnostics, rate-limit events, system health, and incident workflow.</p>
           </div>
           <Button
@@ -369,7 +373,10 @@ export default function DashboardAdminOpsPage() {
     <section className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-semibold">Admin / Ops</h1>
+          <PageTitleWithTooltip
+            title="Admin / Ops"
+            tooltip="Monitor system health, incidents, diagnostics, and operational events."
+          />
           <p className="text-sm text-muted-foreground">Connector diagnostics, rate-limit events, system health, and incident workflow.</p>
         </div>
         <Button

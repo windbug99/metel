@@ -6,9 +6,11 @@ import { Button } from "@/components/ui/button";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Loader2 } from "lucide-react";
 
 import { buildNextPath, dashboardApiGet } from "../../../../../lib/dashboard-v2-client";
 import { resolveDashboardScope } from "../../../../../lib/dashboard-scope";
+import PageTitleWithTooltip from "@/components/dashboard-v2/page-title-with-tooltip";
 
 type ToolCallItem = {
   id: number;
@@ -222,9 +224,29 @@ export default function DashboardMcpUsagePage() {
     };
   }, [fetchToolCalls, fetchTrendAndBreakdown, pathname]);
 
+  const pageLoading = toolCallsLoading || trendLoading;
+
+  if (pageLoading) {
+    return (
+      <section className="space-y-4">
+        <PageTitleWithTooltip
+          title="MCP Usage"
+          tooltip="Analyze recent tool calls, trends, failures, and connector health."
+        />
+        <p className="text-sm text-muted-foreground">Recent tool calls, 24h execution summary, and 7d usage trends.</p>
+        <div className="ds-card flex min-h-[220px] items-center justify-center p-4">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-4">
-      <h1 className="text-2xl font-semibold">MCP Usage</h1>
+      <PageTitleWithTooltip
+        title="MCP Usage"
+        tooltip="Analyze recent tool calls, trends, failures, and connector health."
+      />
       <p className="text-sm text-muted-foreground">Recent tool calls, 24h execution summary, and 7d usage trends.</p>
 
       <div className="ds-card p-4">
