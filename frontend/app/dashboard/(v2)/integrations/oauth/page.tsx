@@ -77,6 +77,10 @@ function providerLogoSrc(provider: string): string | null {
   return null;
 }
 
+function normalizeProviders(items: string[]): string[] {
+  return Array.from(new Set(items.map((item) => String(item ?? "").trim().toLowerCase()).filter((item) => item.length > 0))).sort();
+}
+
 function ServiceRow({
   name,
   status,
@@ -227,34 +231,54 @@ export default function DashboardOAuthConnectionsPage() {
     }
     setOauthPolicy(res.data.item);
     const policy = res.data.item.policy_json ?? {};
-    const normalizeProviders = (items: string[] | undefined): string[] => {
-      if (!Array.isArray(items)) {
-        return [];
-      }
-      return Array.from(
-        new Set(items.map((item) => String(item ?? "").trim().toLowerCase()).filter((item) => item.length > 0))
-      ).sort();
-    };
-    setAllowedDraft(normalizeProviders(policy.allowed_providers));
-    setRequiredDraft(normalizeProviders(policy.required_providers));
-    setBlockedDraft(normalizeProviders(policy.blocked_providers));
+    setAllowedDraft(normalizeProviders(Array.isArray(policy.allowed_providers) ? policy.allowed_providers : []));
+    setRequiredDraft(normalizeProviders(Array.isArray(policy.required_providers) ? policy.required_providers : []));
+    setBlockedDraft(normalizeProviders(Array.isArray(policy.blocked_providers) ? policy.blocked_providers : []));
     setPolicySaveMessage(null);
     setPolicyLoading(false);
   }, [handle401, scope.organizationId, scope.scope]);
 
   const toggleProvider = useCallback((target: "allowed" | "required" | "blocked", provider: string) => {
-    const apply = (prev: string[]) => {
-      if (prev.includes(provider)) {
-        return prev.filter((item) => item !== provider);
+    const normalized = String(provider ?? "").trim().toLowerCase();
+    if (!normalized) {
+      return;
+    }
+    const toggle = (prev: string[]) => {
+      if (prev.includes(normalized)) {
+        return prev.filter((item) => item !== normalized);
       }
-      return [...prev, provider].sort();
+      return normalizeProviders([...prev, normalized]);
     };
     if (target === "allowed") {
-      setAllowedDraft(apply);
+      setAllowedDraft((prev) => {
+        const next = toggle(prev);
+        if (!next.includes(normalized)) {
+          // required must always be a subset of allowed.
+          setRequiredDraft((requiredPrev) => requiredPrev.filter((item) => item !== normalized));
+        }
+        return next;
+      });
     } else if (target === "required") {
-      setRequiredDraft(apply);
+      setRequiredDraft((prev) => {
+        const next = toggle(prev);
+        if (next.includes(normalized)) {
+          // required provider should be auto-allowed and not blocked.
+          setAllowedDraft((allowedPrev) =>
+            allowedPrev.includes(normalized) ? allowedPrev : normalizeProviders([...allowedPrev, normalized])
+          );
+          setBlockedDraft((blockedPrev) => blockedPrev.filter((item) => item !== normalized));
+        }
+        return next;
+      });
     } else {
-      setBlockedDraft(apply);
+      setBlockedDraft((prev) => {
+        const next = toggle(prev);
+        if (next.includes(normalized)) {
+          // blocked cannot overlap with required.
+          setRequiredDraft((requiredPrev) => requiredPrev.filter((item) => item !== normalized));
+        }
+        return next;
+      });
     }
     setPolicySaveMessage(null);
   }, []);
@@ -266,13 +290,34 @@ export default function DashboardOAuthConnectionsPage() {
     setSavingPolicy(true);
     setPolicyError(null);
     setPolicySaveMessage(null);
+
+    const normalizedAllowed = normalizeProviders(allowedDraft);
+    const normalizedRequired = normalizeProviders(requiredDraft);
+    const normalizedBlocked = normalizeProviders(blockedDraft);
+    const allowedSet = new Set(normalizedAllowed);
+    const requiredSet = new Set(normalizedRequired);
+    const blockedSet = new Set(normalizedBlocked);
+
+    const requiredOutsideAllowed = normalizedRequired.filter((provider) => !allowedSet.has(provider));
+    if (requiredOutsideAllowed.length > 0) {
+      setPolicyError("Invalid policy: required providers must be included in allowed providers.");
+      setSavingPolicy(false);
+      return;
+    }
+    const blockedAndRequired = normalizedBlocked.filter((provider) => requiredSet.has(provider));
+    if (blockedAndRequired.length > 0 || [...requiredSet].some((provider) => blockedSet.has(provider))) {
+      setPolicyError("Invalid policy: blocked providers cannot overlap with required providers.");
+      setSavingPolicy(false);
+      return;
+    }
+
     const currentPolicy = oauthPolicy?.policy_json ?? {};
     const response = await dashboardApiRequest<OrganizationOAuthPolicyPayload>(`/api/organizations/${scope.organizationId}/oauth-policy`, {
       method: "PATCH",
       body: {
-        allowed_providers: allowedDraft,
-        required_providers: requiredDraft,
-        blocked_providers: blockedDraft,
+        allowed_providers: normalizedAllowed,
+        required_providers: normalizedRequired,
+        blocked_providers: normalizedBlocked,
         approval_workflow:
           currentPolicy && typeof currentPolicy.approval_workflow === "object"
             ? currentPolicy.approval_workflow
@@ -290,7 +335,14 @@ export default function DashboardOAuthConnectionsPage() {
       return;
     }
     if (!response.ok || !response.data?.item) {
-      setPolicyError(response.error ?? "Failed to update OAuth governance policy.");
+      const rawError = response.error ?? "Failed to update OAuth governance policy.";
+      if (rawError.includes("invalid_oauth_policy:required_not_subset_of_allowed")) {
+        setPolicyError("Invalid policy: required providers must be included in allowed providers.");
+      } else if (rawError.includes("invalid_oauth_policy:blocked_conflicts_required")) {
+        setPolicyError("Invalid policy: blocked providers cannot overlap with required providers.");
+      } else {
+        setPolicyError(rawError);
+      }
       setSavingPolicy(false);
       return;
     }

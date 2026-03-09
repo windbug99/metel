@@ -48,10 +48,20 @@ export async function dashboardApiRequest<T>(path: string, options: DashboardApi
     });
 
     if (!response.ok) {
+      let detailMessage = "";
+      try {
+        const contentType = response.headers.get("content-type") ?? "";
+        if (contentType.includes("application/json")) {
+          const errorPayload = (await response.json()) as { detail?: string; message?: string };
+          detailMessage = String(errorPayload?.detail ?? errorPayload?.message ?? "").trim();
+        }
+      } catch {
+        // ignore parse failure and fallback to status message
+      }
       return {
         ok: false,
         status: response.status,
-        error: `Request failed with status ${response.status}`,
+        error: detailMessage || `Request failed with status ${response.status}`,
       };
     }
 

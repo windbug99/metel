@@ -131,7 +131,9 @@ function ChartTooltipContent({
               )}
               <span className="grow">{itemConfig?.label ?? entry.name}</span>
               <span className="font-mono font-medium text-foreground">
-                {formatter ? formatter(entry.value, entry.name, entry, index, payload) : entry.value?.toLocaleString()}
+                {formatter
+                  ? formatter(entry.value ?? 0, entry.name ?? key, entry, index, payload)
+                  : entry.value?.toLocaleString()}
               </span>
             </div>
           )
