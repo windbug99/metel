@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -55,6 +56,25 @@ function formatDate(value?: string | null): string {
     return value;
   }
   return date.toLocaleString();
+}
+
+function formatProviderLabel(provider: string): string {
+  const value = String(provider ?? "").trim().toLowerCase();
+  if (!value) {
+    return "-";
+  }
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function providerLogoSrc(provider: string): string | null {
+  const value = String(provider ?? "").trim().toLowerCase();
+  if (value === "linear") {
+    return "/logos/linear.svg";
+  }
+  if (value === "notion") {
+    return "/logos/notion.svg";
+  }
+  return null;
 }
 
 function ServiceRow({
@@ -428,9 +448,19 @@ export default function DashboardOAuthConnectionsPage() {
                             : activePolicyTab === "required"
                               ? requiredDraft.includes(provider)
                               : blockedDraft.includes(provider);
+                        const logoSrc = providerLogoSrc(provider);
                         return (
                           <label key={provider} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
-                            <span>{provider}</span>
+                            <span className="flex items-center gap-2">
+                              {logoSrc ? (
+                                <Image src={logoSrc} alt={`${formatProviderLabel(provider)} logo`} width={16} height={16} className="h-4 w-4 shrink-0" />
+                              ) : (
+                                <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-border text-[10px]">
+                                  {formatProviderLabel(provider).slice(0, 1)}
+                                </span>
+                              )}
+                              <span>{formatProviderLabel(provider)}</span>
+                            </span>
                             <Checkbox
                               checked={checked}
                               onCheckedChange={() => toggleProvider(activePolicyTab, provider)}

@@ -56,7 +56,7 @@ export function NavMain({ pathname, navItems, buildNavHref, collapsed }: NavMain
   ];
 
   return (
-    <nav className="space-y-1.5">
+    <nav className="space-y-4">
       {sectionOrder.map((section) => {
         const items = visibleItems.filter((item) => item.section === section.key);
         if (items.length === 0) {
@@ -80,11 +80,18 @@ export function NavMain({ pathname, navItems, buildNavHref, collapsed }: NavMain
                     className={cn(
                       "mb-0.5 flex items-center gap-2 rounded-md px-3 pt-[6px] pb-[6px] text-sm font-light transition-colors",
                       active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-foreground hover:bg-sidebar-accent/70",
-                      collapsed && "justify-center px-2"
+                      collapsed && "mx-auto h-8 w-8 justify-center p-0"
                     )}
                     title={collapsed ? `${section.label}: ${item.label}` : undefined}
                   >
-                    <Icon className="h-4 w-4 shrink-0" />
+                    <span
+                      className={cn(
+                        "flex shrink-0 items-center justify-center rounded-sm border border-sidebar-border/60 bg-sidebar-accent/30",
+                        collapsed ? "h-8 w-8 border-0 bg-transparent" : "h-5 w-5"
+                      )}
+                    >
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                    </span>
                     <span className={cn("truncate", collapsed && "hidden")}>{item.label}</span>
                   </Link>
                 );

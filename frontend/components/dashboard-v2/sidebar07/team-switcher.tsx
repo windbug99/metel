@@ -31,7 +31,7 @@ export function TeamSwitcher({
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
-          className={cn("h-auto w-full justify-between gap-3 rounded-lg p-2 text-left", collapsed && "justify-center px-0")}
+          className={cn("h-auto w-full justify-between gap-3 rounded-lg p-2 text-left", collapsed && "justify-center gap-0 px-0")}
         >
           <div className={cn("flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground", collapsed && "h-7 w-7")}>
             <GalleryVerticalEnd className="h-4 w-4" />
@@ -40,7 +40,7 @@ export function TeamSwitcher({
             <span className="truncate font-semibold">{currentOrg === "all" ? "All Organizations" : `Org #${currentOrg}`}</span>
             <span className="truncate text-xs text-muted-foreground">{roleLabel === "loading" ? "loading" : roleLabel}</span>
           </div>
-          <ChevronsUpDown className="size-4" strokeWidth={1.5} />
+          <ChevronsUpDown className={cn("size-4", collapsed && "hidden")} strokeWidth={1.5} />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
