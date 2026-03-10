@@ -523,9 +523,13 @@ def test_rotate_api_key_creates_new_key_and_revokes_old(monkeypatch):
     assert client.update_payload["is_active"] is False
 
 
-def test_create_api_key_blocks_member_team_scope(monkeypatch):
+def test_create_api_key_allows_member_team_scope_when_team_is_valid(monkeypatch):
     class _Query:
+        def __init__(self):
+            self._mode = ""
+
         def select(self, *_args, **_kwargs):
+            self._mode = "select"
             return self
 
         def eq(self, *_args, **_kwargs):
@@ -535,9 +539,12 @@ def test_create_api_key_blocks_member_team_scope(monkeypatch):
             return self
 
         def insert(self, *_args, **_kwargs):
+            self._mode = "insert"
             return self
 
         def execute(self):
+            if self._mode == "insert":
+                return SimpleNamespace(data=[{"id": 77, "name": "k", "team_id": 1}])
             return SimpleNamespace(data=[])
 
     class _Client:
@@ -559,20 +566,16 @@ def test_create_api_key_blocks_member_team_scope(monkeypatch):
     )
     monkeypatch.setattr("app.routes.api_keys.generate_api_key", lambda: "metel_member_abcdefghijklmnopqrstuvwxyz")
     monkeypatch.setattr("app.routes.api_keys.hash_api_key", lambda _value: "hash-value")
+    monkeypatch.setattr("app.routes.api_keys._validate_team_id", lambda **_kwargs: 1)
 
-    try:
-        asyncio.run(
-            create_api_key(
-                _request(),
-                CreateApiKeyRequest(name="k", team_id=1, policy_json={"deny_tools": ["linear_list_issues"]}),
-            )
+    out = asyncio.run(
+        create_api_key(
+            _request(),
+            CreateApiKeyRequest(name="k", team_id=1, policy_json={"deny_tools": ["linear_list_issues"]}),
         )
-    except HTTPException as exc:
-        assert exc.status_code == 403
-        assert isinstance(exc.detail, dict)
-        assert exc.detail.get("reason") == "member_team_scope_forbidden"
-    else:
-        assert False, "expected HTTPException"
+    )
+    assert out["id"] == 77
+    assert out["team_id"] == 1
 
 
 def test_update_api_key_blocks_member_policy_key_outside_whitelist(monkeypatch):

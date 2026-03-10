@@ -247,13 +247,10 @@ def _validate_policy_conflict(
 def _enforce_member_api_key_write_policy(
     *,
     authz_ctx: AuthzContext,
-    team_id: int | None,
     policy_json: dict[str, Any] | None,
 ) -> None:
     if authz_ctx.role != Role.MEMBER:
         return
-    if team_id is not None:
-        raise HTTPException(status_code=403, detail={"code": "access_denied", "reason": "member_team_scope_forbidden"})
     if policy_json is None:
         return
     extra_keys = sorted(set(policy_json.keys()) - _MEMBER_ALLOWED_POLICY_KEYS)
@@ -434,7 +431,7 @@ async def create_api_key(request: Request, body: CreateApiKeyRequest):
     policy_json = _normalize_api_key_policy(body.policy_json)
     memo = _normalize_memo(body.memo)
     tags = _normalize_tags(body.tags)
-    _enforce_member_api_key_write_policy(authz_ctx=authz_ctx, team_id=body.team_id, policy_json=policy_json)
+    _enforce_member_api_key_write_policy(authz_ctx=authz_ctx, policy_json=policy_json)
     team_id = _validate_team_id(supabase=supabase, authz_ctx=authz_ctx, user_id=user_id, team_id=body.team_id)
     _validate_policy_conflict(allowed_tools=allowed_tools, policy_json=policy_json)
 
@@ -543,15 +540,9 @@ async def update_api_key(request: Request, key_id: str, body: UpdateApiKeyReques
     if "tags" in fields_set:
         payload["tags"] = _normalize_tags(body.tags)
     if "team_id" in fields_set:
-        if authz_ctx.role == Role.MEMBER and body.team_id is not None:
-            raise HTTPException(
-                status_code=403,
-                detail={"code": "access_denied", "reason": "member_team_scope_forbidden"},
-            )
         payload["team_id"] = _validate_team_id(supabase=supabase, authz_ctx=authz_ctx, user_id=user_id, team_id=body.team_id)
     _enforce_member_api_key_write_policy(
         authz_ctx=authz_ctx,
-        team_id=payload.get("team_id") if "team_id" in payload else None,
         policy_json=next_policy_json if isinstance(next_policy_json, dict) else None,
     )
     _validate_policy_conflict(
