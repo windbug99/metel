@@ -4,6 +4,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { ChevronsUpDown, Loader2 } from "lucide-react";
@@ -138,6 +140,31 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
   return parsed as Record<string, unknown>;
 }
 
+function buildPolicyFromBasic(
+  allowedServices: string[],
+  denyToolsCsv: string,
+  allowHighRisk: boolean,
+  linearTeamIdsCsv: string
+): Record<string, unknown> | null {
+  const policy: Record<string, unknown> = {};
+  const services = allowedServices.map((item) => item.trim().toLowerCase()).filter((item) => item === "notion" || item === "linear");
+  if (services.length > 0) {
+    policy.allowed_services = Array.from(new Set(services));
+  }
+  const denyTools = parseCsvList(denyToolsCsv);
+  if (denyTools && denyTools.length > 0) {
+    policy.deny_tools = denyTools;
+  }
+  if (allowHighRisk) {
+    policy.allow_high_risk = true;
+  }
+  const linearTeamIds = parseCsvList(linearTeamIdsCsv);
+  if (linearTeamIds && linearTeamIds.length > 0) {
+    policy.allowed_linear_team_ids = linearTeamIds;
+  }
+  return Object.keys(policy).length > 0 ? policy : null;
+}
+
 export default function DashboardApiKeysPage() {
   const pathname = usePathname();
   const router = useRouter();
@@ -152,6 +179,11 @@ export default function DashboardApiKeysPage() {
   const [createMemo, setCreateMemo] = useState("");
   const [createAllowedTools, setCreateAllowedTools] = useState("");
   const [createTags, setCreateTags] = useState("");
+  const [createPolicyMode, setCreatePolicyMode] = useState<"basic" | "advanced">("basic");
+  const [createPolicyAllowedServices, setCreatePolicyAllowedServices] = useState<string[]>([]);
+  const [createPolicyDenyTools, setCreatePolicyDenyTools] = useState("");
+  const [createPolicyAllowHighRisk, setCreatePolicyAllowHighRisk] = useState(false);
+  const [createPolicyLinearTeamIds, setCreatePolicyLinearTeamIds] = useState("");
   const [createPolicyJson, setCreatePolicyJson] = useState("{}");
 
   const [creating, setCreating] = useState(false);
@@ -175,6 +207,16 @@ export default function DashboardApiKeysPage() {
     () => Array.from(new Set(toolOptions.map((tool) => tool.tool_name.trim()).filter((name) => name.length > 0))).join(", "),
     [toolOptions]
   );
+  const createPolicyPreview = useMemo(
+    () => buildPolicyFromBasic(createPolicyAllowedServices, createPolicyDenyTools, createPolicyAllowHighRisk, createPolicyLinearTeamIds),
+    [createPolicyAllowedServices, createPolicyDenyTools, createPolicyAllowHighRisk, createPolicyLinearTeamIds]
+  );
+  const createPolicyToolOverlap = useMemo(() => {
+    const allowed = new Set(parseCsvList(createAllowedTools) ?? []);
+    const denied = new Set(parseCsvList(createPolicyDenyTools) ?? []);
+    const overlap = Array.from(allowed).filter((tool) => denied.has(tool));
+    return overlap;
+  }, [createAllowedTools, createPolicyDenyTools]);
 
   const fetchApiKeys = useCallback(async () => {
     setLoading(true);
@@ -241,12 +283,16 @@ export default function DashboardApiKeysPage() {
     setError(null);
 
     let policyJson: Record<string, unknown> | null = null;
-    try {
-      policyJson = parseJsonObject(createPolicyJson);
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "Invalid policy JSON.");
-      setCreating(false);
-      return;
+    if (createPolicyMode === "advanced") {
+      try {
+        policyJson = parseJsonObject(createPolicyJson);
+      } catch (createError) {
+        setError(createError instanceof Error ? createError.message : "Invalid policy JSON.");
+        setCreating(false);
+        return;
+      }
+    } else {
+      policyJson = createPolicyPreview;
     }
 
     const result = await dashboardApiRequest<CreateApiKeyPayload>("/api/api-keys", {
@@ -282,10 +328,14 @@ export default function DashboardApiKeysPage() {
     setCreateMemo("");
     setCreateAllowedTools("");
     setCreateTags("");
+    setCreatePolicyAllowedServices([]);
+    setCreatePolicyDenyTools("");
+    setCreatePolicyAllowHighRisk(false);
+    setCreatePolicyLinearTeamIds("");
     setCreatePolicyJson("{}");
     await fetchApiKeys();
     setCreating(false);
-  }, [createAllowedTools, createMemo, createName, createPolicyJson, createTags, createTeamId, fetchApiKeys, pathname, router]);
+  }, [createAllowedTools, createMemo, createName, createPolicyJson, createPolicyMode, createPolicyPreview, createTags, createTeamId, fetchApiKeys, pathname, router]);
 
   const handleUpdateApiKey = useCallback(
     async (id: number) => {
@@ -574,12 +624,151 @@ export default function DashboardApiKeysPage() {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
-          <textarea
-            value={createPolicyJson}
-            onChange={(event) => setCreatePolicyJson(event.target.value)}
-            placeholder='Policy JSON, e.g. {"allowed_services":["notion"]}'
-            className="ds-input min-h-[120px] rounded-md px-3 py-2 text-xs font-mono lg:col-span-2"
-          />
+          <div className="rounded-md border border-border p-3 lg:col-span-2">
+            <Tabs
+              value={createPolicyMode}
+              onValueChange={(value) => {
+                const nextMode = value === "advanced" ? "advanced" : "basic";
+                if (nextMode === "advanced") {
+                  setCreatePolicyJson(stringifyJson(createPolicyPreview ?? {}));
+                }
+                setCreatePolicyMode(nextMode);
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-medium text-muted-foreground">Policy</p>
+                <TabsList className="h-8">
+                  <TabsTrigger value="basic" className="px-2 py-1 text-xs">
+                    Basic
+                  </TabsTrigger>
+                  <TabsTrigger value="advanced" className="px-2 py-1 text-xs">
+                    Advanced JSON
+                  </TabsTrigger>
+                </TabsList>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Basic: guided fields. Advanced: direct JSON for expert configuration.
+              </p>
+
+              <TabsContent value="basic" className="space-y-2">
+                <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                  <div className="rounded-md border border-border p-2">
+                    <p className="text-xs font-medium text-muted-foreground">Allowed services</p>
+                    <div className="mt-2 flex items-center gap-3">
+                      <label className="inline-flex items-center gap-2 text-xs">
+                        <Checkbox
+                          checked={createPolicyAllowedServices.includes("notion")}
+                          onCheckedChange={(checked) =>
+                            setCreatePolicyAllowedServices((prev) =>
+                              checked ? Array.from(new Set([...prev, "notion"])) : prev.filter((item) => item !== "notion")
+                            )
+                          }
+                        />
+                        notion
+                      </label>
+                      <label className="inline-flex items-center gap-2 text-xs">
+                        <Checkbox
+                          checked={createPolicyAllowedServices.includes("linear")}
+                          onCheckedChange={(checked) =>
+                            setCreatePolicyAllowedServices((prev) =>
+                              checked ? Array.from(new Set([...prev, "linear"])) : prev.filter((item) => item !== "linear")
+                            )
+                          }
+                        />
+                        linear
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border border-border p-2">
+                    <label className="inline-flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                      <Checkbox checked={createPolicyAllowHighRisk} onCheckedChange={setCreatePolicyAllowHighRisk} />
+                      Allow high risk
+                    </label>
+                    <p className="mt-2 text-xs text-muted-foreground">Enable only when high-risk tool calls are explicitly required.</p>
+                  </div>
+                </div>
+
+                <div className="grid gap-2 lg:grid-cols-2">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="ds-input h-11 w-full justify-between rounded-md px-3 text-sm md:h-9"
+                      >
+                        <span className="truncate text-left">Deny tools: {toolsDropdownLabel(createPolicyDenyTools)}</span>
+                        <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="max-h-72 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto">
+                      {toolOptions.length === 0 ? <p className="px-2 py-1 text-xs text-muted-foreground">No tool options</p> : null}
+                      {toolOptions.length > 0 ? (
+                        <>
+                          <DropdownMenuItem
+                            onSelect={(event) => {
+                              event.preventDefault();
+                              setCreatePolicyDenyTools(allToolNamesCsv);
+                            }}
+                            className="text-xs"
+                          >
+                            Select All
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={(event) => {
+                              event.preventDefault();
+                              setCreatePolicyDenyTools("");
+                            }}
+                            className="text-xs"
+                          >
+                            Clear All
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                        </>
+                      ) : null}
+                      {toolOptions.map((tool) => (
+                        <DropdownMenuCheckboxItem
+                          key={`create-deny-tool-${tool.tool_name}`}
+                          checked={csvHasValue(createPolicyDenyTools, tool.tool_name)}
+                          onCheckedChange={(checked) => setCreatePolicyDenyTools((prev) => updateCsvSelection(prev, tool.tool_name, checked === true))}
+                          onSelect={(event) => event.preventDefault()}
+                        >
+                          <span className="font-mono text-xs">{tool.tool_name}</span>
+                        </DropdownMenuCheckboxItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
+                  <Input
+                    value={createPolicyLinearTeamIds}
+                    onChange={(event) => setCreatePolicyLinearTeamIds(event.target.value)}
+                    placeholder="Allowed Linear team IDs CSV (optional)"
+                    className="ds-input h-11 rounded-md px-3 text-sm md:h-9"
+                  />
+                </div>
+
+                {createPolicyToolOverlap.length > 0 ? (
+                  <p className="text-xs text-destructive">
+                    Conflict warning: same tool in allowed and deny lists ({createPolicyToolOverlap.join(", ")}).
+                  </p>
+                ) : null}
+
+                <div className="rounded-md border border-border bg-muted/30 p-2">
+                  <p className="text-xs font-medium text-muted-foreground">Generated JSON preview</p>
+                  <pre className="mt-1 overflow-x-auto text-xs">{stringifyJson(createPolicyPreview ?? {})}</pre>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="advanced">
+                <textarea
+                  value={createPolicyJson}
+                  onChange={(event) => setCreatePolicyJson(event.target.value)}
+                  placeholder='Policy JSON, e.g. {"allowed_services":["notion"]}'
+                  className="ds-input mt-2 min-h-[140px] rounded-md px-3 py-2 text-xs font-mono"
+                />
+              </TabsContent>
+            </Tabs>
+          </div>
           <Button
             type="button"
             onClick={() => void handleCreateApiKey()}
