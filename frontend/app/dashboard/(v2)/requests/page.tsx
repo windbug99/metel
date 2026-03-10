@@ -409,106 +409,112 @@ export default function DashboardMyRequestsPage() {
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-      <div className="grid gap-4 lg:grid-cols-[1.25fr,1fr]">
-        <div className="space-y-4">
-          <div className="ds-card space-y-3 p-4">
-            <div className="flex flex-wrap gap-2">
-              <Select
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value as "all" | RequestStatus)}
-                className="ds-input h-10 w-[170px] rounded-md px-3 text-sm"
+      <div className="ds-card space-y-3 p-4">
+        <div className="flex flex-wrap gap-2">
+          <Select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value as "all" | RequestStatus)}
+            className="ds-input h-10 w-[170px] rounded-md px-3 text-sm"
+          >
+            <option value="all">All Statuses</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+            <option value="cancelled">Cancelled</option>
+          </Select>
+        </div>
+
+        {items.length === 0 ? <p className="text-sm text-muted-foreground">No request history.</p> : null}
+
+        <div className="space-y-2">
+          {items.map((item) => {
+            const itemId = String(item.id);
+            const isSelected = selectedRequestId === itemId;
+            const isPending = item.status === "pending";
+            const selectedMatches = isSelected && selectedRequest && String(selectedRequest.id) === itemId;
+
+            return (
+              <div
+                key={itemId}
+                className={`rounded-md border p-3 transition-colors ${
+                  isSelected ? "border-foreground/30 bg-sidebar-accent/50" : "border-border hover:bg-sidebar-accent/20"
+                }`}
               >
-                <option value="all">All Statuses</option>
-                <option value="pending">Pending</option>
-                <option value="approved">Approved</option>
-                <option value="rejected">Rejected</option>
-                <option value="cancelled">Cancelled</option>
-              </Select>
-            </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedRequestId((prev) => (prev === itemId ? null : itemId));
+                  }}
+                  className="w-full text-left"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-medium">
+                      {requestTypeLabel(item.request_type)} • {item.organization_name ?? `Org #${item.organization_id}`}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{statusLabel(item.status)}</p>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">Role: {item.requested_role}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Created: {formatDate(item.created_at)}</p>
+                </button>
 
-            {items.length === 0 ? <p className="text-sm text-muted-foreground">No request history.</p> : null}
+                {isPending ? (
+                  <div className="mt-2">
+                    <Button
+                      type="button"
+                      onClick={() => void handleCancel(itemId)}
+                      disabled={cancellingId === itemId}
+                      className="ds-btn h-8 rounded-md px-2 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {cancellingId === itemId ? "Cancelling..." : "Cancel Request"}
+                    </Button>
+                  </div>
+                ) : null}
 
-            <div className="space-y-2">
-              {items.map((item) => {
-                const isSelected = selectedRequestId === String(item.id);
-                const isPending = item.status === "pending";
-                return (
-                  <div
-                    key={String(item.id)}
-                    className={`rounded-md border p-3 transition-colors ${
-                      isSelected ? "border-foreground/30 bg-sidebar-accent/50" : "border-border hover:bg-sidebar-accent/20"
-                    }`}
-                  >
-                    <button type="button" onClick={() => setSelectedRequestId(String(item.id))} className="w-full text-left">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-sm font-medium">
-                          {requestTypeLabel(item.request_type)} • {item.organization_name ?? `Org #${item.organization_id}`}
-                        </p>
-                        <p className="text-xs text-muted-foreground">{statusLabel(item.status)}</p>
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">Role: {item.requested_role}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">Created: {formatDate(item.created_at)}</p>
-                    </button>
-                    {isPending ? (
-                      <div className="mt-2">
-                        <Button
-                          type="button"
-                          onClick={() => void handleCancel(String(item.id))}
-                          disabled={cancellingId === String(item.id)}
-                          className="ds-btn h-8 rounded-md px-2 text-xs disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {cancellingId === String(item.id) ? "Cancelling..." : "Cancel Request"}
-                        </Button>
+                {isSelected ? (
+                  <div className="mt-3 space-y-3 border-t border-border pt-3">
+                    {detailLoading ? <p className="text-sm text-muted-foreground">Loading detail...</p> : null}
+                    {detailError ? <p className="text-sm text-destructive">{detailError}</p> : null}
+
+                    {selectedMatches ? (
+                      <div className="space-y-3">
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground">Type</p>
+                          <p className="text-sm">{requestTypeLabel(selectedRequest.request_type)}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground">Status</p>
+                          <p className="text-sm">{statusLabel(selectedRequest.status)}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground">Requested Role</p>
+                          <p className="text-sm">{selectedRequest.requested_role}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground">Request Reason</p>
+                          <p className="text-sm">{selectedRequest.reason ?? "-"}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground">Review Reason</p>
+                          <p className="text-sm">{selectedRequest.review_reason ?? "-"}</p>
+                        </div>
+
+                        <div className="space-y-2 border-t border-border pt-3">
+                          <p className="text-xs text-muted-foreground">Timeline</p>
+                          {timeline.map((entry) => (
+                            <div key={entry.key} className="flex items-center justify-between text-xs">
+                              <span>{entry.label}</span>
+                              <span className="text-muted-foreground">{entry.at}</span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     ) : null}
                   </div>
-                );
-              })}
-            </div>
-          </div>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
-
-        <aside className="ds-card space-y-3 p-4">
-          <p className="text-sm font-medium">Request Detail</p>
-          {detailLoading ? <p className="text-sm text-muted-foreground">Loading detail...</p> : null}
-          {detailError ? <p className="text-sm text-destructive">{detailError}</p> : null}
-          {!detailLoading && !selectedRequest ? <p className="text-sm text-muted-foreground">Select a request.</p> : null}
-
-          {selectedRequest ? (
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Type</p>
-                <p className="text-sm">{requestTypeLabel(selectedRequest.request_type)}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Status</p>
-                <p className="text-sm">{statusLabel(selectedRequest.status)}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Requested Role</p>
-                <p className="text-sm">{selectedRequest.requested_role}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Request Reason</p>
-                <p className="text-sm">{selectedRequest.reason ?? "-"}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Review Reason</p>
-                <p className="text-sm">{selectedRequest.review_reason ?? "-"}</p>
-              </div>
-
-              <div className="space-y-2 border-t border-border pt-3">
-                <p className="text-xs text-muted-foreground">Timeline</p>
-                {timeline.map((entry) => (
-                  <div key={entry.key} className="flex items-center justify-between text-xs">
-                    <span>{entry.label}</span>
-                    <span className="text-muted-foreground">{entry.at}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </aside>
       </div>
     </section>
   );
