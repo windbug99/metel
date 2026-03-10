@@ -147,7 +147,6 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
   const isMobile = useIsMobile();
 
   const title = useMemo(() => pageTitle(pathname), [pathname]);
-  const globalSearchEnabled = process.env.NEXT_PUBLIC_DASHBOARD_GLOBAL_SEARCH_ENABLED === "true";
   const pageKey = useMemo(() => currentPageKey(pathname), [pathname]);
   const orgIds = permissionSnapshot?.org_ids ?? [];
   const teamIds = permissionSnapshot?.team_ids ?? [];
@@ -693,15 +692,7 @@ export default function DashboardV2Shell({ children }: { children: React.ReactNo
         <main className="flex h-svh min-w-0 flex-1 flex-col overflow-hidden">
           <SiteHeader
             title={title}
-            globalSearchEnabled={globalSearchEnabled}
-            currentTeam={currentTeam}
-            currentRange={currentRange}
-            currentScope={currentScope}
-            currentOrg={currentOrg}
             breadcrumb={breadcrumb}
-            teamIds={teamIds}
-            setGlobalQuery={setGlobalQuery}
-            triggerRefresh={triggerRefresh}
             onToggleSidebar={toggleSidebar}
           />
 

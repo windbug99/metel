@@ -1,6 +1,5 @@
 "use client";
 
-import { Select } from "@/components/ui/select";
 import { PanelLeft } from "lucide-react";
 
 import {
@@ -19,28 +18,12 @@ type SiteHeaderProps = {
     menu: string;
     page: string;
   };
-  globalSearchEnabled: boolean;
-  currentTeam: string;
-  currentRange: string;
-  currentScope: "org" | "team" | "user";
-  currentOrg: string;
-  teamIds: number[];
-  setGlobalQuery: (next: Partial<Record<"scope" | "org" | "team" | "range", string>>) => void;
-  triggerRefresh: () => void;
   onToggleSidebar: () => void;
 };
 
 export function SiteHeader({
   title,
   breadcrumb,
-  globalSearchEnabled,
-  currentTeam,
-  currentRange,
-  currentScope,
-  currentOrg,
-  teamIds,
-  setGlobalQuery,
-  triggerRefresh,
   onToggleSidebar,
 }: SiteHeaderProps) {
   return (
@@ -62,49 +45,6 @@ export function SiteHeader({
             </BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>
-      </div>
-
-      <div className="flex items-center justify-end gap-2 md:flex-nowrap">
-        <Select
-          value={currentTeam}
-          onChange={(event) => {
-            const value = event.target.value;
-            if (value === "all") {
-              if (currentScope === "team") {
-                if (currentOrg !== "all") {
-                  setGlobalQuery({ scope: "org", team: "all" });
-                } else {
-                  setGlobalQuery({ scope: "user", team: "all", org: "all" });
-                }
-                return;
-              }
-              setGlobalQuery({ team: "all" });
-              return;
-            }
-            if (currentOrg !== "all") {
-              setGlobalQuery({ scope: "team", team: value });
-            }
-          }}
-          className="h-8 w-auto min-w-[84px] shrink-0 rounded-md border border-input bg-background px-2 text-xs"
-        >
-          <option value="all">{teamIds.length === 0 ? "Team: None" : "Team: All"}</option>
-          {teamIds.map((id) => (
-            <option key={`team-${id}`} value={String(id)}>
-              Team: #{id}
-            </option>
-          ))}
-        </Select>
-        <Select
-          value={currentRange}
-          onChange={(event) => setGlobalQuery({ range: event.target.value })}
-          className="h-8 w-auto min-w-[72px] shrink-0 rounded-md border border-input bg-background px-2 text-xs"
-        >
-          <option value="24h">24h</option>
-          <option value="7d">7d</option>
-        </Select>
-        <Button type="button" variant="outline" onClick={triggerRefresh} className="h-8 px-3 text-xs">
-          Refresh
-        </Button>
       </div>
     </header>
   );
