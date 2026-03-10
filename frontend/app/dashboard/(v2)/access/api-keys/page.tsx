@@ -180,7 +180,7 @@ function buildPolicyFromBasic(
   linearTeamIdsCsv: string
 ): Record<string, unknown> | null {
   const policy: Record<string, unknown> = {};
-  const services = allowedServices.map((item) => item.trim().toLowerCase()).filter((item) => item === "notion" || item === "linear");
+  const services = allowedServices.map((item) => item.trim().toLowerCase()).filter((item) => item === "notion" || item === "linear" || item === "github");
   if (services.length > 0) {
     policy.allowed_services = Array.from(new Set(services));
   }
@@ -712,6 +712,17 @@ export default function DashboardApiKeysPage() {
                             }
                           />
                           linear
+                        </label>
+                        <label className="inline-flex items-center gap-2 text-xs">
+                          <Checkbox
+                            checked={createPolicyAllowedServices.includes("github")}
+                            onCheckedChange={(checked) =>
+                              setCreatePolicyAllowedServices((prev) =>
+                                checked ? Array.from(new Set([...prev, "github"])) : prev.filter((item) => item !== "github")
+                              )
+                            }
+                          />
+                          github
                         </label>
                       </div>
                     </div>

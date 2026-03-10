@@ -42,3 +42,15 @@ def test_build_runtime_api_profile_accepts_google_scope_aliases():
 
     assert "google_calendar_list_events" in enabled
     assert blocked.get("google_calendar_list_events") != "missing_required_scope"
+
+
+def test_build_runtime_api_profile_enables_github_tools_with_scopes():
+    profile = build_runtime_api_profile(
+        connected_services=["github"],
+        granted_scopes={"github": {"read:user", "repo"}},
+        risk_policy={"allow_high_risk": False},
+    )
+    enabled = set(profile["enabled_api_ids"])
+
+    assert "github_get_me" in enabled
+    assert "github_create_issue" in enabled

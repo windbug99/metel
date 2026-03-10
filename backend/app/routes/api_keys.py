@@ -16,7 +16,7 @@ from app.core.config import get_settings
 from app.core.error_codes import ERR_POLICY_CONFLICT
 
 router = APIRouter(prefix="/api/api-keys", tags=["api-keys"])
-_PHASE1_SERVICES = {"notion", "linear"}
+_PHASE1_SERVICES = {"notion", "linear", "github"}
 _MEMBER_ALLOWED_POLICY_KEYS = {"allowed_services", "deny_tools"}
 
 

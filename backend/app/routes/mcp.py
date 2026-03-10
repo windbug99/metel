@@ -37,7 +37,7 @@ from app.core.risk_gate import evaluate_risk_with_policy
 
 router = APIRouter(prefix="/mcp", tags=["mcp"])
 
-_PHASE1_SERVICES = {"notion", "linear"}
+_PHASE1_SERVICES = {"notion", "linear", "github"}
 _RATE_LIMIT_PER_MINUTE = 30
 
 
@@ -145,6 +145,8 @@ def _connector_from_tool_name(tool_name: str) -> str:
         return "notion"
     if value.startswith("linear_"):
         return "linear"
+    if value.startswith("github_"):
+        return "github"
     return "other"
 
 

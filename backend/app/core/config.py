@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     google_client_secret: str | None = None
     google_redirect_uri: str | None = None
     google_state_secret: str | None = None
+    github_client_id: str | None = None
+    github_client_secret: str | None = None
+    github_redirect_uri: str | None = None
+    github_state_secret: str | None = None
+    github_api_version: str = "2022-11-28"
 
     telegram_bot_token: str | None = None
     telegram_link_secret: str | None = None

@@ -76,6 +76,7 @@ def test_update_api_key_updates_allowed_tools_and_name(monkeypatch):
             list_tools=lambda: [
                 SimpleNamespace(tool_name="notion_search", service="notion"),
                 SimpleNamespace(tool_name="linear_list_issues", service="linear"),
+                SimpleNamespace(tool_name="github_get_me", service="github"),
             ]
         ),
     )
@@ -138,6 +139,7 @@ def test_update_api_key_rejects_invalid_allowed_tool(monkeypatch):
             list_tools=lambda: [
                 SimpleNamespace(tool_name="notion_search", service="notion"),
                 SimpleNamespace(tool_name="linear_list_issues", service="linear"),
+                SimpleNamespace(tool_name="github_get_me", service="github"),
             ]
         ),
     )

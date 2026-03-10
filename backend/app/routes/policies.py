@@ -14,7 +14,7 @@ from app.core.error_codes import ERR_ACCESS_DENIED, ERR_POLICY_BLOCKED, ERR_SERV
 from app.core.risk_gate import evaluate_risk_with_policy
 
 router = APIRouter(prefix="/api/policies", tags=["policies"])
-_PHASE1_SERVICES = {"notion", "linear"}
+_PHASE1_SERVICES = {"notion", "linear", "github"}
 
 
 class SimulatePolicyRequest(BaseModel):
@@ -133,7 +133,7 @@ async def simulate_policy(request: Request, body: SimulatePolicyRequest):
             status_code=400,
             detail={
                 "code": "unknown_tool",
-                "message": "Unknown tool_name. Use exact tool identifier (e.g. notion_search, linear_list_issues).",
+                "message": "Unknown tool_name. Use exact tool identifier (e.g. notion_search, linear_list_issues, github_get_me).",
                 "examples": examples,
             },
         )

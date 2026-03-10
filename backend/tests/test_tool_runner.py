@@ -754,3 +754,58 @@ def test_execute_tool_notion_query_data_source_normalizes_sort_alias_and_cursor(
     assert captured["json"]["sorts"][0]["timestamp"] == "last_edited_time"
     assert "sort" not in captured["json"]
     assert "start_cursor" not in captured["json"]
+
+
+def test_execute_tool_github_get_me_uses_github_headers(monkeypatch):
+    tool = ToolDefinition(
+        service="github",
+        base_url="https://api.github.com",
+        tool_name="github_get_me",
+        description="get me",
+        method="GET",
+        path="/user",
+        adapter_function="github_get_me",
+        input_schema={"type": "object", "properties": {}},
+        required_scopes=("read:user",),
+        idempotency_key_policy="none",
+        error_map={},
+    )
+
+    class _Registry:
+        def get_tool(self, tool_name: str):
+            assert tool_name == "github_get_me"
+            return tool
+
+    class _FakeResponse:
+        status_code = 200
+        text = '{"login":"octocat"}'
+
+        def json(self):
+            return {"login": "octocat"}
+
+    captured = {"headers": None}
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, headers=None, params=None):
+            captured["headers"] = headers
+            return _FakeResponse()
+
+    monkeypatch.setattr("agent.tool_runner.load_registry", lambda: _Registry())
+    monkeypatch.setattr("agent.tool_runner._load_oauth_access_token", lambda user_id, provider: "github-token")
+    monkeypatch.setattr(
+        "agent.tool_runner.get_settings",
+        lambda: SimpleNamespace(github_api_version="2022-11-28"),
+    )
+    monkeypatch.setattr("agent.tool_runner.httpx.AsyncClient", lambda *args, **kwargs: _FakeClient())
+
+    result = asyncio.run(execute_tool("user-1", "github_get_me", {}))
+    assert result["ok"] is True
+    assert captured["headers"]["Authorization"] == "Bearer github-token"
+    assert captured["headers"]["Accept"] == "application/vnd.github+json"
+    assert captured["headers"]["X-GitHub-Api-Version"] == "2022-11-28"

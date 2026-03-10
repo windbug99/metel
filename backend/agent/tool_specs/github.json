@@ -1,0 +1,103 @@
+{
+  "service": "github",
+  "version": "rest-v3",
+  "base_url": "https://api.github.com",
+  "auth": {
+    "type": "oauth2",
+    "required_scopes": ["read:user", "repo"]
+  },
+  "limits": {
+    "timeout_ms": 12000,
+    "max_calls_per_run": 10
+  },
+  "tools": [
+    {
+      "tool_name": "github_get_me",
+      "description": "Get the authenticated GitHub user profile",
+      "method": "GET",
+      "path": "/user",
+      "adapter_function": "github_get_me",
+      "required_scopes": ["read:user"],
+      "idempotency_key_policy": "none",
+      "input_schema": { "type": "object", "properties": {} },
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "github_list_repos",
+      "description": "List repositories for the authenticated GitHub user",
+      "method": "GET",
+      "path": "/user/repos",
+      "adapter_function": "github_list_repos",
+      "required_scopes": ["repo"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "per_page": { "type": "integer", "minimum": 1, "maximum": 20 },
+          "sort": { "type": "string", "enum": ["created", "updated", "pushed", "full_name"] }
+        }
+      },
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "github_list_issues",
+      "description": "List issues for a repository",
+      "method": "GET",
+      "path": "/repos/{owner}/{repo}/issues",
+      "adapter_function": "github_list_issues",
+      "required_scopes": ["repo"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "owner": { "type": "string" },
+          "repo": { "type": "string" },
+          "state": { "type": "string", "enum": ["open", "closed", "all"] },
+          "per_page": { "type": "integer", "minimum": 1, "maximum": 20 }
+        },
+        "required": ["owner", "repo"]
+      },
+      "error_map": { "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "github_create_issue",
+      "description": "Create an issue in a repository",
+      "method": "POST",
+      "path": "/repos/{owner}/{repo}/issues",
+      "adapter_function": "github_create_issue",
+      "required_scopes": ["repo"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "owner": { "type": "string" },
+          "repo": { "type": "string" },
+          "title": { "type": "string" },
+          "body": { "type": "string" }
+        },
+        "required": ["owner", "repo", "title"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "github_create_issue_comment",
+      "description": "Create a comment on a repository issue",
+      "method": "POST",
+      "path": "/repos/{owner}/{repo}/issues/{issue_number}/comments",
+      "adapter_function": "github_create_issue_comment",
+      "required_scopes": ["repo"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "owner": { "type": "string" },
+          "repo": { "type": "string" },
+          "issue_number": { "type": "integer", "minimum": 1 },
+          "body": { "type": "string" }
+        },
+        "required": ["owner", "repo", "issue_number", "body"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    }
+  ]
+}

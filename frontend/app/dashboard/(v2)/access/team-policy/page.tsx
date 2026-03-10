@@ -134,7 +134,7 @@ function buildPolicyFromBasic(
   };
   const services = allowedServices
     .map((item) => item.trim().toLowerCase())
-    .filter((item) => item === "notion" || item === "linear");
+    .filter((item) => item === "notion" || item === "linear" || item === "github");
   if (services.length > 0) {
     policy.allowed_services = Array.from(new Set(services));
   }
@@ -161,7 +161,7 @@ function parseBasicFromPolicy(policy: Record<string, unknown> | null | undefined
   const allowedServices = Array.isArray(allowedServicesRaw)
     ? allowedServicesRaw
         .map((item) => String(item || "").trim().toLowerCase())
-        .filter((item) => item === "notion" || item === "linear")
+        .filter((item) => item === "notion" || item === "linear" || item === "github")
     : [];
 
   const denyToolsRaw = source.deny_tools;
@@ -853,6 +853,18 @@ export default function DashboardTeamPolicyPage() {
                         />
                         linear
                       </label>
+                      <label className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={createPolicyAllowedServices.includes("github")}
+                          onCheckedChange={(checked) => {
+                            const next = checked
+                              ? Array.from(new Set([...createPolicyAllowedServices, "github"]))
+                              : createPolicyAllowedServices.filter((item) => item !== "github");
+                            setCreatePolicyAllowedServices(next);
+                          }}
+                        />
+                        github
+                      </label>
                     </div>
                   </div>
 
@@ -1141,6 +1153,24 @@ export default function DashboardTeamPolicyPage() {
                                 }}
                               />
                               linear
+                            </label>
+                            <label className="flex items-center gap-2 text-sm">
+                              <Checkbox
+                                checked={(teamPolicyAllowedServicesDraft[team.id] ?? []).includes("github")}
+                                onCheckedChange={(checked) => {
+                                  const current = teamPolicyAllowedServicesDraft[team.id] ?? [];
+                                  const next = checked ? Array.from(new Set([...current, "github"])) : current.filter((item) => item !== "github");
+                                  setTeamPolicyAllowedServicesDraft((prev) => ({ ...prev, [team.id]: next }));
+                                  syncTeamPolicyJsonFromBasic(
+                                    team.id,
+                                    next,
+                                    teamPolicyDenyToolsDraft[team.id] ?? "",
+                                    Boolean(teamPolicyAllowHighRiskDraft[team.id]),
+                                    teamPolicyLinearTeamIdsDraft[team.id] ?? ""
+                                  );
+                                }}
+                              />
+                              github
                             </label>
                           </div>
                         </div>

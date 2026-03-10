@@ -71,6 +71,8 @@ def _connector_from_tool(tool_name: str | None) -> str:
         return "notion"
     if text.startswith("linear_"):
         return "linear"
+    if text.startswith("github_"):
+        return "github"
     return "other"
 
 
@@ -350,7 +352,7 @@ def _anomaly_rows(
         previous_connector_fails[connector] = previous_connector_fails.get(connector, 0) + 1
     for connector, current in current_connector_fails.items():
         previous = previous_connector_fails.get(connector, 0)
-        if connector in {"notion", "linear"} and current >= 5 and current > previous * 1.5:
+        if connector in {"notion", "linear", "github"} and current >= 5 and current > previous * 1.5:
             anomalies.append(
                 {
                     "type": "connector_error_surge",

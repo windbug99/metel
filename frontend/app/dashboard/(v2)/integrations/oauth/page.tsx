@@ -73,8 +73,13 @@ function providerLogoSrc(provider: string): string | null {
   if (value === "notion") {
     return "/logos/notion.svg";
   }
+  if (value === "github") {
+    return "/logos/github.svg";
+  }
   return null;
 }
+
+type OAuthProvider = "notion" | "linear" | "github";
 
 function normalizeProviders(items: string[]): string[] {
   return Array.from(new Set(items.map((item) => String(item ?? "").trim().toLowerCase()).filter((item) => item.length > 0))).sort();
@@ -143,13 +148,16 @@ export default function DashboardOAuthConnectionsPage() {
 
   const [notionStatus, setNotionStatus] = useState<OAuthStatus | null>(null);
   const [linearStatus, setLinearStatus] = useState<OAuthStatus | null>(null);
+  const [githubStatus, setGithubStatus] = useState<OAuthStatus | null>(null);
 
   const [notionError, setNotionError] = useState<string | null>(null);
   const [linearError, setLinearError] = useState<string | null>(null);
+  const [githubError, setGithubError] = useState<string | null>(null);
 
   const [statusLoading, setStatusLoading] = useState(true);
   const [notionBusy, setNotionBusy] = useState(false);
   const [linearBusy, setLinearBusy] = useState(false);
+  const [githubBusy, setGithubBusy] = useState(false);
   const [policyLoading, setPolicyLoading] = useState(true);
   const [policyError, setPolicyError] = useState<string | null>(null);
   const [oauthPolicy, setOauthPolicy] = useState<OrganizationOAuthPolicyPayload["item"] | null>(null);
@@ -171,12 +179,13 @@ export default function DashboardOAuthConnectionsPage() {
       return;
     }
     setStatusLoading(true);
-    const [notionRes, linearRes] = await Promise.all([
+    const [notionRes, linearRes, githubRes] = await Promise.all([
       dashboardApiGet<OAuthStatus>("/api/oauth/notion/status"),
       dashboardApiGet<OAuthStatus>("/api/oauth/linear/status"),
+      dashboardApiGet<OAuthStatus>("/api/oauth/github/status"),
     ]);
 
-    if (notionRes.status === 401 || linearRes.status === 401) {
+    if (notionRes.status === 401 || linearRes.status === 401 || githubRes.status === 401) {
       handle401();
       setStatusLoading(false);
       return;
@@ -194,6 +203,13 @@ export default function DashboardOAuthConnectionsPage() {
       setLinearError(null);
     } else {
       setLinearError("Failed to load Linear status.");
+    }
+
+    if (githubRes.ok && githubRes.data) {
+      setGithubStatus(githubRes.data);
+      setGithubError(null);
+    } else {
+      setGithubError("Failed to load GitHub status.");
     }
     setStatusLoading(false);
   }, [handle401, scope.scope]);
@@ -333,9 +349,9 @@ export default function DashboardOAuthConnectionsPage() {
   }, [allowedDraft, blockedDraft, canManagePolicy, handle401, oauthPolicy?.policy_json, requiredDraft, scope.organizationId, scope.scope]);
 
   const handleConnect = useCallback(
-    async (provider: "notion" | "linear") => {
-      const setBusy = provider === "notion" ? setNotionBusy : setLinearBusy;
-      const setErr = provider === "notion" ? setNotionError : setLinearError;
+    async (provider: OAuthProvider) => {
+      const setBusy = provider === "notion" ? setNotionBusy : provider === "linear" ? setLinearBusy : setGithubBusy;
+      const setErr = provider === "notion" ? setNotionError : provider === "linear" ? setLinearError : setGithubError;
       setBusy(true);
       setErr(null);
 
@@ -359,9 +375,9 @@ export default function DashboardOAuthConnectionsPage() {
   );
 
   const handleDisconnect = useCallback(
-    async (provider: "notion" | "linear") => {
-      const setBusy = provider === "notion" ? setNotionBusy : setLinearBusy;
-      const setErr = provider === "notion" ? setNotionError : setLinearError;
+    async (provider: OAuthProvider) => {
+      const setBusy = provider === "notion" ? setNotionBusy : provider === "linear" ? setLinearBusy : setGithubBusy;
+      const setErr = provider === "notion" ? setNotionError : provider === "linear" ? setLinearError : setGithubError;
       setBusy(true);
       setErr(null);
 
@@ -394,6 +410,7 @@ export default function DashboardOAuthConnectionsPage() {
     }
     setNotionError(null);
     setLinearError(null);
+    setGithubError(null);
     void fetchOrgPolicy();
   }, [fetchOrgPolicy, fetchStatus, scope.scope]);
 
@@ -415,7 +432,7 @@ export default function DashboardOAuthConnectionsPage() {
   }, [fetchOrgPolicy, fetchStatus, pathname, scope.scope]);
 
   const providerCatalog = useMemo(() => {
-    return Array.from(new Set(["notion", "linear", ...allowedDraft, ...requiredDraft, ...blockedDraft])).sort();
+    return Array.from(new Set(["notion", "linear", "github", ...allowedDraft, ...requiredDraft, ...blockedDraft])).sort();
   }, [allowedDraft, blockedDraft, requiredDraft]);
 
   const providerStateSummary = useMemo(() => {
@@ -550,9 +567,9 @@ export default function DashboardOAuthConnectionsPage() {
     <section className="space-y-4">
       <PageTitleWithTooltip
         title="OAuth Connections"
-        tooltip="Connect or disconnect personal Notion and Linear accounts."
+        tooltip="Connect or disconnect personal Notion, Linear, and GitHub accounts."
       />
-      <p className="text-sm text-muted-foreground">Connect Notion and Linear to expose MCP tools.</p>
+      <p className="text-sm text-muted-foreground">Connect Notion, Linear, and GitHub to expose MCP tools.</p>
 
       <div className="ds-card space-y-3 p-4">
         {statusLoading ? (
@@ -576,6 +593,14 @@ export default function DashboardOAuthConnectionsPage() {
               busy={linearBusy}
               onConnect={() => void handleConnect("linear")}
               onDisconnect={() => void handleDisconnect("linear")}
+            />
+            <ServiceRow
+              name="GitHub"
+              status={githubStatus}
+              error={githubError}
+              busy={githubBusy}
+              onConnect={() => void handleConnect("github")}
+              onDisconnect={() => void handleDisconnect("github")}
             />
           </>
         )}

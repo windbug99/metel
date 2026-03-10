@@ -43,6 +43,8 @@ def _connector_name(row: dict[str, Any]) -> str:
         return "notion"
     if tool_name.startswith("linear_"):
         return "linear"
+    if tool_name.startswith("github_"):
+        return "github"
     return "other"
 
 
@@ -96,7 +98,7 @@ async def connector_diagnostics(request: Request):
         supabase.table("oauth_tokens")
         .select("provider,workspace_id,workspace_name,granted_scopes,updated_at")
         .eq("user_id", user_id)
-        .in_("provider", ["notion", "linear"])
+        .in_("provider", ["notion", "linear", "github"])
         .execute()
     ).data or []
     now = datetime.now(timezone.utc)

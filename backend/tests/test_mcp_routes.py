@@ -74,6 +74,7 @@ def test_mcp_list_tools_success_filters_phase1(monkeypatch):
             return [
                 _Tool("notion", "notion_search"),
                 _Tool("linear", "linear_list_issues"),
+                _Tool("github", "github_get_me"),
                 _Tool("google", "google_calendar_list_events"),
             ]
 
@@ -86,6 +87,7 @@ def test_mcp_list_tools_success_filters_phase1(monkeypatch):
             oauth_rows=[
                 {"provider": "notion", "granted_scopes": ["insert_content"]},
                 {"provider": "linear", "granted_scopes": ["read", "write"]},
+                {"provider": "github", "granted_scopes": ["read:user", "repo"]},
             ]
         ),
     )
@@ -97,6 +99,7 @@ def test_mcp_list_tools_success_filters_phase1(monkeypatch):
     names = [tool["name"] for tool in tools]
     assert "notion_search" in names
     assert "linear_list_issues" in names
+    assert "github_get_me" in names
     assert "google_calendar_list_events" not in names
 
 

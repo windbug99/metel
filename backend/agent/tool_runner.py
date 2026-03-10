@@ -212,6 +212,15 @@ def _notion_headers(token: str) -> dict[str, str]:
     }
 
 
+def _github_headers(token: str) -> dict[str, str]:
+    settings = get_settings()
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": settings.github_api_version,
+    }
+
+
 def _notion_oauth_headers() -> dict[str, str]:
     settings = get_settings()
     client_id = (settings.notion_client_id or "").strip()
@@ -840,6 +849,9 @@ def _build_default_headers_for_service(user_id: str, tool: ToolDefinition) -> di
     if tool.service == "notion":
         token = _load_oauth_access_token(user_id=user_id, provider="notion")
         headers.update(_notion_headers(token))
+    elif tool.service == "github":
+        token = _load_oauth_access_token(user_id=user_id, provider="github")
+        headers.update(_github_headers(token))
     elif tool.service == "spotify":
         token = _load_oauth_access_token(user_id=user_id, provider="spotify")
         headers["Authorization"] = f"Bearer {token}"

@@ -2,7 +2,7 @@
 
 Control layer between AI agents and SaaS APIs.
 Policy, audit, and risk gate on every tool call — so your agents
-can execute Notion and Linear actions safely.
+can execute Notion, Linear, and GitHub actions safely.
 
 [![Backend](https://img.shields.io/badge/backend-FastAPI-009688?logo=fastapi&logoColor=white)](#)
 [![Frontend](https://img.shields.io/badge/frontend-Next.js-000000?logo=nextdotjs&logoColor=white)](#)
@@ -18,7 +18,7 @@ AI Agents (Claude / GPT / CrewAI / Custom)
             ↓
   Execution Control Core     ← policy · risk · audit · RBAC
             ↓
-      SaaS APIs              ← Notion / Linear
+      SaaS APIs              ← Notion / Linear / GitHub
 ```
 
 ## Quick Start
@@ -110,6 +110,15 @@ Health check: `http://localhost:3000` · `http://localhost:8000/api/health`
 | Workflow | `list_workflow_states` | — |
 | Comments | — | `create_comment` |
 
+### GitHub — 5 tools
+
+| Category | Read | Write |
+|----------|------|-------|
+| User | `get_me` | — |
+| Repositories | `list_repos` | — |
+| Issues | `list_issues` | `create_issue` |
+| Comments | — | `create_issue_comment` |
+
 Tool schemas: `backend/agent/tool_specs/*.json` or call `POST /mcp/list_tools`.
 
 ## Execution Control
@@ -195,7 +204,7 @@ with role-based menu visibility (`owner` / `admin` / `member`).
    |-- Admin/Ops Diagnostics + Incident Banner
    |
    v
-[SaaS APIs: Notion / Linear]
+[SaaS APIs: Notion / Linear / GitHub]
 ```
 
 Runtime guardrails:
