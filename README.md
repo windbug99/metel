@@ -1,4 +1,4 @@
-# metel
+# Metel.ai
 
 Control layer between AI agents and SaaS APIs.
 Policy, audit, and risk gate on every tool call — so your agents
