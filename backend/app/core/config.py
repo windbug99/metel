@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     canva_redirect_uri: str | None = None
     canva_state_secret: str | None = None
     canva_scopes: str = "profile:read design:meta:read"
+    canva_connect_scope_mode: str = "minimal"
     canva_api_base_url: str = "https://api.canva.com/rest/v1"
     canva_oauth_authorize_url: str = "https://www.canva.com/api/oauth/authorize"
     canva_token_encryption_key: str | None = None

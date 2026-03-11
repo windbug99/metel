@@ -324,6 +324,16 @@ Canva에서 사용자 관련 이벤트를 실시간으로 받을 수 있다.
 
 `profile:read design:meta:read design:content:read design:content:write asset:read asset:write folder:read folder:write`
 
+연결 모드:
+
+- `CANVA_CONNECT_SCOPE_MODE=minimal`
+  - OAuth 연결 시 실제 요청 scope는 `profile:read design:meta:read`
+  - 연결 안정성이 가장 높지만, MCP/Claude에 보이는 도구는 최소 scope 범위로 제한됨
+- `CANVA_CONNECT_SCOPE_MODE=configured`
+  - OAuth 연결 시 `CANVA_SCOPES` 에 적은 stable scope를 요청
+  - 현재 구현 기준으로 `comment:*`, `brandtemplate:*` 는 entitlement 이슈 때문에 자동 제외
+  - 추가 기능을 tool list에 노출하려면 이 모드로 재연결해야 함
+
 제한 기능 scope:
 
 `comment:read comment:write brandtemplate:meta:read brandtemplate:content:read`

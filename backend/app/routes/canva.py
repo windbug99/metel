@@ -117,10 +117,20 @@ def _normalize_scope_text(raw_scope_text: str | None, fallback_scope_text: str) 
 
 
 def _canva_requested_scope_text() -> str:
-    # Canva OAuth connect should stay on the minimum stable scope set.
-    # Advanced scopes are gated per feature because some clients are not
-    # entitled to request them at auth time, which causes the whole connect
-    # flow to fail with "Requested scopes are not allowed for this client."
+    settings = get_settings()
+    mode = str(getattr(settings, "canva_connect_scope_mode", "minimal") or "minimal").strip().lower()
+    configured = [item.strip() for item in str(settings.canva_scopes or "").split(" ") if item.strip()]
+
+    # minimal: safest connect path, only exposes tools covered by the granted scopes
+    if mode != "configured":
+        return " ".join(CANVA_DEFAULT_OAUTH_SCOPES)
+
+    # configured: request env scopes except the known restricted scopes that commonly
+    # fail entitlement checks at auth time for non-preview/non-enterprise clients.
+    if configured:
+        normalized = [scope for scope in dict.fromkeys(configured) if scope not in CANVA_RESTRICTED_OAUTH_SCOPES]
+        if normalized:
+            return " ".join(normalized)
     return " ".join(CANVA_DEFAULT_OAUTH_SCOPES)
 
 

@@ -41,6 +41,7 @@ from app.routes.canva import (
     canva_url_asset_upload_get,
     canva_url_import_create,
     canva_url_import_get,
+    _canva_requested_scope_text,
 )
 
 
@@ -180,6 +181,7 @@ def test_canva_oauth_start_builds_pkce_url_and_persists_state(monkeypatch):
             canva_redirect_uri="https://api.example.com/api/oauth/canva/callback",
             canva_state_secret="state-secret",
             canva_scopes="profile:read design:meta:read design:content:read design:content:write asset:read asset:write folder:read folder:write",
+            canva_connect_scope_mode="minimal",
             canva_api_base_url="https://api.canva.com/rest/v1",
             canva_oauth_authorize_url="https://www.canva.com/api/oauth/authorize",
             frontend_url="https://app.example.com",
@@ -203,6 +205,24 @@ def test_canva_oauth_start_builds_pkce_url_and_persists_state(monkeypatch):
     assert query["code_challenge_method"] == ["S256"]
     assert query["state"][0] in client.pending_rows
     assert client.pending_rows[query["state"][0]]["provider"] == "canva"
+
+
+def test_canva_requested_scope_text_uses_configured_mode_without_restricted_scopes(monkeypatch):
+    monkeypatch.setattr(
+        "app.routes.canva.get_settings",
+        lambda: SimpleNamespace(
+            canva_scopes=(
+                "profile:read design:meta:read design:content:read design:content:write "
+                "asset:read asset:write folder:read folder:write comment:read brandtemplate:meta:read"
+            ),
+            canva_connect_scope_mode="configured",
+        ),
+    )
+
+    assert _canva_requested_scope_text() == (
+        "profile:read design:meta:read design:content:read design:content:write "
+        "asset:read asset:write folder:read folder:write"
+    )
 
 
 def test_canva_oauth_callback_persists_tokens_and_identity(monkeypatch):
