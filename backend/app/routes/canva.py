@@ -19,6 +19,7 @@ from app.core.state import build_state, verify_state
 from app.security.token_vault import TokenVault
 
 router = APIRouter(prefix="/api/oauth/canva", tags=["canva-oauth"])
+CANVA_OAUTH_REQUESTED_SCOPES = ("profile:read", "design:meta:read")
 
 
 class CanvaDesignCreateRequest(BaseModel):
@@ -62,6 +63,13 @@ def _normalize_scope_text(raw_scope_text: str | None, fallback_scope_text: str) 
     if items:
         return items
     return [item.strip() for item in fallback_scope_text.split(" ") if item.strip()]
+
+
+def _canva_requested_scope_text() -> str:
+    # The current OAuth Connections experience is read-only.
+    # Requesting content/write scopes here makes Canva reject the full auth request
+    # when those scopes are not enabled for the client in Developer Portal.
+    return " ".join(CANVA_OAUTH_REQUESTED_SCOPES)
 
 
 def _build_pkce_verifier() -> str:
@@ -243,7 +251,7 @@ async def _refresh_canva_access_token_if_needed(*, supabase, row: dict | None) -
         "access_token_encrypted": vault.encrypt(access_token),
         "refresh_token_encrypted": vault.encrypt(next_refresh_token) if next_refresh_token else refresh_token_encrypted,
         "token_expires_at": (now + timedelta(seconds=max(expires_in - 60, 0))).isoformat() if expires_in else None,
-        "granted_scopes": _normalize_scope_text(payload.get("scope"), settings.canva_scopes),
+        "granted_scopes": _normalize_scope_text(payload.get("scope"), _canva_requested_scope_text()),
         "updated_at": now.isoformat(),
     }
     supabase.table("oauth_tokens").upsert(updated_row, on_conflict="user_id,provider").execute()
@@ -311,7 +319,7 @@ async def canva_oauth_start(request: Request):
             "client_id": settings.canva_client_id,
             "redirect_uri": settings.canva_redirect_uri,
             "response_type": "code",
-            "scope": settings.canva_scopes,
+            "scope": _canva_requested_scope_text(),
             "state": state,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
@@ -412,7 +420,7 @@ async def canva_oauth_callback(
         "access_token_encrypted": vault.encrypt(access_token),
         "refresh_token_encrypted": vault.encrypt(refresh_token) if refresh_token else None,
         "token_expires_at": token_expires_at,
-        "granted_scopes": _normalize_scope_text(scope_text, settings.canva_scopes),
+        "granted_scopes": _normalize_scope_text(scope_text, _canva_requested_scope_text()),
         "workspace_id": provider_account_id,
         "workspace_name": workspace_name,
         "provider_account_id": provider_account_id,
