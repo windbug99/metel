@@ -19,20 +19,7 @@ from app.core.state import build_state, verify_state
 from app.security.token_vault import TokenVault
 
 router = APIRouter(prefix="/api/oauth/canva", tags=["canva-oauth"])
-CANVA_OAUTH_REQUESTED_SCOPES = (
-    "profile:read",
-    "design:meta:read",
-    "design:content:read",
-    "design:content:write",
-    "asset:read",
-    "asset:write",
-    "comment:read",
-    "comment:write",
-    "brandtemplate:meta:read",
-    "brandtemplate:content:read",
-    "folder:read",
-    "folder:write",
-)
+CANVA_DEFAULT_OAUTH_SCOPES = ("profile:read", "design:meta:read")
 
 
 class CanvaDesignCreateRequest(BaseModel):
@@ -124,9 +111,11 @@ def _normalize_scope_text(raw_scope_text: str | None, fallback_scope_text: str) 
 
 
 def _canva_requested_scope_text() -> str:
-    # Request the scopes required by the currently supported Canva tool surface.
-    # These must also be enabled for the integration in Canva Developer Portal.
-    return " ".join(CANVA_OAUTH_REQUESTED_SCOPES)
+    settings = get_settings()
+    configured = [item.strip() for item in str(settings.canva_scopes or "").split(" ") if item.strip()]
+    if configured:
+        return " ".join(dict.fromkeys(configured))
+    return " ".join(CANVA_DEFAULT_OAUTH_SCOPES)
 
 
 def _match_canva_folder_item(item: dict, query: str) -> bool:

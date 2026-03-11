@@ -316,6 +316,21 @@ Canva에서 사용자 관련 이벤트를 실시간으로 받을 수 있다.
 - Canva는 scope 상속이 없다. 예를 들어 `asset:write` 만으로 `asset:read` 가 생기지 않는다.
 - scope는 Developer Portal 설정값과 OAuth 요청값 둘 다 일치해야 한다.
 
+### 전체 구현 기능 사용용 권장값
+
+현재 저장소에 구현된 Canva 기능 전체를 쓰려면 `CANVA_SCOPES` 를 아래처럼 맞추는 것이 기준값이다.
+
+`profile:read design:meta:read design:content:read design:content:write asset:read asset:write comment:read comment:write brandtemplate:meta:read brandtemplate:content:read folder:read folder:write`
+
+기능 매핑:
+
+- 연결/프로필/디자인 조회: `profile:read design:meta:read`
+- 디자인 생성/export/resize/import: `design:content:read design:content:write`
+- asset metadata / URL upload: `asset:read asset:write`
+- comments / replies: `comment:read comment:write`
+- brand templates / dataset: `brandtemplate:meta:read brandtemplate:content:read`
+- folders: `folder:read folder:write`
+
 ## 4. metel 기준 추천 구현 범위
 
 ### Phase 1. 반드시 구현
