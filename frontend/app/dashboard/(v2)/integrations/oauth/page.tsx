@@ -156,6 +156,14 @@ export default function DashboardOAuthConnectionsPage() {
     const raw = searchParams.get("oauth_notice");
     return raw ? raw.trim() : "";
   }, [searchParams]);
+  const canvaScopeMode = useMemo(() => {
+    const raw = searchParams.get("canva_scope_mode");
+    return raw ? raw.trim() : "";
+  }, [searchParams]);
+  const canvaRequestedScopes = useMemo(() => {
+    const raw = searchParams.get("canva_requested_scopes");
+    return raw ? raw.trim() : "";
+  }, [searchParams]);
 
   const [notionStatus, setNotionStatus] = useState<OAuthStatus | null>(null);
   const [linearStatus, setLinearStatus] = useState<OAuthStatus | null>(null);
@@ -595,7 +603,12 @@ export default function DashboardOAuthConnectionsPage() {
       <p className="text-sm text-muted-foreground">Connect Notion, Linear, GitHub, and Canva to expose MCP tools.</p>
       {oauthErrorMessage ? (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {oauthErrorMessage}
+          <p>{oauthErrorMessage}</p>
+          {oauthErrorMessage === "Requested scopes are not allowed for this client." && canvaRequestedScopes ? (
+            <p className="mt-2 text-xs text-destructive/90">
+              Requested scope mode: {canvaScopeMode || "unknown"} | Requested scopes: {canvaRequestedScopes}
+            </p>
+          ) : null}
         </div>
       ) : null}
       {!oauthErrorMessage && oauthNotice ? (

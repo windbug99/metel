@@ -38,7 +38,7 @@ export const PAGE_QUERY_KEYS: Record<string, string[]> = {
   mcpUsage: ["usage_status"],
   mcpGuide: ["guide_tab"],
   integrations: ["integration_status"],
-  oauthConnections: ["oauth_state", "oauth_error", "oauth_notice", "canva"],
+  oauthConnections: ["oauth_state", "oauth_error", "oauth_notice", "canva", "canva_scope_mode", "canva_requested_scopes"],
   auditEvents: ["audit_status"],
   auditSettings: ["audit_settings_tab"],
   adminOps: ["ops_tab"],

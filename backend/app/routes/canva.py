@@ -93,7 +93,13 @@ def _frontend_dashboard_url(raw_frontend_url: str, query: str) -> str:
 
 def _frontend_oauth_error_url(raw_frontend_url: str, message: str) -> str:
     normalized = str(message or "").strip() or "Canva OAuth callback is missing required parameters."
-    return _frontend_dashboard_url(raw_frontend_url, f"canva=error&oauth_error={quote_plus(normalized)}")
+    settings = get_settings()
+    scope_mode = quote_plus(str(getattr(settings, "canva_connect_scope_mode", "minimal") or "minimal").strip())
+    requested_scopes = quote_plus(_canva_requested_scope_text())
+    return _frontend_dashboard_url(
+        raw_frontend_url,
+        f"canva=error&oauth_error={quote_plus(normalized)}&canva_scope_mode={scope_mode}&canva_requested_scopes={requested_scopes}",
+    )
 
 
 def _validate_canva_settings() -> None:
