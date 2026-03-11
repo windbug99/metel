@@ -179,7 +179,7 @@ def test_canva_oauth_start_builds_pkce_url_and_persists_state(monkeypatch):
             canva_client_secret="canva-secret",
             canva_redirect_uri="https://api.example.com/api/oauth/canva/callback",
             canva_state_secret="state-secret",
-            canva_scopes="profile:read design:meta:read",
+            canva_scopes="profile:read design:meta:read design:content:read design:content:write asset:read asset:write folder:read folder:write",
             canva_api_base_url="https://api.canva.com/rest/v1",
             canva_oauth_authorize_url="https://www.canva.com/api/oauth/authorize",
             frontend_url="https://app.example.com",
@@ -197,6 +197,8 @@ def test_canva_oauth_start_builds_pkce_url_and_persists_state(monkeypatch):
     assert out["ok"] is True
     assert parsed.scheme == "https"
     assert query["client_id"] == ["canva-client"]
+    # Connect flow stays on the minimum stable scope set even if broader
+    # feature scopes are configured in env.
     assert query["scope"] == ["profile:read design:meta:read"]
     assert query["code_challenge_method"] == ["S256"]
     assert query["state"][0] in client.pending_rows

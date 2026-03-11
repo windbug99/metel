@@ -117,14 +117,10 @@ def _normalize_scope_text(raw_scope_text: str | None, fallback_scope_text: str) 
 
 
 def _canva_requested_scope_text() -> str:
-    settings = get_settings()
-    configured = [item.strip() for item in str(settings.canva_scopes or "").split(" ") if item.strip()]
-    if configured:
-        normalized = list(dict.fromkeys(configured))
-        if not settings.canva_request_restricted_scopes:
-            normalized = [scope for scope in normalized if scope not in CANVA_RESTRICTED_OAUTH_SCOPES]
-        if normalized:
-            return " ".join(normalized)
+    # Canva OAuth connect should stay on the minimum stable scope set.
+    # Advanced scopes are gated per feature because some clients are not
+    # entitled to request them at auth time, which causes the whole connect
+    # flow to fail with "Requested scopes are not allowed for this client."
     return " ".join(CANVA_DEFAULT_OAUTH_SCOPES)
 
 
@@ -611,7 +607,7 @@ async def canva_design_get(request: Request, design_id: str):
 @router.get("/designs/{design_id}/export-formats")
 async def canva_design_export_formats(request: Request, design_id: str):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"design:content:read"})
     payload = await _canva_api_request("GET", f"/designs/{design_id}/export-formats", access_token=access_token)
     formats = payload.get("formats") if isinstance(payload.get("formats"), list) else []
     return {"ok": True, "count": len(formats), "formats": formats}
@@ -628,7 +624,7 @@ async def canva_folder_items_list(
     pin_status: str | None = None,
 ):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"folder:read"})
     params = {"limit": min(max(limit, 1), 100)}
     if continuation:
         params["continuation"] = continuation
@@ -653,7 +649,7 @@ async def canva_folder_search(
     sort_by: str | None = None,
 ):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"folder:read"})
     params = {
         "limit": min(max(limit, 1), 100),
         "item_types": "folder",
@@ -671,7 +667,7 @@ async def canva_folder_search(
 @router.post("/folders")
 async def canva_folder_create(request: Request, body: CanvaFolderCreateRequest):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"folder:write"})
     json_body = {
         "name": body.name,
         "parent_folder_id": body.parent_folder_id,
@@ -695,7 +691,7 @@ async def canva_folder_create(request: Request, body: CanvaFolderCreateRequest):
 @router.post("/folders/move")
 async def canva_folder_move(request: Request, body: CanvaFolderMoveRequest):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"folder:write"})
     json_body = {
         "item_id": body.item_id,
         "to_folder_id": body.to_folder_id,
@@ -716,7 +712,7 @@ async def canva_folder_move(request: Request, body: CanvaFolderMoveRequest):
 @router.get("/assets/{asset_id}")
 async def canva_asset_get(request: Request, asset_id: str):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"asset:read"})
     payload = await _canva_api_request("GET", f"/assets/{asset_id}", access_token=access_token)
     return {"ok": True, "asset": payload.get("asset") if isinstance(payload.get("asset"), dict) else payload}
 
@@ -724,7 +720,7 @@ async def canva_asset_get(request: Request, asset_id: str):
 @router.post("/url-asset-uploads")
 async def canva_url_asset_upload_create(request: Request, body: CanvaAssetUrlUploadCreateRequest):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"asset:write"})
     json_body = {
         "name": body.name,
         "url": body.url,
@@ -749,7 +745,7 @@ async def canva_url_asset_upload_create(request: Request, body: CanvaAssetUrlUpl
 @router.get("/url-asset-uploads/{job_id}")
 async def canva_url_asset_upload_get(request: Request, job_id: str):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"asset:read"})
     payload = await _canva_api_request("GET", f"/url-asset-uploads/{job_id}", access_token=access_token)
     job = payload.get("job") if isinstance(payload.get("job"), dict) else payload
     if isinstance(job, dict):
@@ -770,7 +766,7 @@ async def canva_url_asset_upload_get(request: Request, job_id: str):
 @router.post("/url-imports")
 async def canva_url_import_create(request: Request, body: CanvaUrlImportCreateRequest):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"design:content:write"})
     json_body = {
         "title": body.title,
         "url": body.url,
@@ -795,7 +791,7 @@ async def canva_url_import_create(request: Request, body: CanvaUrlImportCreateRe
 @router.get("/url-imports/{job_id}")
 async def canva_url_import_get(request: Request, job_id: str):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"design:meta:read"})
     payload = await _canva_api_request("GET", f"/url-imports/{job_id}", access_token=access_token)
     job = payload.get("job") if isinstance(payload.get("job"), dict) else payload
     if isinstance(job, dict):
@@ -816,7 +812,7 @@ async def canva_url_import_get(request: Request, job_id: str):
 @router.post("/resizes")
 async def canva_resize_create(request: Request, body: CanvaResizeCreateRequest):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"design:content:read", "design:content:write"})
     json_body = {
         "design_id": body.design_id,
         "design_type": body.design_type,
@@ -840,7 +836,7 @@ async def canva_resize_create(request: Request, body: CanvaResizeCreateRequest):
 @router.get("/resizes/{job_id}")
 async def canva_resize_get(request: Request, job_id: str):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"design:content:read"})
     payload = await _canva_api_request("GET", f"/resizes/{job_id}", access_token=access_token)
     job = payload.get("job") if isinstance(payload.get("job"), dict) else payload
     if isinstance(job, dict):
@@ -971,7 +967,7 @@ async def canva_brand_template_dataset_get(request: Request, brand_template_id: 
 @router.post("/designs")
 async def canva_design_create(request: Request, body: CanvaDesignCreateRequest):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"design:content:write"})
     json_body = {
         "design_type": body.design_type,
         **({"title": body.title} if body.title else {}),
@@ -996,7 +992,7 @@ async def canva_design_create(request: Request, body: CanvaDesignCreateRequest):
 @router.post("/exports")
 async def canva_export_create(request: Request, body: CanvaExportCreateRequest):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"design:content:read"})
     payload = await _canva_api_request(
         "POST",
         "/exports",
@@ -1022,7 +1018,7 @@ async def canva_export_create(request: Request, body: CanvaExportCreateRequest):
 @router.get("/exports/{export_id}")
 async def canva_export_get(request: Request, export_id: str):
     user_id = await get_authenticated_user_id(request)
-    access_token = await _require_canva_access_token(user_id)
+    access_token = await _require_canva_scopes(user_id, {"design:content:read"})
     payload = await _canva_api_request("GET", f"/exports/{export_id}", access_token=access_token)
     job = payload.get("job") if isinstance(payload.get("job"), dict) else payload
     if isinstance(job, dict):
