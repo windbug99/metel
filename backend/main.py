@@ -12,6 +12,7 @@ from app.routes.api_keys import router as api_keys_router
 from app.routes.agents import router as agents_router
 from app.routes.audit import router as audit_router
 from app.routes.admin import router as admin_router
+from app.routes.canva import router as canva_router
 from app.routes.github import router as github_router
 from app.routes.linear import router as linear_router
 from app.routes.integrations import router as integrations_router
@@ -147,6 +148,7 @@ async def health_check():
 app.include_router(notion_router)
 app.include_router(linear_router)
 app.include_router(github_router)
+app.include_router(canva_router)
 app.include_router(organizations_router)
 app.include_router(agents_router)
 app.include_router(api_keys_router)

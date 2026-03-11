@@ -16,6 +16,7 @@ from supabase import create_client
 
 from agent.registry import ToolDefinition, load_registry
 from app.core.config import get_settings
+from app.routes.canva import load_canva_access_token_for_user
 from app.security.token_vault import TokenVault
 
 logger = logging.getLogger("metel-backend.tool_runner")
@@ -844,6 +845,37 @@ async def _execute_web_http(_user_id: str, _tool: ToolDefinition, payload: dict[
     }
 
 
+async def _execute_canva_http(user_id: str, tool: ToolDefinition, payload: dict[str, Any]) -> dict[str, Any]:
+    token = await load_canva_access_token_for_user(user_id)
+    path = _build_path(tool.path, payload)
+    body_or_query, idempotency_key = _split_idempotency_key(_strip_path_params(tool.path, payload))
+    url = f"{tool.base_url}{path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
+    method = tool.method.upper()
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        if method == "GET":
+            response = await client.get(url, headers=headers, params=body_or_query)
+        elif method == "DELETE":
+            response = await client.delete(url, headers=headers)
+        else:
+            headers["Content-Type"] = "application/json"
+            response = await client.request(method, url, headers=headers, json=body_or_query)
+
+    if response.status_code >= 400:
+        mapped = tool.error_map.get(str(response.status_code), "TOOL_FAILED")
+        raise HTTPException(
+            status_code=400,
+            detail=f"{tool.tool_name}:{mapped}|status={response.status_code}|message={response.text[:300]}",
+        )
+    return _parse_response_data(response)
+
+
 def _build_default_headers_for_service(user_id: str, tool: ToolDefinition) -> dict[str, str]:
     headers: dict[str, str] = {}
     if tool.service == "notion":
@@ -922,6 +954,7 @@ _SERVICE_EXECUTORS: dict[str, ServiceExecutor] = {
     "notion": _execute_notion_service,
     "spotify": _execute_spotify_http,
     "linear": _execute_linear_http,
+    "canva": _execute_canva_http,
     "web": _execute_web_http,
 }
 

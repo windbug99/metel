@@ -153,7 +153,7 @@ The page parser reads this file and renders content automatically.
 - menu_href: /dashboard/integrations/oauth
 - what: Connect required providers for user-context tool execution.
 - values: Provider connect or disconnect operations.
-- why: Enables stable execution for provider-backed tools.
+- why: Enables stable execution for provider-backed tools such as Notion, Linear, GitHub, and Canva.
 - done: Required providers are connected and healthy.
 - caution: Disconnect unused providers to reduce exposure.
 

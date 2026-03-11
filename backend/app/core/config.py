@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     github_redirect_uri: str | None = None
     github_state_secret: str | None = None
     github_api_version: str = "2022-11-28"
+    canva_client_id: str | None = None
+    canva_client_secret: str | None = None
+    canva_redirect_uri: str | None = None
+    canva_state_secret: str | None = None
+    canva_scopes: str = "profile:read design:meta:read design:content:read design:content:write"
+    canva_api_base_url: str = "https://api.canva.com/rest/v1"
+    canva_oauth_authorize_url: str = "https://www.canva.com/api/oauth/authorize"
+    canva_token_encryption_key: str | None = None
 
     telegram_bot_token: str | None = None
     telegram_link_secret: str | None = None

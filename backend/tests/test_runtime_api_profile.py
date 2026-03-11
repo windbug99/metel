@@ -54,3 +54,15 @@ def test_build_runtime_api_profile_enables_github_tools_with_scopes():
 
     assert "github_get_me" in enabled
     assert "github_create_issue" in enabled
+
+
+def test_build_runtime_api_profile_enables_canva_tools_with_scopes():
+    profile = build_runtime_api_profile(
+        connected_services=["canva"],
+        granted_scopes={"canva": {"design:meta:read", "design:content:read", "design:content:write"}},
+        risk_policy={"allow_high_risk": False},
+    )
+    enabled = set(profile["enabled_api_ids"])
+
+    assert "canva_design_list" in enabled
+    assert "canva_export_create" in enabled

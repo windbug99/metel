@@ -1,0 +1,108 @@
+{
+  "service": "canva",
+  "version": "rest-v1",
+  "base_url": "https://api.canva.com/rest/v1",
+  "auth": {
+    "type": "oauth2",
+    "required_scopes": ["profile:read", "design:meta:read", "design:content:read", "design:content:write"]
+  },
+  "limits": {
+    "timeout_ms": 12000,
+    "max_calls_per_run": 8
+  },
+  "tools": [
+    {
+      "tool_name": "canva_design_list",
+      "description": "List designs from the connected Canva workspace",
+      "method": "GET",
+      "path": "/designs",
+      "adapter_function": "canva_design_list",
+      "required_scopes": ["design:meta:read"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string" },
+          "ownership": { "type": "string", "enum": ["any", "owned", "shared"] },
+          "sort_by": { "type": "string", "enum": ["modified_descending", "modified_ascending", "title_ascending", "title_descending"] },
+          "continuation": { "type": "string" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+        }
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "canva_design_get",
+      "description": "Get a design from the connected Canva workspace",
+      "method": "GET",
+      "path": "/designs/{design_id}",
+      "adapter_function": "canva_design_get",
+      "required_scopes": ["design:meta:read"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "design_id": { "type": "string" }
+        },
+        "required": ["design_id"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "canva_design_create",
+      "description": "Create a design in Canva",
+      "method": "POST",
+      "path": "/designs",
+      "adapter_function": "canva_design_create",
+      "required_scopes": ["design:content:write"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "design_type": { "type": "object" },
+          "asset_id": { "type": "string" },
+          "idempotency_key": { "type": "string" }
+        },
+        "required": ["design_type"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "canva_export_create",
+      "description": "Create an export job for a Canva design",
+      "method": "POST",
+      "path": "/exports",
+      "adapter_function": "canva_export_create",
+      "required_scopes": ["design:content:read"],
+      "idempotency_key_policy": "optional",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "design_id": { "type": "string" },
+          "format": { "type": "object" },
+          "idempotency_key": { "type": "string" }
+        },
+        "required": ["design_id", "format"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "429": "RATE_LIMITED" }
+    },
+    {
+      "tool_name": "canva_export_get",
+      "description": "Get the status of a Canva export job",
+      "method": "GET",
+      "path": "/exports/{export_id}",
+      "adapter_function": "canva_export_get",
+      "required_scopes": ["design:content:read"],
+      "idempotency_key_policy": "none",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "export_id": { "type": "string" }
+        },
+        "required": ["export_id"]
+      },
+      "error_map": { "400": "BAD_REQUEST", "401": "AUTH_REQUIRED", "403": "AUTH_FORBIDDEN", "404": "NOT_FOUND", "429": "RATE_LIMITED" }
+    }
+  ]
+}

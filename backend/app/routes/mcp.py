@@ -37,7 +37,7 @@ from app.core.risk_gate import evaluate_risk_with_policy
 
 router = APIRouter(prefix="/mcp", tags=["mcp"])
 
-_PHASE1_SERVICES = {"notion", "linear", "github"}
+_PHASE1_SERVICES = {"notion", "linear", "github", "canva"}
 _RATE_LIMIT_PER_MINUTE = 30
 
 

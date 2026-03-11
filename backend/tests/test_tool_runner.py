@@ -168,6 +168,63 @@ def test_execute_tool_generic_adapter_maps_http_error(monkeypatch):
         assert False, "expected HTTPException"
 
 
+def test_execute_tool_canva_uses_refreshable_token_loader(monkeypatch):
+    tool = ToolDefinition(
+        service="canva",
+        base_url="https://api.canva.com/rest/v1",
+        tool_name="canva_design_list",
+        description="list Canva designs",
+        method="GET",
+        path="/designs",
+        adapter_function="canva_design_list",
+        input_schema={"type": "object", "properties": {"limit": {"type": "integer"}}, "required": []},
+        required_scopes=("design:meta:read",),
+        idempotency_key_policy="none",
+        error_map={"401": "AUTH_REQUIRED"},
+    )
+
+    class _Registry:
+        def get_tool(self, tool_name: str):
+            assert tool_name == "canva_design_list"
+            return tool
+
+    class _FakeResponse:
+        status_code = 200
+        text = '{"items":[{"id":"design-1"}]}'
+
+        def json(self):
+            return {"items": [{"id": "design-1"}]}
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, headers=None, params=None):
+            assert headers.get("Authorization") == "Bearer canva-token"
+            assert params == {"limit": 5}
+            return _FakeResponse()
+
+        async def request(self, method, url, headers=None, json=None):
+            raise AssertionError("unexpected request call")
+
+        async def delete(self, url, headers=None):
+            raise AssertionError("unexpected delete call")
+
+    async def _fake_load_canva_token(user_id: str) -> str:
+        assert user_id == "user-1"
+        return "canva-token"
+
+    monkeypatch.setattr("agent.tool_runner.load_registry", lambda: _Registry())
+    monkeypatch.setattr("agent.tool_runner.load_canva_access_token_for_user", _fake_load_canva_token)
+    monkeypatch.setattr("agent.tool_runner.httpx.AsyncClient", lambda *args, **kwargs: _FakeClient())
+
+    result = asyncio.run(execute_tool("user-1", "canva_design_list", {"limit": 5}))
+    assert result["data"]["items"][0]["id"] == "design-1"
+
+
 def test_execute_tool_google_maps_snake_case_query_params(monkeypatch):
     tool = ToolDefinition(
         service="google",
