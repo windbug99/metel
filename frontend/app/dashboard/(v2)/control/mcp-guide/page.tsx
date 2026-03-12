@@ -62,17 +62,17 @@ console.log(await mcp("call_tool", {
 API_BASE_URL="${base}" \\
 API_KEY="metel_xxx" \\
 python scripts/check_claude_bridge_tools.py`,
-    claudeDesktopArgsHelp: `# Find the absolute path for args[0]
-cd /Users/tomato/cursor/metel
+    claudeDesktopArgsHelp: `# Find the absolute path for args[0] in your own local clone
+cd /path/to/your/metel
 realpath backend/scripts/mcp_stdio_bridge.py
 
 # If realpath is unavailable
-cd /Users/tomato/cursor/metel
+cd /path/to/your/metel
 pwd
 
 # Append /backend/scripts/mcp_stdio_bridge.py to the pwd output
 # Example:
-# /Users/tomato/cursor/metel/backend/scripts/mcp_stdio_bridge.py`,
+# /Users/your-name/workspace/metel/backend/scripts/mcp_stdio_bridge.py`,
     n8nHttpNode: `// n8n HTTP Request node settings
 // Method: POST
 // URL: ${base}/mcp
