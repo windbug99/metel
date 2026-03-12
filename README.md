@@ -2,7 +2,7 @@
 
 Control layer between AI agents and SaaS APIs.
 Policy, audit, and risk gate on every tool call — so your agents
-can execute Notion, Linear, and GitHub actions safely.
+can execute Notion, Linear, GitHub, and Canva actions safely.
 
 [![Backend](https://img.shields.io/badge/backend-FastAPI-009688?logo=fastapi&logoColor=white)](#)
 [![Frontend](https://img.shields.io/badge/frontend-Next.js-000000?logo=nextdotjs&logoColor=white)](#)
@@ -18,7 +18,7 @@ AI Agents (Claude / GPT / CrewAI / Custom)
             ↓
   Execution Control Core     ← policy · risk · audit · RBAC
             ↓
-      SaaS APIs              ← Notion / Linear / GitHub
+      SaaS APIs              ← Notion / Linear / GitHub / Canva
 ```
 
 ## Quick Start
@@ -124,6 +124,18 @@ Health check: `http://localhost:3000` · `http://localhost:8000/api/health`
 | Issues | `list_issues` | `create_issue` |
 | Comments | — | `create_issue_comment` |
 
+### Canva — 24 tools
+
+| Category | Read | Write |
+|----------|------|-------|
+| Designs | `canva_design_list`, `canva_design_get`, `canva_design_export_formats` | `canva_design_create` |
+| Exports | `canva_export_get` | `canva_export_create` |
+| Folders | `canva_folder_list_items`, `canva_folder_search` | `canva_folder_create`, `canva_folder_move` |
+| Assets & Imports | `canva_asset_get`, `canva_url_asset_upload_get`, `canva_url_import_get` | `canva_url_asset_upload_create`, `canva_url_import_create` |
+| Resize | `canva_resize_get` | `canva_resize_create` |
+| Comments | `canva_comment_thread_get`, `canva_comment_replies_list` | `canva_comment_thread_create`, `canva_comment_reply_create` |
+| Brand Templates | `canva_brand_templates_list`, `canva_brand_template_get`, `canva_brand_template_dataset_get` | — |
+
 Tool schemas: `backend/agent/tool_specs/*.json` or call `POST /mcp/list_tools`.
 
 ## Execution Control
@@ -209,7 +221,7 @@ with role-based menu visibility (`owner` / `admin` / `member`).
    |-- Admin/Ops Diagnostics + Incident Banner
    |
    v
-[SaaS APIs: Notion / Linear / GitHub]
+[SaaS APIs: Notion / Linear / GitHub / Canva]
 ```
 
 Runtime guardrails:

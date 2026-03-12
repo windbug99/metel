@@ -10,7 +10,8 @@ export default function Home() {
   const services = [
     { name: "Notion", icon: "/logos/notion.svg", count: "30 Tools", status: "Connected" },
     { name: "Linear", icon: "/logos/linear.svg", count: "8 Tools", status: "Connected" },
-    { name: "GitHub", icon: "/logos/github.svg", count: "5 Tools", status: "Connected" }
+    { name: "GitHub", icon: "/logos/github.svg", count: "5 Tools", status: "Connected" },
+    { name: "Canva", icon: null, count: "24 Tools", status: "Connected" }
   ];
 
   const controlLayers = [
@@ -57,7 +58,7 @@ export default function Home() {
             </h1>
             <p className="mt-6 max-w-2xl text-[16px] leading-relaxed text-muted-foreground sm:text-[18px]">
               The execution control layer for your AI workforce. Enforce policies,
-              audit every action, and mitigate risks across Notion, Linear, and GitHub.
+              audit every action, and mitigate risks across Notion, Linear, GitHub, and Canva.
             </p>
             <div className="mt-8 flex flex-wrap items-center justify-center gap-2.5 sm:justify-start sm:gap-3">
               <AuthPanel
@@ -146,13 +147,17 @@ export default function Home() {
         <section className="border-t border-border py-12 sm:py-16">
           <div className="mx-auto w-full max-w-3xl">
             <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-muted-foreground">Ecosystem</p>
-            <h2 className="mt-3 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">One Gateway. 40+ Tools.</h2>
-            <div className="mt-8 grid gap-4 sm:grid-cols-3">
+            <h2 className="mt-3 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">One Gateway. 60+ Tools.</h2>
+            <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {services.map((service) => (
                 <article key={service.name} className="group relative rounded-xl border border-border bg-card p-5 transition hover:bg-accent/5">
                   <div className="flex items-center gap-3">
                     <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-muted">
-                      <img src={service.icon} alt={service.name} width={24} height={24} className="h-6 w-6 object-contain" />
+                      {service.icon ? (
+                        <img src={service.icon} alt={service.name} width={24} height={24} className="h-6 w-6 object-contain" />
+                      ) : (
+                        <span className="text-xs font-semibold tracking-[0.16em] text-foreground">CV</span>
+                      )}
                     </span>
                     <div>
                       <p className="text-sm font-semibold text-foreground">{service.name}</p>
